@@ -161,6 +161,8 @@ performing relay, signer, storage, or other host effects.
   literal `every` durations and `at` timestamps from source into host timers.
 - Added atomic idempotency claims through `IdempotencyHost` and
   `Runtime::claim_once`, with duplicate-delivery outcomes recorded in audit.
+- Added typed `SubscriptionHost` support and audited `Runtime::subscribe` for
+  relay-backed stream filters with deterministic fake-host coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

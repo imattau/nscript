@@ -139,6 +139,7 @@ fn run_program(arguments: &[String]) -> ExitCode {
     let relay = nscript_runtime::FakeRelayHost {
         relays: [("fake://public".to_owned(), true)].into_iter().collect(),
         published: Vec::new(),
+        ..Default::default()
     };
     let signer = nscript_runtime::FakeSignerHost::default();
     let clock = nscript_runtime::FakeClock { now: 1_700_000_000 };

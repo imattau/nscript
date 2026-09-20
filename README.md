@@ -219,6 +219,9 @@ The semantic checker now emits schedule descriptors for literal `every` and
 Idempotent handlers can use `IdempotencyHost` and `Runtime::claim_once` to
 atomically claim event IDs; duplicate deliveries return `false` and are
 audited without rerunning the handler.
+Stream and query lowering can use `SubscriptionHost` and `Runtime::subscribe`
+with typed event filters, keeping relay lifecycle and transport policy in the
+host runtime.
 
 ## Repository map
 

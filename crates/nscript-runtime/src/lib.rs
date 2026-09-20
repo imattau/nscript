@@ -118,6 +118,19 @@ pub struct AuthenticatedRelay {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubscriptionRequest {
+    pub event_type: String,
+    pub author: Option<String>,
+    pub since: Option<u64>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubscriptionHandle {
+    pub id: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScheduleRequest {
     pub name: String,
     pub next_at: u64,
@@ -493,6 +506,19 @@ pub trait RelaySessionHost {
     ) -> Result<AuthenticatedRelay, RuntimeError>;
 }
 
+pub trait SubscriptionHost {
+    /// Open a typed event subscription through the host relay implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability, relay, or malformed-filter error.
+    fn subscribe(
+        &mut self,
+        invocation: InvocationId,
+        request: &SubscriptionRequest,
+    ) -> Result<SubscriptionHandle, RuntimeError>;
+}
+
 pub trait HttpHost {
     /// Execute an authenticated HTTP request through an allowlisted host.
     ///
@@ -742,6 +768,28 @@ where
             invocation,
             operation: "authenticate_relay".to_owned(),
             target: relay.to_owned(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
+    }
+
+    /// Open an audited typed event subscription.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's subscription failure.
+    pub fn subscribe<H: SubscriptionHost>(
+        &mut self,
+        host: &mut H,
+        request: &SubscriptionRequest,
+    ) -> Result<SubscriptionHandle, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.subscribe(invocation, request);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "subscribe".to_owned(),
+            target: request.event_type.clone(),
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
         });
         result
@@ -1055,6 +1103,8 @@ fn payment_amount(arguments: &[OperationValue]) -> Option<i64> {
 pub struct FakeRelayHost {
     pub relays: BTreeMap<String, bool>,
     pub published: Vec<SignedEvent>,
+    pub subscriptions: Vec<SubscriptionRequest>,
+    pub next_subscription: u64,
 }
 
 impl RelayHost for FakeRelayHost {
@@ -1098,6 +1148,25 @@ impl RelaySessionHost for FakeRelayHost {
         }
         Ok(AuthenticatedRelay {
             relay: relay.to_owned(),
+        })
+    }
+}
+
+impl SubscriptionHost for FakeRelayHost {
+    fn subscribe(
+        &mut self,
+        _invocation: InvocationId,
+        request: &SubscriptionRequest,
+    ) -> Result<SubscriptionHandle, RuntimeError> {
+        if request.event_type.is_empty() || request.limit == Some(0) {
+            return Err(RuntimeError::InvalidOperationArguments {
+                operation: "subscribe".to_owned(),
+            });
+        }
+        self.subscriptions.push(request.clone());
+        self.next_subscription += 1;
+        Ok(SubscriptionHandle {
+            id: self.next_subscription,
         })
     }
 }
@@ -2562,6 +2631,42 @@ mod tests {
         assert!(matches!(
             runtime.schedule_timer(&mut timers, &invalid),
             Err(RuntimeError::ResourceLimit { resource }) if resource == "timer"
+        ));
+        assert_eq!(runtime.audit.entries[1].result, "error");
+    }
+
+    #[test]
+    fn typed_subscriptions_are_host_controlled_and_audited() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut relay = FakeRelayHost::default();
+        let request = SubscriptionRequest {
+            event_type: "Note".to_owned(),
+            author: Some("alice".to_owned()),
+            since: Some(100),
+            limit: Some(20),
+        };
+        let handle = runtime
+            .subscribe(&mut relay, &request)
+            .expect("valid subscription");
+        assert_eq!(handle, SubscriptionHandle { id: 1 });
+        assert_eq!(relay.subscriptions, vec![request]);
+        assert_eq!(runtime.audit.entries[0].operation, "subscribe");
+
+        let invalid = SubscriptionRequest {
+            event_type: "Note".to_owned(),
+            author: None,
+            since: None,
+            limit: Some(0),
+        };
+        assert!(matches!(
+            runtime.subscribe(&mut relay, &invalid),
+            Err(RuntimeError::InvalidOperationArguments { operation })
+                if operation == "subscribe"
         ));
         assert_eq!(runtime.audit.entries[1].result, "error");
     }
