@@ -128,6 +128,42 @@ pub fn decode_wasm_dispatch(
     serde_json::from_slice(payload).map_err(|_| RuntimeError::InvalidWasmPayload)
 }
 
+/// Host boundary for executing one decoded WASM operation record.
+pub trait WasmDispatchHost {
+    /// Dispatches a single typed operation record.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability or validation error when the operation is denied.
+    fn dispatch(&mut self, invocation: InvocationId, operation: &Value)
+    -> Result<(), RuntimeError>;
+}
+
+/// Executes decoded records with stable invocation identifiers.
+///
+/// # Errors
+///
+/// Returns [`RuntimeError::InvalidWasmPayload`] for non-object records or
+/// invocation overflow, or propagates a host dispatch denial.
+pub fn dispatch_wasm_operations<H: WasmDispatchHost>(
+    host: &mut H,
+    invocation: InvocationId,
+    records: &[Value],
+) -> Result<usize, RuntimeError> {
+    for (offset, operation) in records.iter().enumerate() {
+        if !operation.is_object() {
+            return Err(RuntimeError::InvalidWasmPayload);
+        }
+        host.dispatch(
+            invocation
+                .checked_add(u64::try_from(offset).map_err(|_| RuntimeError::InvalidWasmPayload)?)
+                .ok_or(RuntimeError::InvalidWasmPayload)?,
+            operation,
+        )?;
+    }
+    Ok(records.len())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrivateMessage {
     pub content: String,
@@ -4005,6 +4041,28 @@ mod tests {
         let records = decode_wasm_dispatch(memory, 0, length).expect("decodes payload");
         assert_eq!(records[0]["op"], "create_event");
         assert!(decode_wasm_dispatch(memory, 1, length).is_err());
+    }
+
+    #[test]
+    fn wasm_dispatch_assigns_stable_invocations() {
+        struct Host(Vec<InvocationId>);
+        impl WasmDispatchHost for Host {
+            fn dispatch(
+                &mut self,
+                invocation: InvocationId,
+                _: &Value,
+            ) -> Result<(), RuntimeError> {
+                self.0.push(invocation);
+                Ok(())
+            }
+        }
+        let mut host = Host(Vec::new());
+        let records = vec![json!({"op":"create_event"}), json!({"op":"publish_event"})];
+        assert_eq!(
+            dispatch_wasm_operations(&mut host, 40, &records).unwrap(),
+            2
+        );
+        assert_eq!(host.0, vec![40, 41]);
     }
 
     #[test]

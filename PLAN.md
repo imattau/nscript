@@ -346,6 +346,8 @@ memory data segment at offset zero, and `nscript_main` passes its actual length
 to operation imports.
 The runtime now provides bounded `decode_wasm_dispatch`, validating pointer/
 length slices and JSON array shape before host-side operation mapping.
+`WasmDispatchHost` and `dispatch_wasm_operations` now provide the invocation-
+tracked host execution boundary for those decoded records.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
