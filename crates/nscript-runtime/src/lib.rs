@@ -1419,7 +1419,7 @@ where
                             operation: "body_call".to_owned(),
                         });
                     }
-                    let ExprKind::Text(message) = &arguments[0].value else {
+                    let Some(message) = Self::handler_text(&arguments[0], event) else {
                         return Err(RuntimeError::InvalidOperationArguments {
                             operation: "print".to_owned(),
                         });
@@ -1428,7 +1428,7 @@ where
                         log_host,
                         &LogRecord {
                             level: "info".to_owned(),
-                            message: message.clone(),
+                            message,
                         },
                     )?;
                 }
@@ -3683,7 +3683,7 @@ mod tests {
 
     #[test]
     fn handler_cycle_executes_event_aware_body() {
-        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    if event.author == \"alice\" {\n        print(\"matched\")\n    }\n}";
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    if event.author == \"alice\" {\n        print(event.content)\n    }\n}";
         let program = nscript_syntax::parse_program(source).0;
         let (checked, diagnostics) = nscript_semantics::check(&program);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -3724,7 +3724,7 @@ mod tests {
             )
             .expect("handler cycle executes body");
         assert_eq!(dispatched, 1);
-        assert_eq!(logs.records[0].message, "matched");
+        assert_eq!(logs.records[0].message, "hello");
         assert!(relay.closed_subscriptions.contains(&1));
     }
 

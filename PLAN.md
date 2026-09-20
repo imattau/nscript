@@ -283,6 +283,8 @@ event-bound values remain next. The event-aware execution entry point now binds
 conditions, allowing delivered events to drive handler branches.
 `run_handler_cycle_with_event_body` now connects that interpreter to the full
 subscription → match → idempotency claim → transaction → unsubscribe path.
+Handler `print` expressions can now render delivered `event.content`,
+`event.author`, and `event.id` values as well as literals.
 Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
 Signed-event values now carry typed `(tag, value)` pairs, allowing lowered tag
