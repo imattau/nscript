@@ -1,0 +1,12 @@
+// NIP-94 file metadata provides a typed media/file publication boundary.
+use nip94
+
+permissions {
+    file_metadata
+}
+
+let result = nip94.publish_file_metadata(FileMetadata {
+    url: "https://cdn.example/file.jpg";
+    mime: "image/jpeg";
+    hash: "sha256:abc123";
+})

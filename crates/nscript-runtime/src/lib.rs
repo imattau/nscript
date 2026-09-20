@@ -201,6 +201,13 @@ pub struct AppHandler {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileMetadata {
+    pub url: String,
+    pub mime: String,
+    pub hash: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -304,6 +311,7 @@ pub enum OperationValue {
     Assertion(Assertion),
     RelayAdminRequest(RelayAdminRequest),
     AppHandler(AppHandler),
+    FileMetadata(FileMetadata),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1411,6 +1419,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip94", "publish_file_metadata") => {
+                let [OperationValue::FileMetadata(file)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if file.url.is_empty() || file.mime.is_empty() || file.hash.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://file-metadata".to_owned(),
+                        accepted: true,
+                        detail: "file metadata lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1717,6 +1744,12 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                 app,
                 endpoint,
             }),
+            _ => value.clone(),
+        },
+        "FileMetadata" => match (text("url"), text("mime"), text("hash")) {
+            (Some(url), Some(mime), Some(hash)) => {
+                OperationValue::FileMetadata(FileMetadata { url, mime, hash })
+            }
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2799,6 +2832,43 @@ mod tests {
                 }],
             )
             .expect("handler host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip94_lowers_file_metadata() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip94", "publish_file_metadata"),
+                &mut host,
+                "nip94",
+                "publish_file_metadata",
+                &[OperationValue::Record {
+                    name: "FileMetadata".to_owned(),
+                    fields: vec![
+                        (
+                            "url".to_owned(),
+                            OperationValue::Text("https://cdn.example/file.jpg".to_owned()),
+                        ),
+                        (
+                            "mime".to_owned(),
+                            OperationValue::Text("image/jpeg".to_owned()),
+                        ),
+                        (
+                            "hash".to_owned(),
+                            OperationValue::Text("sha256:abc123".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("file metadata host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

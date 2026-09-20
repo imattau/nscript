@@ -1,0 +1,16 @@
+module nip94 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/94.md"
+use nip01 @ "^0.1"
+
+record FileMetadata {
+    field url: Text
+    field mime: Text
+    field hash: Text
+}
+
+error FileError {
+    field message: Text
+}
+
+operation publish_file_metadata(file: FileMetadata) -> Result<PublishReport,FileError> effect Sign,Relay permission file_metadata

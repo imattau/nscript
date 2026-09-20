@@ -133,6 +133,8 @@ performing relay, signer, storage, or other host effects.
   validation and explicit relay-admin capability enforcement.
 - Added NIP-89 typed `AppHandler` records and `publish_handler`, with explicit
   event-kind/application/endpoint routing validation.
+- Added NIP-94 typed `FileMetadata` records and `publish_file_metadata`, with
+  URL, MIME, and content-hash validation for media/file workflows.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

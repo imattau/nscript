@@ -176,8 +176,12 @@ NIP-86 relay management uses typed `RelayAdminRequest` values.
 explicit relay-admin capability.
 
 NIP-89 application handlers use typed `AppHandler` records to advertise event
- routing. `nip89.publish_handler` validates kind, application, and endpoint
- before publication through an explicit signing/relay capability.
+routing. `nip89.publish_handler` validates kind, application, and endpoint
+before publication through an explicit signing/relay capability.
+
+NIP-94 file metadata uses typed `FileMetadata` records. The
+`nip94.publish_file_metadata` operation validates URL, MIME type, and content
+hash before publication through an explicit signing/relay capability.
 
 ## Repository map
 
