@@ -164,6 +164,89 @@ pub fn dispatch_wasm_operations<H: WasmDispatchHost>(
     Ok(records.len())
 }
 
+/// Executes the publication subset of WASM records through runtime hosts.
+///
+/// # Errors
+///
+/// Returns [`RuntimeError::InvalidWasmPayload`] for malformed records or
+/// propagates signer and relay host failures.
+pub fn execute_wasm_publications<R: RelayHost, S: SignerHost>(
+    relay: &mut R,
+    signer: &mut S,
+    invocation: InvocationId,
+    records: &[Value],
+) -> Result<Vec<PublishReport>, RuntimeError> {
+    let mut unsigned = BTreeMap::<String, UnsignedEvent>::new();
+    let mut signed_events = BTreeMap::<String, SignedEvent>::new();
+    let mut reports = Vec::new();
+    for record in records {
+        let object = record.as_object().ok_or(RuntimeError::InvalidWasmPayload)?;
+        match object.get("op").and_then(Value::as_str) {
+            Some("create_event") => {
+                let result = object
+                    .get("result")
+                    .and_then(Value::as_str)
+                    .ok_or(RuntimeError::InvalidWasmPayload)?;
+                let event = UnsignedEvent {
+                    event_type: object
+                        .get("event")
+                        .and_then(Value::as_str)
+                        .ok_or(RuntimeError::InvalidWasmPayload)?
+                        .to_owned(),
+                    kind: object
+                        .get("kind")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| u16::try_from(value).ok())
+                        .ok_or(RuntimeError::InvalidWasmPayload)?,
+                    content: object
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    tags: Vec::new(),
+                    created_at: 0,
+                };
+                unsigned.insert(result.to_owned(), event);
+            }
+            Some("sign_event") => {
+                let result = object
+                    .get("result")
+                    .and_then(Value::as_str)
+                    .ok_or(RuntimeError::InvalidWasmPayload)?;
+                let event_key = object
+                    .get("event")
+                    .and_then(Value::as_str)
+                    .ok_or(RuntimeError::InvalidWasmPayload)?;
+                let signer_name = object
+                    .get("signer")
+                    .and_then(Value::as_str)
+                    .ok_or(RuntimeError::InvalidWasmPayload)?;
+                let event = unsigned
+                    .remove(event_key)
+                    .ok_or(RuntimeError::InvalidWasmPayload)?;
+                let signed_event = signer.sign(invocation, event, signer_name)?;
+                signed_events.insert(result.to_owned(), signed_event);
+            }
+            Some("publish_event") => {
+                let event_key = object
+                    .get("event")
+                    .and_then(Value::as_str)
+                    .ok_or(RuntimeError::InvalidWasmPayload)?;
+                let relayset = object
+                    .get("relayset")
+                    .and_then(Value::as_str)
+                    .ok_or(RuntimeError::InvalidWasmPayload)?;
+                let event = signed_events
+                    .get(event_key)
+                    .ok_or(RuntimeError::InvalidWasmPayload)?;
+                reports.push(relay.publish(invocation, event, relayset)?);
+            }
+            Some(_) | None => return Err(RuntimeError::InvalidWasmPayload),
+        }
+    }
+    Ok(reports)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrivateMessage {
     pub content: String,
@@ -4063,6 +4146,25 @@ mod tests {
             2
         );
         assert_eq!(host.0, vec![40, 41]);
+    }
+
+    #[test]
+    fn wasm_publications_route_through_signer_and_relay_hosts() {
+        let records = vec![
+            json!({"op":"create_event","result":"%0","event":"Note","kind":1,"content":"hello"}),
+            json!({"op":"sign_event","result":"%1","event":"%0","signer":"account"}),
+            json!({"op":"publish_event","result":"%2","event":"%1","relayset":"public"}),
+        ];
+        let mut relay = FakeRelayHost {
+            relays: [("public".to_owned(), true)].into_iter().collect(),
+            ..FakeRelayHost::default()
+        };
+        let mut signer = FakeSignerHost::default();
+        let reports = execute_wasm_publications(&mut relay, &mut signer, 1, &records)
+            .expect("routes publication");
+        assert_eq!(reports.len(), 1);
+        assert_eq!(signer.signed.len(), 1);
+        assert_eq!(relay.published.len(), 1);
     }
 
     #[test]
