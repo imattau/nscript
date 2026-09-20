@@ -1,0 +1,11 @@
+// NIP-98 authenticates controlled HTTP requests through signing.
+use nip98
+
+permissions {
+    http_auth
+}
+
+let request = nip98.authenticate_http(HttpAuthRequest {
+    url: "https://api.example/resource";
+    method: "GET";
+})

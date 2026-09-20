@@ -137,6 +137,8 @@ performing relay, signer, storage, or other host effects.
   URL, MIME, and content-hash validation for media/file workflows.
 - Added NIP-B7 typed `BlobUpload`/`BlobStored` values and `upload_blob`, with
   explicit storage/HTTP effects and content-addressed upload validation.
+- Added NIP-98 typed HTTP authentication requests/results, with secure URL and
+  method validation behind explicit signing/HTTP capabilities.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

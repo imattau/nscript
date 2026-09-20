@@ -221,6 +221,18 @@ pub struct BlobStored {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpAuthRequest {
+    pub url: String,
+    pub method: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthenticatedRequest {
+    pub url: String,
+    pub method: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -327,6 +339,8 @@ pub enum OperationValue {
     FileMetadata(FileMetadata),
     BlobUpload(BlobUpload),
     BlobStored(BlobStored),
+    HttpAuthRequest(HttpAuthRequest),
+    AuthenticatedRequest(AuthenticatedRequest),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1469,6 +1483,22 @@ impl OperationHost for FakeOperationHost {
                     hash: upload.hash.clone(),
                 }))
             }
+            ("nip98", "authenticate_http") => {
+                let [OperationValue::HttpAuthRequest(request)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if !request.url.starts_with("https://") || request.method.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::AuthenticatedRequest(AuthenticatedRequest {
+                    url: request.url.clone(),
+                    method: request.method.clone(),
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1786,6 +1816,12 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         "BlobUpload" => match (text("url"), text("hash"), integer("size")) {
             (Some(url), Some(hash), Some(size)) => {
                 OperationValue::BlobUpload(BlobUpload { url, hash, size })
+            }
+            _ => value.clone(),
+        },
+        "HttpAuthRequest" => match (text("url"), text("method")) {
+            (Some(url), Some(method)) => {
+                OperationValue::HttpAuthRequest(HttpAuthRequest { url, method })
             }
             _ => value.clone(),
         },
@@ -2945,6 +2981,42 @@ mod tests {
             OperationValue::BlobStored(BlobStored {
                 url: "https://blossom.example/upload".to_owned(),
                 hash: "sha256:abc123".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn nip98_lowers_authenticated_http_requests() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip98", "authenticate_http"),
+                &mut host,
+                "nip98",
+                "authenticate_http",
+                &[OperationValue::Record {
+                    name: "HttpAuthRequest".to_owned(),
+                    fields: vec![
+                        (
+                            "url".to_owned(),
+                            OperationValue::Text("https://api.example/resource".to_owned()),
+                        ),
+                        ("method".to_owned(), OperationValue::Text("GET".to_owned())),
+                    ],
+                }],
+            )
+            .expect("HTTP auth host available");
+        assert_eq!(
+            result,
+            OperationValue::AuthenticatedRequest(AuthenticatedRequest {
+                url: "https://api.example/resource".to_owned(),
+                method: "GET".to_owned(),
             })
         );
     }

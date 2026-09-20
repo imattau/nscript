@@ -187,6 +187,10 @@ NIP-B7 Blossom storage uses typed `BlobUpload` and `BlobStored` values.
 `nipb7.upload_blob` validates content-addressed uploads behind explicit
 storage/HTTP capabilities.
 
+NIP-98 HTTP authentication uses typed `HttpAuthRequest` and
+`AuthenticatedRequest` values. `nip98.authenticate_http` validates secure URLs
+and methods behind explicit signing/HTTP capabilities.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

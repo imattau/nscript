@@ -1,0 +1,19 @@
+module nip98 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/98.md"
+
+record HttpAuthRequest {
+    field url: Text
+    field method: Text
+}
+
+record AuthenticatedRequest {
+    field url: Text
+    field method: Text
+}
+
+error HttpAuthError {
+    field message: Text
+}
+
+operation authenticate_http(request: HttpAuthRequest) -> Result<AuthenticatedRequest,HttpAuthError> effect Sign,HTTP permission http_auth
