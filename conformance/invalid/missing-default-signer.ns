@@ -1,0 +1,17 @@
+// error: E2203 missing-default-signer
+use nip01
+
+relayset public = configured
+
+defaults {
+    relays: public
+}
+
+permissions {
+    publish Note to public
+    relay public
+}
+
+publish Note {
+    content: "No signer was declared"
+}

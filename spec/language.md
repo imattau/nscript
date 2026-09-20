@@ -18,6 +18,15 @@ Module dependencies form a directed acyclic graph. Cycles are a compile error.
 Unqualified duplicate exports are ambiguous and MUST be rejected. A runtime MUST
 record the exact module versions used to compile a program.
 
+Programs select one runtime profile, defaulting to `standard`:
+
+```nostr
+runtime hardened-agent
+```
+
+The hardened-agent profile is defined by the host specification and is checked
+before module initialization or host capability provisioning.
+
 ## 2. Values and types
 
 NScript is statically typed. The core value types are:
@@ -109,6 +118,19 @@ signer, relay set, store, and HTTP origin must match where applicable. Redirects
 require the destination origin to be allowed. `filesystem`, `payment`, and
 `secret_key` are high-risk permissions and MUST receive distinct host consent.
 
+Programs may declare publication defaults using existing named capabilities:
+
+```nostr
+defaults {
+    signer: account
+    relays: public
+}
+```
+
+There may be at most one defaults block. Referenced declarations must exist in
+the same program or an imported manifest fragment and must have type `Signer`
+and `RelaySet`, respectively. Defaults grant no permission by themselves.
+
 ## 5. Queries and streams
 
 `select` produces a finite `Result<List<E>, RelayError>`. A query compiler MUST
@@ -171,6 +193,12 @@ inspect or require a stricter acknowledgement policy explicitly.
 `publish` is an effectful expression returning
 `Result<PublishReport, RelayError>`. At statement position its result may be
 discarded with a warning; functions and workflows may return or inspect it.
+
+For each omitted `with` or `to` clause, the compiler substitutes the matching
+source-declared default before type, effect, and permission checking. An unsigned
+event with no signer default produces `E2203`; any event with no relay default
+produces `E2204`. Hosts MUST NOT supply ambient publication defaults. Explicit
+clauses override defaults at that publication site without changing them.
 
 A signer denial, disconnect, invalid signature, or public-key mismatch is a
 typed error. The runtime MUST recompute and validate the event ID and signature

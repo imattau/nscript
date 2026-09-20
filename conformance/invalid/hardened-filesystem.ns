@@ -1,0 +1,7 @@
+// error: E5001 profile-capability-denied
+
+runtime hardened-agent
+
+permissions {
+    filesystem
+}

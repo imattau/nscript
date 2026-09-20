@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/nscript-cli",
+    "crates/nscript-semantics",
+    "crates/nscript-syntax",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/imattau/nscript"
+rust-version = "1.88"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"

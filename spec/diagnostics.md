@@ -19,12 +19,16 @@ language major version.
 | E2001 | invalid-tag | A typed tag fails its module's construction rules |
 | E2201 | unsigned-publication | Publication receives `Unsigned<E>` without an allowed signer |
 | E2202 | signer-type-mismatch | A signer policy cannot sign the requested event type or author |
+| E2203 | missing-default-signer | Bare unsigned publication has no declared signer default |
+| E2204 | missing-default-relays | Publication without `to` has no declared relay-set default |
 | E2401 | unbounded-local-filter | A non-lowerable query predicate lacks a finite remote bound |
 | E3001 | missing-permission | A reachable inferred effect is not covered by the manifest |
 | E3002 | unavailable-capability | The host cannot provision a declared mandatory capability |
 | E3101 | high-risk-consent-required | Secret, filesystem, or payment authority lacks distinct consent |
 | E4001 | module-cycle | Imports contain a dependency cycle |
 | E4002 | incompatible-module | A module's language or dependency range cannot be resolved |
+| E4003 | invalid-module-schema | A module schema is malformed, conflicting, or non-deterministic |
+| E5001 | profile-capability-denied | A runtime profile categorically forbids a type, effect, or permission |
 
 Operational failures returned as `Result` values are not compiler diagnostics.
 An unhandled top-level `Err`, supervision action, or host provisioning failure

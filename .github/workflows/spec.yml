@@ -1,4 +1,4 @@
-name: Specification checks
+name: Checks
 
 on:
   push:
@@ -17,3 +17,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes jq
       - name: Check specification corpus
         run: ./scripts/check-spec.sh
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test Rust workspace
+        run: cargo test --workspace

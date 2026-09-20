@@ -7,6 +7,7 @@ Fixtures are source-level contracts for compiler and runtime implementations.
   `// error:` comment.
 - `scenarios/` describes host-driven runtime tests that require relay, signer,
   store, or clock fakes.
+- `modules/` contains valid and invalid declarative `.nsm` schemas.
 
 The first Rust interpreter should expose a test runner that walks this tree and
 compares normalized diagnostics and host traces. Fixture comments are metadata,

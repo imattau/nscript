@@ -1,0 +1,18 @@
+// error: E2204 missing-default-relays
+use nip01
+use nip46
+
+signer account = nip46()
+
+defaults {
+    signer: account
+}
+
+permissions {
+    publish Note
+    sign Note with account
+}
+
+publish Note {
+    content: "No relay set was declared"
+}

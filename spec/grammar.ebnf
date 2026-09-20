@@ -1,10 +1,17 @@
 (* NScript draft grammar. UTF-8 input; identifiers are Unicode XID. *)
 
-program          = { use_decl | declaration | statement } ;
+program          = { use_decl | runtime_decl | defaults_decl
+                   | declaration | statement } ;
 
 use_decl         = "use", module_path, [ "@", version ], terminator ;
 module_path      = identifier, { "::", identifier } ;
 version          = string | integer, { ".", integer } ;
+
+runtime_decl     = "runtime", ( "standard" | "hardened-agent" ), terminator ;
+defaults_decl    = "defaults", "{",
+                   [ "signer", ":", identifier, terminator ],
+                   [ "relays", ":", identifier, terminator ],
+                   "}" ;
 
 declaration      = let_decl | fn_decl | event_decl | signer_decl
                  | relay_decl | relayset_decl | store_decl

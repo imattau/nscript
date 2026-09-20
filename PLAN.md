@@ -1,72 +1,85 @@
-# NScript Language Specification Plan
+# NScript Draft 0.1 Release Candidate and Compiler Front-End
 
 ## Summary
 
-Create a specification-first NScript project for a purpose-built, statically
-typed Nostr automation language. The deliverable defines the complete language,
-runtime capability model, Nostr interoperability, and a separate signed-package
-RFC. The specification is structured so a Rust tree-walk interpreter can follow
-it without making further language-design decisions.
+Finish the security and enforcement model before implementing relay execution.
+The next milestone turns the architectural RFC into a testable contract by
+defining declarative NIP modules, explicit publication defaults, and a normative
+hardened-agent profile. Once those rules and conformance fixtures are complete,
+build the Rust parser and static checker against them.
 
-## Specification structure
+## Specification changes
 
-- Maintain a versioned specification suite with an overview, normative
-  language/runtime specification, and companion package-distribution RFC.
-- Include machine-readable EBNF, canonical source examples, diagnostic
-  guidelines, and valid/invalid conformance fixtures.
-- Use concise DSL forms such as `event`, `select`, `on`, `publish`, `every`,
-  `permissions`, and `store` instead of general-purpose library calls.
-- Clearly label normative requirements, implementation-defined behaviour, and
-  non-normative rationale.
+- Define declarative `.nsm` module schemas with no executable plugins. Schemas
+  describe nominal types, events, kinds, replacement modes, typed tags, field
+  cardinality, content encoding, validation expressions, wire lowering,
+  effects, permissions, compatibility ranges, and test vectors.
+- Restrict validation expressions to deterministic, total, bounded operations.
+  Loading produces a typed `ModuleDescriptor`; conflicting kinds, exports, or
+  tag definitions are compile errors.
+- Add source-manifest defaults:
 
-## Language and runtime contracts
+  ```nostr
+  defaults {
+      signer: account
+      relays: public
+  }
+  ```
 
-- Specify nominal Nostr types, including `PubKey`, `EventId`, `Signature`,
-  `RelayUrl`, `Timestamp`, `Kind`, NIP-19 identifiers, and a privileged
-  `SecretKey` type requiring an explicit high-risk capability.
-- Define event declarations, typed tags, pattern matching, replaceable events,
-  NIP modules, query/filter lowering, streams, handlers, timers, stores, HTTP
-  allowlists, relay sets, encryption, and signer handles.
-- Represent event state as `Unsigned<E>` and `Signed<E>`; only signed events may
-  reach the relay publish interface.
-- Infer function effects statically. Program permissions must cover every
-  reachable effect.
-- Use `Result<T, E>` for recoverable failures, without catchable exceptions.
-- Use an implicit asynchronous event loop and at-least-once handler delivery.
-- Define deterministic evaluation order, handler isolation, cancellation,
-  retries, resource limits, and capability-denial behaviour.
-- Standardise host capabilities for relays, signers, encryption, storage, HTTP,
-  clock, payment, and filesystem access.
+  Bare publication expands to these declared defaults before effect and
+  permission checking. Missing or ambiguous defaults are compile errors; `to`
+  and `with` remain explicit overrides.
+- Define `runtime hardened-agent` as a normative profile. It forbids
+  `SecretKey`/`Nsec`, filesystem access, process or shell execution, raw sockets,
+  native plugins, ambient credentials, and unrestricted HTTP. Origin-scoped
+  HTTP, NIP-46 signers, declared relays, bounded storage, clock, and logging
+  remain available through explicit permissions.
+- Resolve query lowering so OR predicates may share one NIP-01 `REQ`, while
+  non-representable conjunctions require separate bounded queries and local
+  intersection.
+- Specify default resolution, module validation phases, profile enforcement,
+  canonical module serialization, and stable diagnostics.
 
-## Nostr and packaging specifications
+## Conformance and Rust front-end
 
-- Make NIP-01, NIP-19, and NIP-46 normative starter modules, with typed common
-  tags.
-- Specify exact lowering to ordinary Nostr events, tags, filters, identifiers,
-  and remote-signing requests.
-- Define extensible, versioned NIP modules without compiler-specific special
-  cases.
-- Keep signed manifests, semantic versions, dependency locking, author
-  identities, hashes, Nostr discovery, and Blossom retrieval in a separate
-  normative RFC.
+- Complete the release-blocking matrix with fixtures for module schemas, typed
+  tags, NIP violations, NIP-19 failures, NIP-46 validation, secret isolation,
+  HTTP policy, timers, replacement ties, relay outcomes, and transactions.
+- Prove bare publication succeeds only with declared defaults and inferred
+  effects still require matching permissions.
+- Add hardened-profile tests rejecting prohibited direct and transitive
+  capabilities.
+- Create a Rust workspace containing a CLI, syntax layer, and semantic layer.
+  Implement source/module lexing, parsing, ASTs, name resolution, nominal types,
+  event-state checking, effect inference, permission matching, defaults, and
+  hardened-profile validation.
+- Make `nscript check <file>` consume the corpus and emit normalized diagnostics.
+  Real relay, signer, storage, and WASM execution are excluded from this
+  milestone.
 
-## Conformance and acceptance
+## Acceptance criteria
 
-- Cover all declarations, expressions, queries, handlers, patterns, and
-  manifests with valid and invalid parser fixtures.
-- Test nominal typing, signing states, typed tags, pattern exhaustiveness,
-  effect inference, and permission rejection.
-- Test filter lowering, serialisation, NIP-19 round trips, NIP-46 signing,
-  replacement, reconnect duplicates, transactional deduplication, timer overlap,
-  HTTP denial, and privileged secret access.
-- Include end-to-end examples for queries, publication, mentions, moderation,
-  encrypted messaging, monitoring, and constrained agents.
+- Every conformance-matrix row has positive, negative, and runtime-vector
+  coverage where applicable.
+- `nscript check` accepts every valid fixture and rejects every invalid fixture
+  with the specified code and primary span.
+- Arbitrary NIP rules can be expressed through `.nsm` without compiler changes.
+- Bare publication expands only to source-declared authority.
+- Hardened-agent programs cannot acquire prohibited authority directly,
+  transitively, or through modules.
+- Specification checks and Rust tests pass in CI on `main`.
 
-## Defaults
+## Subsequent milestones
 
-- Rust is the reference implementation language.
-- The first executable runtime is a tree-walk interpreter.
-- Private keys are unavailable by default; `SecretKey` requires a distinct,
-  high-risk permission.
-- Distributed packaging is normative but separate from the core language.
-- Shell access and unrestricted networking are never implicit capabilities.
+1. Add the tree-walk interpreter with deterministic fake hosts.
+2. Implement real NIP-01 relay and NIP-46 signer adapters.
+3. Validate automation scenarios and hostile-script resource limits.
+4. Add WASM after interpreter semantics stabilize.
+5. Stabilize signed package discovery and Blossom distribution.
+
+## Assumptions
+
+- Draft 0.1 may make breaking syntax changes; no migration is required.
+- Standard and third-party NIP modules use the same declarative schema format.
+- Direct secret keys remain available only outside the hardened-agent profile.
+- The repository remains MIT licensed and Rust is the reference language.

@@ -1,0 +1,8 @@
+// error: E4003 invalid-module-schema
+module unsafe_tags @ 0.1.0
+language ">=0.1.0 <0.2.0"
+
+tag DynamicTag {
+    wire: supplied_at_runtime
+    field value: Text at 1
+}

@@ -18,6 +18,22 @@ payment, logging, and direct secret-key operations. Audit records include
 program and package identity, operation, target, result, and time, but exclude
 plaintext secrets and encrypted-message contents.
 
+## Runtime profiles
+
+The `standard` profile exposes only explicitly declared and host-approved
+capabilities. The `hardened-agent` profile applies an additional non-overridable
+deny set before effect checking. It forbids direct or transitive use of
+`SecretKey`, `Nsec`, `secret_key`, filesystem mounts, raw sockets, process or
+shell execution, native plugins, ambient credentials, and HTTP permissions that
+are not a finite list of normalized HTTPS origins.
+
+The hardened profile permits declared relay sets, NIP-46 or equivalently isolated
+signers, origin-scoped HTTPS, bounded storage, encryption, decryption, clock,
+logging, and payment only when the host policy independently permits them. A
+dependency requesting a forbidden type, effect, or permission makes the whole
+program invalid; unused forbidden declarations are still rejected. Hosts cannot
+weaken the deny set, though they may deny additional capabilities.
+
 ## Relay
 
 The relay capability provides:
@@ -73,6 +89,9 @@ HTTP supports HTTPS by default. Each request method, normalized origin, redirect
 target, request size, response size, and timeout is checked against the declared
 permission. Credentials are named host secrets referenced by handle; source code
 cannot read their values. DNS rebinding and redirects do not bypass origin checks.
+
+Wildcard origins, plain HTTP, host-supplied ambient allowlists, and URLs derived
+from undeclared origins are forbidden in the hardened-agent profile.
 
 `fetch text`, `fetch bytes`, and `fetch json` return `Result` values. JSON is
 decoded into a module- or call-specified type and rejects unknown or missing

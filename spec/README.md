@@ -11,8 +11,10 @@ Unless a section says otherwise, the key words **MUST**, **MUST NOT**, **SHOULD*
 - [`language.md`](language.md): syntax, types, effects, execution, and host APIs.
 - [`nostr.md`](nostr.md): event, relay, signer, identifier, and NIP lowering.
 - [`host.md`](host.md): portable capability interfaces and failure contracts.
+- [`modules.md`](modules.md): declarative NIP-module format and loading rules.
 - [`diagnostics.md`](diagnostics.md): stable diagnostic classes and rendering.
 - [`grammar.ebnf`](grammar.ebnf): lexical and syntactic grammar.
+- [`module-schema.ebnf`](module-schema.ebnf): declarative `.nsm` grammar.
 
 The package ecosystem is specified separately in
 [`../rfcs/0001-packages.md`](../rfcs/0001-packages.md).

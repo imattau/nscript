@@ -1,0 +1,22 @@
+use nip01
+use nip46
+
+runtime hardened-agent
+
+signer account = nip46()
+relayset public = configured
+
+defaults {
+    signer: account
+    relays: public
+}
+
+permissions {
+    publish Note to public
+    sign Note with account
+    relay public
+}
+
+publish Note {
+    content: "Hello from a constrained agent"
+}

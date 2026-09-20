@@ -19,6 +19,14 @@ while IFS= read -r -d '' fixture; do
     fi
 done < <(find conformance/invalid -type f -name '*.ns' -print0 | sort -z)
 
+while IFS= read -r -d '' fixture; do
+    first_line=$(sed -n '1p' "$fixture")
+    if [[ ! $first_line =~ ^//\ error:\ E[0-9]{4}\ [a-z0-9-]+$ ]]; then
+        echo "error: $fixture has no normalized error header" >&2
+        status=1
+    fi
+done < <(find conformance/modules/invalid -type f -name '*.nsm' -print0 | sort -z)
+
 while IFS= read -r -d '' vector; do
     if ! jq empty "$vector"; then
         echo "error: malformed JSON vector: $vector" >&2

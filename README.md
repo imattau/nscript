@@ -27,6 +27,13 @@ The project is specification-first. The current milestone defines the language,
 runtime contract, Nostr interoperability, and conformance expectations before a
 reference interpreter is built.
 
+The first Rust front-end slice is now under development. It can validate
+publication defaults and hardened-agent restrictions:
+
+```bash
+cargo run -p nscript-cli -- check conformance/valid/default-publish.ns
+```
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.
@@ -34,6 +41,7 @@ reference interpreter is built.
 - [`rfcs/`](rfcs/) contains companion proposals, including package distribution.
 - [`conformance/`](conformance/) contains executable examples and negative tests
   for future implementations.
+- `crates/` contains the incremental Rust syntax, semantics, and CLI front end.
 
 ## Status
 

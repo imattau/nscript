@@ -1,0 +1,18 @@
+module nip10 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/10.md"
+
+event Note {
+    kind: 1
+    mode: regular
+    content: Text as text
+    tags: List<NoteTag> = []
+}
+
+tag ReplyTo {
+    wire: "e"
+    field id: EventId at 1
+    field relay: Option<RelayUrl> at 2
+    literal "reply" at 3
+    field author: Option<PubKey> at 4
+}

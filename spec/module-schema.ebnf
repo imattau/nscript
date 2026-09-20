@@ -1,0 +1,49 @@
+module           = module_decl, language_decl, [ reference_decl ],
+                   { import_decl | module_item } ;
+
+module_decl      = "module", module_path, "@", semver, terminator ;
+language_decl    = "language", string, terminator ;
+reference_decl   = "reference", string, terminator ;
+import_decl      = "use", module_path, "@", ( semver | string ), terminator ;
+
+module_item      = nominal_decl | record_decl | enum_decl | event_schema
+                 | tag_schema | operation_decl | error_decl | vector_decl ;
+
+nominal_decl     = "nominal", identifier, "from", type, block ;
+record_decl      = "record", identifier, schema_fields ;
+enum_decl        = "enum", identifier, "{", identifier,
+                   { ",", identifier }, [ "," ], "}" ;
+
+event_schema     = "event", identifier, "{",
+                   "kind", ":", integer, terminator,
+                   "mode", ":", event_mode, terminator,
+                   "content", ":", type, [ "as", encoding ], terminator,
+                   [ "tags", ":", type, [ "=", expression ], terminator ],
+                   { schema_field | require_decl }, "}" ;
+event_mode       = "regular" | "replaceable" | "addressable" | "ephemeral" ;
+encoding         = "text" | "bytes-base64" | "json", "<", type, ">"
+                 | module_path ;
+
+tag_schema       = "tag", identifier, "{",
+                   "wire", ":", string, terminator,
+                   { tag_member }, "}" ;
+tag_member       = "field", identifier, ":", type, "at", integer, terminator
+                 | "literal", string, "at", integer, terminator
+                 | require_decl ;
+
+operation_decl   = "operation", identifier, "(", [ parameters ], ")",
+                   "->", type, "effect", effect_set,
+                   "permission", permission_template, terminator ;
+effect_set       = identifier, { ",", identifier } ;
+permission_template = identifier, { expression } ;
+
+error_decl       = "error", identifier, [ schema_fields ] ;
+vector_decl      = "vector", string, record, terminator ;
+require_decl     = "require", expression, terminator ;
+schema_fields    = "{", { schema_field }, "}" ;
+schema_field     = "field", identifier, ":", type,
+                   [ "=", expression ], terminator ;
+
+(* module_path, parameters, type, expression, record, identifier, integer,
+   string, terminator, and lexical rules are imported from grammar.ebnf.
+   Module expressions are restricted further by modules.md. *)

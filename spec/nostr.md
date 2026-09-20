@@ -27,10 +27,11 @@ Query lowering maps:
 | `since t` / `until t` | `since` / `until` |
 | `limit n` | `limit` |
 
-Equality alternatives on the same field may share one filter. Conjunctions that
-cannot be expressed in one filter use multiple filters plus local intersection.
-`or` generally becomes multiple filters. Implementations must apply the bounding
-rule from the language specification before local evaluation.
+Equality alternatives on the same field may share one filter. `or` generally
+becomes multiple filters within one `REQ`. A conjunction that cannot fit one
+filter requires separate bounded requests followed by local intersection; it
+must not be represented as multiple filters in one `REQ`. Implementations apply
+the language specification's bounding rule before local evaluation.
 
 ## Typed tags
 
@@ -86,7 +87,7 @@ global deletion; APIs expose the observed relay set with resolved results.
 
 ## Module extension contract
 
-A NIP module declares:
+A declarative `.nsm` NIP module declares:
 
 - its name, semantic version, and compatible language range;
 - exported types, events, tags, functions, and errors;
@@ -97,3 +98,6 @@ A NIP module declares:
 Modules are signed release artifacts in the package system. The compiler treats
 their declarations as ordinary typed interfaces; it MUST NOT special-case a NIP
 other than the bootstrap needed to load the standard modules.
+
+Module schemas contain no executable native or WASM plugins. Their constrained
+validation and lowering expressions are defined in the module specification.
