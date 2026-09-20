@@ -285,6 +285,8 @@ conditions, allowing delivered events to drive handler branches.
 subscription → match → idempotency claim → transaction → unsubscribe path.
 Handler `print` expressions can now render delivered `event.content`,
 `event.author`, and `event.id` values as well as literals.
+Numeric `event.kind` equality and inequality are also available to handler
+conditions.
 Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
 Signed-event values now carry typed `(tag, value)` pairs, allowing lowered tag

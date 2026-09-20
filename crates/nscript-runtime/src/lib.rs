@@ -1495,6 +1495,12 @@ where
                     (ExprKind::Bool(a), ExprKind::Bool(b)) => a == b,
                     (ExprKind::Integer(a), ExprKind::Integer(b)) => a == b,
                     (ExprKind::Text(a), ExprKind::Text(b)) => a == b,
+                    (ExprKind::Member { .. }, ExprKind::Integer(value)) => {
+                        Self::handler_integer(left, event)? == *value
+                    }
+                    (ExprKind::Integer(value), ExprKind::Member { .. }) => {
+                        *value == Self::handler_integer(right, event)?
+                    }
                     _ => match (
                         Self::handler_text(left, event),
                         Self::handler_text(right, event),
@@ -1532,6 +1538,27 @@ where
                 }
             }
             _ => None,
+        }
+    }
+
+    fn handler_integer(
+        expression: &nscript_syntax::ast::Expr,
+        event: Option<&SignedEvent>,
+    ) -> Result<i64, RuntimeError> {
+        match &expression.value {
+            ExprKind::Integer(value) => Ok(*value),
+            ExprKind::Member { value, name }
+                if matches!(&value.value, ExprKind::Identifier(base) if base == "event")
+                    && name.value == "kind" =>
+            {
+                let event = event.ok_or_else(|| RuntimeError::InvalidOperationArguments {
+                    operation: "handler_condition".to_owned(),
+                })?;
+                Ok(i64::from(event.unsigned.kind))
+            }
+            _ => Err(RuntimeError::InvalidOperationArguments {
+                operation: "handler_condition".to_owned(),
+            }),
         }
     }
 
@@ -3651,7 +3678,7 @@ mod tests {
 
     #[test]
     fn handler_body_can_match_delivered_event_fields() {
-        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    if event.author == \"alice\" && event.content contains \"nostr\" {\n        print(\"matched\")\n    }\n}";
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    if event.author == \"alice\" && event.kind == 1 && event.content contains \"nostr\" {\n        print(\"matched\")\n    }\n}";
         let program = nscript_syntax::parse_program(source).0;
         let (checked, diagnostics) = nscript_semantics::check(&program);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
