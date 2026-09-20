@@ -30,7 +30,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [-M <directory>]... <file>\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -174,6 +174,15 @@ fn compile_program(arguments: &[String]) -> ExitCode {
 }
 
 fn run_program(arguments: &[String]) -> ExitCode {
+    if arguments.iter().any(|argument| argument == "--dry-run") {
+        let filtered = arguments
+            .iter()
+            .filter(|argument| argument.as_str() != "--dry-run")
+            .cloned()
+            .collect::<Vec<_>>();
+        println!("dry-run: no external effects will be executed");
+        return inspect_program(&filtered, false);
+    }
     let Ok((path, program, graph, mut diagnostics)) = load_program(arguments) else {
         return ExitCode::from(2);
     };

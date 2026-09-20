@@ -47,6 +47,19 @@ fn inspects_program_permissions_as_json() {
 }
 
 #[test]
+fn dry_run_reports_plan_without_external_effects() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["run", "--dry-run"])
+        .arg(repository_path("conformance/valid/hello-note.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("dry-run: no external effects"));
+    assert!(stdout.contains("publications: 1"));
+}
+
+#[test]
 fn reports_missing_module() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("check")
