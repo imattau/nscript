@@ -314,13 +314,12 @@ Added `RealRelayHost`, a NIP-01 WebSocket adapter for `ws://` relays with
 typed filter lowering, `REQ`/`EVENT`/`EOSE`/`CLOSE` handling, signed-event
 decoding, and publication `OK` outcomes. The deterministic fake host remains
 the conformance backend. `RealRelayHost::reconnect` provides an explicit
-session reset boundary; automatic retry/backoff and TLS transport remain
-follow-up hardening. `reconnect_with_backoff` now supplies bounded exponential
+session reset boundary; `reconnect_with_backoff` supplies bounded exponential
 retry policy for callers that want recovery before rebuilding subscriptions.
+The adapter now enables native-root Rustls support for `wss://` relay URLs.
 
 ## Deferred
 
-Module operation dispatch, full handler/stream evaluation, TLS relay transport,
-automatic relay retry/backoff,
+Module operation dispatch, full handler/stream evaluation,
 cryptographic signing, NIP-44/NIP-59/NIP-46 host implementations, WASM,
 package distribution, and a stable IR interchange format remain later phases.

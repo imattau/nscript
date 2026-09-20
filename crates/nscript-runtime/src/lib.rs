@@ -1862,7 +1862,7 @@ fn payment_amount(arguments: &[OperationValue]) -> Option<i64> {
 }
 
 #[derive(Debug)]
-/// Minimal production relay adapter for `ws://` Nostr relays.
+/// Minimal production relay adapter for `ws://` and `wss://` Nostr relays.
 ///
 /// The adapter keeps one WebSocket session, translates typed subscription
 /// requests into NIP-01 filters, drains `EVENT` frames through `EOSE`, and
@@ -4140,6 +4140,15 @@ mod tests {
             RealRelayHost::connect("ws://127.0.0.1:1"),
             Err(RuntimeError::RelayUnavailable { relayset })
                 if relayset == "ws://127.0.0.1:1"
+        ));
+    }
+
+    #[test]
+    fn real_relay_adapter_accepts_secure_relay_urls() {
+        assert!(matches!(
+            RealRelayHost::connect("wss://127.0.0.1:1"),
+            Err(RuntimeError::RelayUnavailable { relayset })
+                if relayset == "wss://127.0.0.1:1"
         ));
     }
 
