@@ -47,6 +47,11 @@ Additional modules are resolved locally from deterministic
 cargo run -p nscript-cli -- check -M ./my-modules program.ns
 ```
 
+The built-in module graph now includes typed NIP-44 encryption, NIP-59 gift
+wrapping, and NIP-17 private-message contracts. These modules declare the
+protocol types and required effects; host implementations remain capability
+bound and are not given raw private keys.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

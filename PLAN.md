@@ -46,9 +46,12 @@ performing relay, signer, storage, or other host effects.
 - Added deterministic fake relay/signer/clock/audit/storage hosts and runtime
   tests for signer denial, partial publication, audit ordering, and rollback.
 - Added `nscript run <file>` for checked publication execution against fake hosts.
+- Added declarative NIP-44, NIP-59, and NIP-17 modules with typed encrypted
+  payloads, gift wraps, private messages, and explicit encryption/signing/relay
+  effects; NIP-17 resolves its NIP-44 and NIP-59 dependency graph.
 
 ## Deferred
 
-Full handler/stream evaluation, live relays, cryptographic signing, NIP-46,
-WASM, package distribution, and a stable IR interchange format remain later
-phases.
+Module operation dispatch, full handler/stream evaluation, live relays,
+cryptographic signing, NIP-44/NIP-59/NIP-46 host implementations, WASM,
+package distribution, and a stable IR interchange format remain later phases.

@@ -26,6 +26,18 @@ const BUILTINS: &[(&str, &str)] = &[
         "nip46",
         include_str!("../../../modules/std/nip46/0.1.0.nsm"),
     ),
+    (
+        "nip44",
+        include_str!("../../../modules/std/nip44/0.1.0.nsm"),
+    ),
+    (
+        "nip59",
+        include_str!("../../../modules/std/nip59/0.1.0.nsm"),
+    ),
+    (
+        "nip17",
+        include_str!("../../../modules/std/nip17/0.1.0.nsm"),
+    ),
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -489,6 +501,20 @@ mod tests {
     fn discovers_standard_layout() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules/std");
         let mut registry = ModuleRegistry::default();
-        assert_eq!(registry.load_root(&root).unwrap(), 5);
+        assert_eq!(registry.load_root(&root).unwrap(), 8);
+    }
+
+    #[test]
+    fn resolves_private_message_module_graph() {
+        let registry = ModuleRegistry::with_builtins();
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "nip17".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .unwrap();
+        assert!(graph.modules.contains_key("nip17"));
+        assert!(graph.modules.contains_key("nip44"));
+        assert!(graph.modules.contains_key("nip59"));
     }
 }

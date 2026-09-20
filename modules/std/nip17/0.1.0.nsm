@@ -1,0 +1,17 @@
+module nip17 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/17.md"
+use nip44 @ "^0.1"
+use nip59 @ "^0.1"
+
+record PrivateMessage {
+    field content: Text
+    field recipient: PubKey
+}
+
+error PrivateMessageError {
+    field message: Text
+}
+
+operation send_private(message: PrivateMessage) -> Result<PublishReport,PrivateMessageError> effect Encrypt,Sign,Relay permission private_message
+operation receive_private(payload: GiftWrap) -> Result<PrivateMessage,PrivateMessageError> effect Decrypt permission private_message

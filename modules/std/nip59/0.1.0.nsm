@@ -1,0 +1,15 @@
+module nip59 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/59.md"
+use nip44 @ "^0.1"
+
+nominal GiftWrap from Bytes {
+    require length(value) > 0
+}
+
+error GiftWrapError {
+    field message: Text
+}
+
+operation gift_wrap(payload: EncryptedText, recipient: PubKey) -> Result<GiftWrap,GiftWrapError> effect Encrypt permission gift_wrap
+operation open_gift_wrap(payload: GiftWrap) -> Result<EncryptedText,GiftWrapError> effect Decrypt permission open_gift_wrap
