@@ -3532,6 +3532,32 @@ mod tests {
         );
         assert_eq!(relay.subscriptions.len(), 1);
         assert_eq!(relay.closed_subscriptions.len(), 1);
+
+        relay.queued_events.insert(
+            2,
+            vec![SignedEvent {
+                unsigned: UnsignedEvent {
+                    event_type: "Note".to_owned(),
+                    kind: 1,
+                    content: "failure".to_owned(),
+                    tags: Vec::new(),
+                    created_at: 101,
+                },
+                signer: "alice".to_owned(),
+                id: "event-cycle-failure".to_owned(),
+                signature: "sig-failure".to_owned(),
+            }],
+        );
+        let error = runtime.run_handler_cycle(
+            &checked,
+            Some("public"),
+            &mut relay,
+            &mut claims,
+            &mut storage,
+            |_, _, _| Err(RuntimeError::Cancelled),
+        );
+        assert_eq!(error, Err(RuntimeError::Cancelled));
+        assert!(relay.closed_subscriptions.contains(&2));
     }
 
     #[test]
