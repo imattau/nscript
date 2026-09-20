@@ -320,6 +320,8 @@ The adapter now enables native-root Rustls support for `wss://` relay URLs.
 `RealRelayPool` now reuses one WebSocket per relay, routes globally unique
 subscription handles to their owning connection, fans out publications, and
 supports reconnect-all recovery.
+Release-blocker conformance now includes NIP-19 encode/decode round trips,
+timer overlap rejection, and missing/incompatible package resolution tests.
 
 ## Deferred
 

@@ -621,6 +621,21 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_package_or_incompatible_version() {
+        let registry = ModuleRegistry::with_builtins();
+        let missing = registry.resolve(&[ModuleDependency {
+            name: "not-installed".to_owned(),
+            requirement: VersionReq::STAR,
+        }]);
+        assert!(matches!(missing, Err(ResolutionError::Missing { .. })));
+        let incompatible = registry.resolve(&[ModuleDependency {
+            name: "nip01".to_owned(),
+            requirement: VersionReq::parse(">=9").expect("valid requirement"),
+        }]);
+        assert!(matches!(incompatible, Err(ResolutionError::Missing { .. })));
+    }
+
+    #[test]
     fn builtins_resolve_transitively() {
         let registry = ModuleRegistry::with_builtins();
         let graph = registry

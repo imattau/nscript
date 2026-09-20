@@ -2472,6 +2472,7 @@ pub struct FakeTimerHost {
     pub schedules: Vec<ScheduleRequest>,
     pub next_id: u64,
     pub reject: bool,
+    pub active_names: BTreeSet<String>,
 }
 
 impl TimerHost for FakeTimerHost {
@@ -2488,6 +2489,11 @@ impl TimerHost for FakeTimerHost {
         if request.interval == Some(0) {
             return Err(RuntimeError::InvalidOperationArguments {
                 operation: "schedule_timer".to_owned(),
+            });
+        }
+        if !self.active_names.insert(request.name.clone()) {
+            return Err(RuntimeError::ResourceLimit {
+                resource: "timer_overlap".to_owned(),
             });
         }
         self.schedules.push(request.clone());
@@ -2545,6 +2551,9 @@ impl PureFunctionHost for Nip19FunctionHost {
             ("nip19", "pubkey", [FunctionValue::Npub(value)]) => {
                 decode_npub(value).map(FunctionValue::PubKey)
             }
+            ("nip19", "npub_encode", [FunctionValue::PubKey(value)]) => {
+                encode_npub(value).map(FunctionValue::Npub)
+            }
             ("nip19", "nprofile", [FunctionValue::Text(value)]) => {
                 validate_hrp(value, "nprofile").map(|_| FunctionValue::Nprofile(value.clone()))
             }
@@ -2571,6 +2580,66 @@ fn decode_npub(value: &str) -> Result<String, RuntimeError> {
         });
     }
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn encode_npub(value: &str) -> Result<String, RuntimeError> {
+    const CHARSET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(RuntimeError::InvalidOperationArguments {
+            operation: "nip19.npub_encode".to_owned(),
+        });
+    }
+    let bytes = (0..32)
+        .map(|index| u8::from_str_radix(&value[index * 2..index * 2 + 2], 16))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| RuntimeError::InvalidOperationArguments {
+            operation: "nip19.npub_encode".to_owned(),
+        })?;
+    let data = convert_bits(&bytes, 8, 5, true).ok_or_else(|| {
+        RuntimeError::InvalidOperationArguments {
+            operation: "nip19.npub_encode".to_owned(),
+        }
+    })?;
+    let checksum = bech32_checksum("npub", &data);
+    let mut output = String::from("npub1");
+    for value in data.into_iter().chain(checksum) {
+        output.push(CHARSET[usize::from(value)] as char);
+    }
+    Ok(output)
+}
+
+fn bech32_checksum(hrp: &str, data: &[u8]) -> Vec<u8> {
+    let mut values = hrp.bytes().map(|byte| byte >> 5).collect::<Vec<_>>();
+    values.push(0);
+    values.extend(hrp.bytes().map(|byte| byte & 31));
+    values.extend(data.iter().copied());
+    values.extend([0; 6]);
+    let polymod = bech32_checksum_polymod(&values) ^ 1;
+    (0..6)
+        .rev()
+        .map(|index| ((polymod >> (index * 5)) & 31) as u8)
+        .collect()
+}
+
+fn bech32_checksum_polymod(values: &[u8]) -> u64 {
+    let generators: [u64; 5] = [
+        0x3b6a_57b2,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
+    let mut checksum = 1u64;
+    for value in values {
+        let top = checksum >> 25;
+        checksum = ((checksum & 0x01ff_ffff) << 5) ^ u64::from(*value);
+        for (index, generator) in generators.iter().enumerate() {
+            if (top >> index) & 1 == 1 {
+                checksum ^= *generator;
+            }
+        }
+    }
+    checksum
 }
 
 fn validate_hrp(value: &str, expected: &str) -> Result<Vec<u8>, RuntimeError> {
@@ -2652,7 +2721,7 @@ fn convert_bits(data: &[u8], from: u8, to: u8, pad: bool) -> Option<Vec<u8>> {
     let max_accumulator = (1_u32 << (from + to - 1)) - 1;
     let mut output = Vec::new();
     for value in data {
-        if (*value >> from) != 0 {
+        if (u32::from(*value) >> from) != 0 {
             return None;
         }
         accumulator = ((accumulator << from) | u32::from(*value)) & max_accumulator;
@@ -3865,6 +3934,22 @@ mod tests {
     }
 
     #[test]
+    fn timer_host_rejects_overlapping_schedule_names() {
+        let mut host = FakeTimerHost::default();
+        let request = ScheduleRequest {
+            name: "heartbeat".to_owned(),
+            next_at: 100,
+            interval: Some(60),
+            catch_up: false,
+        };
+        host.schedule(1, &request).expect("first timer");
+        assert!(matches!(
+            host.schedule(2, &request),
+            Err(RuntimeError::ResourceLimit { resource }) if resource == "timer_overlap"
+        ));
+    }
+
+    #[test]
     fn typed_subscriptions_are_host_controlled_and_audited() {
         let mut runtime = Runtime::new(
             FakeRelayHost::default(),
@@ -4704,6 +4789,23 @@ mod tests {
             .invoke_function(&mut host, "nip19", "pubkey", &[npub])
             .expect("npub converts to pubkey");
         assert_eq!(pubkey, FunctionValue::PubKey("00".repeat(32)));
+    }
+
+    #[test]
+    fn nip19_npub_round_trips_through_pubkey() {
+        let mut host = Nip19FunctionHost;
+        let encoded = "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzqujme";
+        let pubkey = host
+            .call_function(
+                "nip19",
+                "pubkey",
+                &[FunctionValue::Npub(encoded.to_owned())],
+            )
+            .expect("decode npub");
+        let round_trip = host
+            .call_function("nip19", "npub_encode", &[pubkey])
+            .expect("encode npub");
+        assert_eq!(round_trip, FunctionValue::Npub(encoded.to_owned()));
     }
 
     #[test]
