@@ -102,7 +102,11 @@ lowers a checked `Reply` record to reply-tag semantics through an explicit
 signing/relay capability.
 
 NIP-18 reposts use typed `Repost` records. `nip18.publish_repost` lowers the
- target reference through the same explicit signing/relay capability boundary.
+target reference through the same explicit signing/relay capability boundary.
+
+NIP-22 comments use typed `Comment` records with arbitrary event targets.
+`nip22.publish_comment` validates and lowers the target/content pair through an
+explicit signing/relay capability.
 
 ## Repository map
 

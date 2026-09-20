@@ -74,6 +74,12 @@ pub struct Repost {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Comment {
+    pub target: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -157,6 +163,7 @@ pub enum OperationValue {
     PrivateMessage(PrivateMessage),
     ThreadReply(ThreadReply),
     Repost(Repost),
+    Comment(Comment),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -901,6 +908,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip22", "publish_comment") => {
+                let [OperationValue::Comment(comment)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if comment.target.is_empty() || comment.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://comments".to_owned(),
+                        accepted: true,
+                        detail: "comment target lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1091,6 +1117,10 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         },
         "Repost" => match text("target") {
             Some(target) => OperationValue::Repost(Repost { target }),
+            _ => value.clone(),
+        },
+        "Comment" => match (text("target"), text("content")) {
+            (Some(target), Some(content)) => OperationValue::Comment(Comment { target, content }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -1533,6 +1563,39 @@ mod tests {
                 }],
             )
             .expect("repost host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip22_lowers_comments_for_arbitrary_event_targets() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip22", "publish_comment"),
+                &mut host,
+                "nip22",
+                "publish_comment",
+                &[OperationValue::Record {
+                    name: "Comment".to_owned(),
+                    fields: vec![
+                        (
+                            "target".to_owned(),
+                            OperationValue::Text("event-to-comment-on".to_owned()),
+                        ),
+                        (
+                            "content".to_owned(),
+                            OperationValue::Text("A useful comment".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("comment host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

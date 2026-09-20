@@ -1,0 +1,11 @@
+// NIP-22 comments can target arbitrary event kinds.
+use nip22
+
+permissions {
+    comment
+}
+
+let result = nip22.publish_comment(Comment {
+    target: "event-to-comment-on";
+    content: "A useful comment";
+})

@@ -93,6 +93,8 @@ performing relay, signer, storage, or other host effects.
   valid source/runtime conformance coverage.
 - Added NIP-18 typed `Repost` records and `publish_repost`, with validated event
   references, repost lowering, and source/runtime conformance coverage.
+- Added NIP-22 typed `Comment` records and `publish_comment`, allowing comments
+  to target arbitrary events with validated content and source/runtime coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
