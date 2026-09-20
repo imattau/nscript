@@ -124,6 +124,10 @@ NIP-37 drafts use typed `Draft` records with explicit storage, signing, and
 relay effects. `nip37.save_draft` validates draft identity and content before
 staging publication.
 
+NIP-38 user status uses typed `UserStatus` records for presence and activity.
+`nip38.publish_status` validates the status and content through an explicit
+signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

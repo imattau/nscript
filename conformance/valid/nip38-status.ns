@@ -1,0 +1,11 @@
+// NIP-38 user status supports lightweight presence and activity automation.
+use nip38
+
+permissions {
+    status
+}
+
+let result = nip38.publish_status(UserStatus {
+    status: "music";
+    content: "Listening to Nostr";
+})

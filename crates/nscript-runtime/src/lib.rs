@@ -106,6 +106,12 @@ pub struct Draft {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserStatus {
+    pub status: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -194,6 +200,7 @@ pub enum OperationValue {
     GroupMessage(GroupMessage),
     Label(Label),
     Draft(Draft),
+    UserStatus(UserStatus),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1036,6 +1043,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip38", "publish_status") => {
+                let [OperationValue::UserStatus(status)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if status.status.is_empty() || status.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://status".to_owned(),
+                        accepted: true,
+                        detail: "user status lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1260,6 +1286,12 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                 identifier,
                 content,
             }),
+            _ => value.clone(),
+        },
+        "UserStatus" => match (text("status"), text("content")) {
+            (Some(status), Some(content)) => {
+                OperationValue::UserStatus(UserStatus { status, content })
+            }
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -1872,6 +1904,39 @@ mod tests {
                 }],
             )
             .expect("draft host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip38_lowers_user_status_updates() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip38", "publish_status"),
+                &mut host,
+                "nip38",
+                "publish_status",
+                &[OperationValue::Record {
+                    name: "UserStatus".to_owned(),
+                    fields: vec![
+                        (
+                            "status".to_owned(),
+                            OperationValue::Text("music".to_owned()),
+                        ),
+                        (
+                            "content".to_owned(),
+                            OperationValue::Text("Listening to Nostr".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("status host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

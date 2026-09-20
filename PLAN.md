@@ -104,6 +104,8 @@ performing relay, signer, storage, or other host effects.
   namespace/value semantics for moderation and classification workflows.
 - Added NIP-37 typed `Draft` records and `save_draft`, with explicit storage,
   signing, and relay effects for publishing workflows.
+- Added NIP-38 typed `UserStatus` records and `publish_status`, with validated
+  presence/activity fields and source/runtime conformance coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
