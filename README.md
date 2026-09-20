@@ -191,6 +191,10 @@ NIP-98 HTTP authentication uses typed `HttpAuthRequest` and
 `AuthenticatedRequest` values. `nip98.authenticate_http` validates secure URLs
 and methods behind explicit signing/HTTP capabilities.
 
+NIP-47 wallet payments use typed `WalletPayment` and `PaymentResult` values.
+`nip47.pay_invoice` validates invoices and positive amounts behind an explicit
+`Payment` capability; payment authorization is never ambient.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

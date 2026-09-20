@@ -139,6 +139,8 @@ performing relay, signer, storage, or other host effects.
   explicit storage/HTTP effects and content-addressed upload validation.
 - Added NIP-98 typed HTTP authentication requests/results, with secure URL and
   method validation behind explicit signing/HTTP capabilities.
+- Added NIP-47 typed `WalletPayment`/`PaymentResult` values and `pay_invoice`,
+  with positive-amount validation and an explicit `Payment` capability.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

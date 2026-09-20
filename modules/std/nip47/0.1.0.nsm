@@ -1,0 +1,20 @@
+module nip47 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/47.md"
+
+record WalletPayment {
+    field invoice: Text
+    field amount: Int
+}
+
+record PaymentResult {
+    field invoice: Text
+    field amount: Int
+    field settled: Bool
+}
+
+error WalletError {
+    field message: Text
+}
+
+operation pay_invoice(payment: WalletPayment) -> Result<PaymentResult,WalletError> effect Payment permission wallet_payment

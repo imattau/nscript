@@ -233,6 +233,19 @@ pub struct AuthenticatedRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WalletPayment {
+    pub invoice: String,
+    pub amount: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentResult {
+    pub invoice: String,
+    pub amount: i64,
+    pub settled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -341,6 +354,8 @@ pub enum OperationValue {
     BlobStored(BlobStored),
     HttpAuthRequest(HttpAuthRequest),
     AuthenticatedRequest(AuthenticatedRequest),
+    WalletPayment(WalletPayment),
+    PaymentResult(PaymentResult),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1499,6 +1514,23 @@ impl OperationHost for FakeOperationHost {
                     method: request.method.clone(),
                 }))
             }
+            ("nip47", "pay_invoice") => {
+                let [OperationValue::WalletPayment(payment)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if payment.invoice.is_empty() || payment.amount <= 0 {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PaymentResult(PaymentResult {
+                    invoice: payment.invoice.clone(),
+                    amount: payment.amount,
+                    settled: true,
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1822,6 +1854,12 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         "HttpAuthRequest" => match (text("url"), text("method")) {
             (Some(url), Some(method)) => {
                 OperationValue::HttpAuthRequest(HttpAuthRequest { url, method })
+            }
+            _ => value.clone(),
+        },
+        "WalletPayment" => match (text("invoice"), integer("amount")) {
+            (Some(invoice), Some(amount)) => {
+                OperationValue::WalletPayment(WalletPayment { invoice, amount })
             }
             _ => value.clone(),
         },
@@ -3017,6 +3055,43 @@ mod tests {
             OperationValue::AuthenticatedRequest(AuthenticatedRequest {
                 url: "https://api.example/resource".to_owned(),
                 method: "GET".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn nip47_lowers_wallet_payments_with_positive_amounts() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip47", "pay_invoice"),
+                &mut host,
+                "nip47",
+                "pay_invoice",
+                &[OperationValue::Record {
+                    name: "WalletPayment".to_owned(),
+                    fields: vec![
+                        (
+                            "invoice".to_owned(),
+                            OperationValue::Text("lnbc1example".to_owned()),
+                        ),
+                        ("amount".to_owned(), OperationValue::Integer(1000)),
+                    ],
+                }],
+            )
+            .expect("wallet host available");
+        assert_eq!(
+            result,
+            OperationValue::PaymentResult(PaymentResult {
+                invoice: "lnbc1example".to_owned(),
+                amount: 1000,
+                settled: true,
             })
         );
     }

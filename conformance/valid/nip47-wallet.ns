@@ -1,0 +1,11 @@
+// NIP-47 wallet payments require an explicit payment capability.
+use nip47
+
+permissions {
+    wallet_payment
+}
+
+let result = nip47.pay_invoice(WalletPayment {
+    invoice: "lnbc1example";
+    amount: 1000;
+})
