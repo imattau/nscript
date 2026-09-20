@@ -29,11 +29,18 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
     // One shared `() -> ()` function type for capability host calls and main.
     push_section(&mut module, 1, &[1, 0x60, 0, 0]);
+    let operation_imports = ir
+        .operations
+        .iter()
+        .enumerate()
+        .map(|(index, operation)| format!("op:{index}:{}", operation_name(operation)))
+        .collect::<Vec<_>>();
     {
         let mut imports = Vec::new();
+        let import_count = ir.capabilities.len() + operation_imports.len();
         push_u32(
             &mut imports,
-            u32::try_from(ir.capabilities.len()).expect("capability count fits WASM"),
+            u32::try_from(import_count).expect("import count fits WASM"),
         );
         for capability in &ir.capabilities {
             push_name(&mut imports, "nscript");
@@ -43,6 +50,12 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
             );
             imports.push(0); // function import
             imports.push(0); // type index
+        }
+        for operation in &operation_imports {
+            push_name(&mut imports, "nscript");
+            push_name(&mut imports, operation);
+            imports.push(0);
+            imports.push(0);
         }
         push_section(&mut module, 2, &imports);
     }
@@ -56,11 +69,19 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     export.push(0);
     push_u32(
         &mut export,
-        u32::try_from(ir.capabilities.len()).expect("import count fits WASM"),
+        u32::try_from(ir.capabilities.len() + operation_imports.len())
+            .expect("import count fits WASM"),
     );
     push_section(&mut module, 7, &export);
     let mut body = vec![0];
     for index in 0..ir.capabilities.len() {
+        body.push(0x10);
+        push_u32(
+            &mut body,
+            u32::try_from(index).expect("import index fits WASM"),
+        );
+    }
+    for index in ir.capabilities.len()..(ir.capabilities.len() + operation_imports.len()) {
         body.push(0x10);
         push_u32(
             &mut body,
@@ -88,6 +109,14 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     let dispatch_json = serde_json::to_vec(&ir.operations).expect("operations are serializable");
     push_custom_section(&mut module, "nscript.dispatch", &dispatch_json);
     module
+}
+
+fn operation_name(operation: &IrOperation) -> &'static str {
+    match operation {
+        IrOperation::CreateEvent { .. } => "create_event",
+        IrOperation::SignEvent { .. } => "sign_event",
+        IrOperation::PublishEvent { .. } => "publish_event",
+    }
 }
 
 fn push_custom_section(module: &mut Vec<u8>, name: &str, payload: &[u8]) {
