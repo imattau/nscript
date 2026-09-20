@@ -9,6 +9,7 @@ use semver::{Version, VersionReq};
 use crate::{ModuleDependency, ModuleDescriptor, parse_module};
 
 const BUILTINS: &[(&str, &str)] = &[
+    ("keys", include_str!("../../../modules/std/keys/0.1.0.nsm")),
     (
         "nip01",
         include_str!("../../../modules/std/nip01/0.1.0.nsm"),
@@ -399,6 +400,7 @@ mod tests {
                 .collect(),
             types: Vec::new(),
             validators: Vec::new(),
+            functions: Vec::new(),
             events: Vec::new(),
             tags: Vec::new(),
             operations: Vec::new(),
@@ -487,6 +489,6 @@ mod tests {
     fn discovers_standard_layout() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules/std");
         let mut registry = ModuleRegistry::default();
-        assert_eq!(registry.load_root(&root).unwrap(), 4);
+        assert_eq!(registry.load_root(&root).unwrap(), 5);
     }
 }

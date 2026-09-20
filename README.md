@@ -27,12 +27,12 @@ The project is specification-first. The current milestone defines the language,
 runtime contract, Nostr interoperability, and conformance expectations before a
 reference interpreter is built.
 
-The first Rust front-end slice is now under development. It can validate
-publication defaults, hardened-agent restrictions, and built-in or local module
-imports:
+The Rust front end now parses and statically checks the Draft 0.1 source corpus,
+and can emit an inspectable publication IR without contacting relays or keys:
 
 ```bash
 cargo run -p nscript-cli -- check conformance/valid/default-publish.ns
+cargo run -p nscript-cli -- compile --emit ir conformance/valid/hello-note.ns
 cargo run -p nscript-cli -- module check conformance/modules/valid/nip10.nsm
 cargo run -p nscript-cli -- module hash conformance/modules/valid/nip10.nsm
 cargo run -p nscript-cli -- module describe conformance/modules/valid/nip10.nsm
@@ -52,7 +52,7 @@ cargo run -p nscript-cli -- check -M ./my-modules program.ns
 - [`rfcs/`](rfcs/) contains companion proposals, including package distribution.
 - [`conformance/`](conformance/) contains executable examples and negative tests
   for future implementations.
-- `crates/` contains the incremental Rust syntax, semantics, and CLI front end.
+- `crates/` contains the Rust syntax, semantics, IR, and CLI front end.
 
 ## Status
 

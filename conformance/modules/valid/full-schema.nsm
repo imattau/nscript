@@ -25,6 +25,8 @@ validator profile_name(value: Text) {
     require non_empty(value)
 }
 
+function display_name(profile: Profile) -> NonEmptyText
+
 event ProfileEvent {
     kind: 0
     mode: replaceable

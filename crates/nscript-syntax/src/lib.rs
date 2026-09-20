@@ -4,12 +4,42 @@ use std::collections::BTreeSet;
 
 use unicode_ident::{is_xid_continue, is_xid_start};
 
+pub mod ast;
+mod parser;
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
     pub line: usize,
     pub column: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SourceId(pub u32);
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Severity {
+    #[default]
+    Error,
+    Warning,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Label {
+    pub source: SourceId,
+    pub span: Span,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StructuredDiagnostic {
+    pub code: &'static str,
+    pub severity: Severity,
+    pub message: String,
+    pub primary: Label,
+    pub secondary: Vec<Label>,
+    pub notes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -57,6 +87,7 @@ pub struct Import {
 
 #[derive(Clone, Debug, Default)]
 pub struct Program {
+    pub ast: ast::AstProgram,
     pub profile: RuntimeProfile,
     pub profile_span: Option<Span>,
     pub defaults: Defaults,
@@ -72,6 +103,33 @@ pub struct Diagnostic {
     pub code: &'static str,
     pub message: String,
     pub span: Span,
+}
+
+impl Diagnostic {
+    #[must_use]
+    pub fn structured(&self, source: SourceId) -> StructuredDiagnostic {
+        StructuredDiagnostic {
+            code: self.code,
+            severity: Severity::Error,
+            message: redact_sensitive(&self.message),
+            primary: Label {
+                source,
+                span: self.span,
+                message: self.message.clone(),
+            },
+            secondary: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+}
+
+#[must_use]
+pub fn redact_sensitive(value: &str) -> String {
+    if value.contains("SecretKey") || value.contains("Nsec") {
+        "[redacted sensitive value]".to_owned()
+    } else {
+        value.to_owned()
+    }
 }
 
 #[must_use]
@@ -205,8 +263,11 @@ pub fn lex(source: &str) -> Vec<Token> {
 #[must_use]
 pub fn parse_program(source: &str) -> (Program, Vec<Diagnostic>) {
     let tokens = lex(source);
-    let mut program = Program::default();
-    let mut diagnostics = Vec::new();
+    let (ast, mut diagnostics) = parser::parse(&tokens);
+    let mut program = Program {
+        ast,
+        ..Program::default()
+    };
     let mut index = 0;
 
     for token in &tokens {

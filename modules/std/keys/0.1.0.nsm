@@ -1,0 +1,4 @@
+module keys @ 0.1.0
+language ">=0.1.0 <0.2.0"
+
+operation generate() -> SecretKey effect Sign permission secret_key

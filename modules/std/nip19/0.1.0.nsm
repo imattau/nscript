@@ -22,3 +22,10 @@ enum EntityPrefix {
 validator non_empty(value: Text) {
     require length(value) > 0
 }
+
+error DecodeError {
+    field message: Text
+}
+
+function npub(value: Text) -> Result<Npub,DecodeError>
+function pubkey(value: Npub) -> Result<PubKey,DecodeError>

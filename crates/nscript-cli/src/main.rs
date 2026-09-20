@@ -1,14 +1,19 @@
 use std::{env, fs, path::PathBuf, process::ExitCode};
 
 use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_hex, parse_module};
-use nscript_semantics::analyze;
-use nscript_syntax::{Diagnostic, parse_program};
+use nscript_semantics::{analyze_with_modules, check};
+use nscript_syntax::{Diagnostic, Program, parse_program};
 use semver::VersionReq;
 
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
     match arguments.as_slice() {
         [command, rest @ ..] if command == "check" => check_program(rest),
+        [command, emit, format, rest @ ..]
+            if command == "compile" && emit == "--emit" && format == "ir" =>
+        {
+            compile_program(rest)
+        }
         [module, command, path] if module == "module" && command == "check" => {
             check_module(path, false)
         }
@@ -20,7 +25,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -53,6 +58,11 @@ fn describe_module(path: &str) -> ExitCode {
     for validator in validators {
         println!("validator {}", validator.name);
     }
+    let mut functions = descriptor.functions.iter().collect::<Vec<_>>();
+    functions.sort_by_key(|item| &item.name);
+    for function in functions {
+        println!("function {}", function.name);
+    }
     let mut events = descriptor.events.iter().collect::<Vec<_>>();
     events.sort_by_key(|event| &event.name);
     for event in events {
@@ -82,19 +92,61 @@ fn describe_module(path: &str) -> ExitCode {
 }
 
 fn check_program(arguments: &[String]) -> ExitCode {
-    let Ok((module_paths, path)) = parse_check_arguments(arguments) else {
-        eprintln!("usage: nscript check [-M <directory>]... <file>");
+    let Ok((path, program, graph, mut diagnostics)) = load_program(arguments) else {
         return ExitCode::from(2);
     };
-    let Ok(source) = read_source(path) else {
+    diagnostics.extend(analyze_with_modules(&program, &graph));
+    finish(&path, diagnostics)
+}
+
+fn compile_program(arguments: &[String]) -> ExitCode {
+    let Ok((path, program, graph, mut diagnostics)) = load_program(arguments) else {
         return ExitCode::from(2);
+    };
+    diagnostics.extend(analyze_with_modules(&program, &graph));
+    if !diagnostics.is_empty() {
+        return finish(&path, diagnostics);
+    }
+    let (checked, typed_diagnostics) = check(&program);
+    if !typed_diagnostics.is_empty() {
+        return finish(&path, typed_diagnostics);
+    }
+    let ir = nscript_ir::lower(
+        &program,
+        &checked.expect("a diagnostic-free program is checked"),
+        &graph,
+    );
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&ir).expect("IR contains only serializable values")
+    );
+    ExitCode::SUCCESS
+}
+
+fn load_program(
+    arguments: &[String],
+) -> Result<
+    (
+        String,
+        Program,
+        nscript_modules::ResolvedModuleGraph,
+        Vec<Diagnostic>,
+    ),
+    (),
+> {
+    let Ok((module_paths, path)) = parse_check_arguments(arguments) else {
+        eprintln!("expected [-M <directory>]... <file>");
+        return Err(());
+    };
+    let Ok(source) = read_source(path) else {
+        return Err(());
     };
     let (program, mut diagnostics) = parse_program(&source);
     let mut registry = ModuleRegistry::with_builtins();
     for module_path in module_paths {
         if let Err(error) = registry.load_root(&module_path) {
             eprintln!("error[E4003]: {error}");
-            return ExitCode::FAILURE;
+            return Err(());
         }
     }
     let mut roots = Vec::new();
@@ -116,25 +168,28 @@ fn check_program(arguments: &[String]) -> ExitCode {
             }),
         }
     }
-    if diagnostics.is_empty()
-        && let Err(error) = registry.resolve(&roots)
-    {
-        let code = match &error {
-            ResolutionError::Cycle(_) => "E4001",
-            ResolutionError::Missing { .. } => "E4002",
-            ResolutionError::Conflict { .. } => "E4003",
-        };
-        diagnostics.push(Diagnostic {
-            code,
-            message: error.to_string(),
-            span: program
-                .imports
-                .first()
-                .map_or_else(nscript_syntax::Span::default, |import| import.span),
-        });
-    }
-    diagnostics.extend(analyze(&program));
-    finish(path, diagnostics)
+    let graph = match registry.resolve(&roots) {
+        Ok(graph) => graph,
+        Err(error) => {
+            let code = match &error {
+                ResolutionError::Cycle(_) => "E4001",
+                ResolutionError::Missing { .. } => "E4002",
+                ResolutionError::Conflict { .. } => "E4003",
+            };
+            diagnostics.push(Diagnostic {
+                code,
+                message: error.to_string(),
+                span: program
+                    .imports
+                    .first()
+                    .map_or_else(nscript_syntax::Span::default, |import| import.span),
+            });
+            nscript_modules::ResolvedModuleGraph {
+                modules: std::collections::BTreeMap::new(),
+            }
+        }
+    };
+    Ok((path.to_owned(), program, graph, diagnostics))
 }
 
 fn parse_check_arguments(arguments: &[String]) -> Result<(Vec<PathBuf>, &str), ()> {

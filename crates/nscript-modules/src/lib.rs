@@ -13,7 +13,7 @@ pub use resolver::{
     ResolvedModuleGraph,
 };
 
-pub const CANONICAL_ENCODING_VERSION: u8 = 2;
+pub const CANONICAL_ENCODING_VERSION: u8 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModuleId {
@@ -29,6 +29,7 @@ pub struct ModuleDescriptor {
     pub dependencies: Vec<ModuleDependency>,
     pub types: Vec<TypeDefinition>,
     pub validators: Vec<ValidatorDefinition>,
+    pub functions: Vec<FunctionDefinition>,
     pub events: Vec<EventDefinition>,
     pub tags: Vec<TagDefinition>,
     pub operations: Vec<HostOperation>,
@@ -84,6 +85,13 @@ pub struct ValidatorDefinition {
     pub name: String,
     pub parameters: Vec<SchemaField>,
     pub requirements: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub parameters: Vec<SchemaField>,
+    pub return_type: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,6 +197,7 @@ struct ModuleItems {
     dependencies: Vec<ModuleDependency>,
     types: Vec<TypeDefinition>,
     validators: Vec<ValidatorDefinition>,
+    functions: Vec<FunctionDefinition>,
     events: Vec<EventDefinition>,
     tags: Vec<TagDefinition>,
     operations: Vec<HostOperation>,
@@ -242,15 +251,7 @@ impl Parser {
         };
 
         let mut items = self.parse_items();
-        validate_unique_names(
-            &items.types,
-            &items.validators,
-            &items.events,
-            &items.tags,
-            &items.operations,
-            &items.errors,
-            &mut self.diagnostics,
-        );
+        validate_unique_names(&items, &mut self.diagnostics);
         validate_validator_graph(&items.validators, &mut self.diagnostics);
         items
             .dependencies
@@ -271,6 +272,7 @@ impl Parser {
             dependencies: items.dependencies,
             types: items.types,
             validators: items.validators,
+            functions: items.functions,
             events: items.events,
             tags: items.tags,
             operations: items.operations,
@@ -306,6 +308,10 @@ impl Parser {
             } else if self.at_keyword("validator") {
                 if let Some(item) = self.parse_validator() {
                     items.validators.push(item);
+                }
+            } else if self.at_keyword("function") {
+                if let Some(item) = self.parse_function_signature() {
+                    items.functions.push(item);
                 }
             } else if self.at_keyword("event") {
                 if let Some(event) = self.parse_event() {
@@ -478,6 +484,22 @@ impl Parser {
             return_type,
             effects,
             permission,
+        })
+    }
+
+    fn parse_function_signature(&mut self) -> Option<FunctionDefinition> {
+        self.expect_keyword("function")?;
+        let (name, span) = self.take_identifier()?;
+        let parameters = self.parse_parameters()?;
+        validate_fields(&name, span, &parameters, &mut self.diagnostics);
+        self.expect_symbol('-')?;
+        self.expect_symbol('>')?;
+        let return_type = self.take_type_name()?;
+        self.skip_to_next_line();
+        Some(FunctionDefinition {
+            name,
+            parameters,
+            return_type,
         })
     }
 
@@ -1025,24 +1047,18 @@ fn parse_event_mode(value: &str) -> Option<EventMode> {
     }
 }
 
-fn validate_unique_names(
-    types: &[TypeDefinition],
-    validators: &[ValidatorDefinition],
-    events: &[EventDefinition],
-    tags: &[TagDefinition],
-    operations: &[HostOperation],
-    errors: &[ErrorDefinition],
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn validate_unique_names(items: &ModuleItems, diagnostics: &mut Vec<Diagnostic>) {
     let mut names = BTreeSet::new();
-    for name in types
+    for name in items
+        .types
         .iter()
         .map(TypeDefinition::name)
-        .chain(validators.iter().map(|item| item.name.as_str()))
-        .chain(events.iter().map(|event| event.name.as_str()))
-        .chain(tags.iter().map(|tag| tag.name.as_str()))
-        .chain(operations.iter().map(|item| item.name.as_str()))
-        .chain(errors.iter().map(|item| item.name.as_str()))
+        .chain(items.validators.iter().map(|item| item.name.as_str()))
+        .chain(items.functions.iter().map(|item| item.name.as_str()))
+        .chain(items.events.iter().map(|event| event.name.as_str()))
+        .chain(items.tags.iter().map(|tag| tag.name.as_str()))
+        .chain(items.operations.iter().map(|item| item.name.as_str()))
+        .chain(items.errors.iter().map(|item| item.name.as_str()))
     {
         if !names.insert(name) {
             diagnostics.push(Diagnostic {
@@ -1166,6 +1182,7 @@ fn canonical_hash(descriptor: &ModuleDescriptor) -> [u8; 32] {
     encode_dependencies(&mut canonical, &descriptor.dependencies);
     encode_types(&mut canonical, &descriptor.types);
     encode_validators(&mut canonical, &descriptor.validators);
+    encode_functions(&mut canonical, &descriptor.functions);
     encode_events(&mut canonical, &descriptor.events);
     encode_tags(&mut canonical, &descriptor.tags);
     encode_operations(&mut canonical, &descriptor.operations);
@@ -1222,6 +1239,17 @@ fn encode_validators(output: &mut Vec<u8>, validators: &[ValidatorDefinition]) {
         encode_string(output, &validator.name);
         encode_fields(output, &validator.parameters, false);
         encode_sorted_strings(output, &validator.requirements);
+    }
+}
+
+fn encode_functions(output: &mut Vec<u8>, functions: &[FunctionDefinition]) {
+    let mut functions = functions.iter().collect::<Vec<_>>();
+    functions.sort_by_key(|item| &item.name);
+    encode_count(output, functions.len());
+    for function in functions {
+        encode_string(output, &function.name);
+        encode_fields(output, &function.parameters, false);
+        encode_string(output, &function.return_type);
     }
 }
 
@@ -1375,7 +1403,7 @@ mod tests {
         assert_eq!(descriptor.tags[0].wire_name, "e");
         assert_eq!(
             hash_hex(&descriptor.canonical_hash),
-            "c5c46f80d62c7b75f112d255f831e991d2354e8684ebe6cef14a7c6a953ebe0f"
+            "1ec0df32f017a4ad4d610feee5a81da7b88fd74503f0906166d2a3b85bab8ddf"
         );
     }
 
@@ -1387,6 +1415,7 @@ mod tests {
         assert_eq!(descriptor.dependencies.len(), 1);
         assert_eq!(descriptor.types.len(), 3);
         assert_eq!(descriptor.validators.len(), 2);
+        assert_eq!(descriptor.functions.len(), 1);
         assert_eq!(descriptor.events[0].fields.len(), 1);
         assert_eq!(descriptor.events[0].requirements.len(), 1);
         assert_eq!(descriptor.tags.len(), 1);

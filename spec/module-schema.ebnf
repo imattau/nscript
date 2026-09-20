@@ -7,8 +7,8 @@ reference_decl   = "reference", string, terminator ;
 import_decl      = "use", module_path, "@", ( semver | string ), terminator ;
 
 module_item      = nominal_decl | record_decl | enum_decl | validator_decl
-                 | event_schema | tag_schema | operation_decl | error_decl
-                 | vector_decl ;
+                 | function_decl | event_schema | tag_schema | operation_decl
+                 | error_decl | vector_decl ;
 
 nominal_decl     = "nominal", identifier, "from", type, block ;
 record_decl      = "record", identifier, schema_fields ;
@@ -16,6 +16,8 @@ enum_decl        = "enum", identifier, "{", identifier,
                    { ",", identifier }, [ "," ], "}" ;
 validator_decl   = "validator", identifier, "(", [ parameters ], ")",
                    "{", require_decl, { require_decl }, "}" ;
+function_decl    = "function", identifier, "(", [ parameters ], ")",
+                   "->", type, terminator ;
 
 event_schema     = "event", identifier, "{",
                    "kind", ":", integer, terminator,

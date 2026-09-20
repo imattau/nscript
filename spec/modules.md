@@ -11,8 +11,8 @@ descriptor.
 
 Every module declares a unique name, semantic version, compatible NScript range,
 and optional upstream NIP reference. It may import exact or ranged module
-versions and export nominal types, records, enums, validators, events, tags,
-host operations, errors, and conformance vectors.
+versions and export nominal types, records, enums, validators, pure function
+signatures, events, tags, host operations, errors, and conformance vectors.
 
 ```nostr-module
 module nip10 @ 0.1.0
@@ -76,8 +76,8 @@ packaged, and canonicalizes descriptors by UTF-8 name ordering with comments and
 insignificant whitespace removed. The SHA-256 descriptor hash identifies the
 loaded interface.
 
-Canonical encoding version 2 begins with `NSM`, a zero byte, and version byte
-`2`. Counts and UTF-8 byte lengths are unsigned 32-bit big-endian integers;
+Canonical encoding version 3 begins with `NSM`, a zero byte, and version byte
+`3`. Counts and UTF-8 byte lengths are unsigned 32-bit big-endian integers;
 event kinds and tag positions are unsigned 16-bit big-endian integers. Header
 fields and every exported declaration category are sorted by UTF-8 name order.
 Record and error fields are sorted by name; operation and validator parameters
@@ -88,18 +88,21 @@ are encoded as regular `0`, replaceable `1`, addressable `2`, and ephemeral `3`.
 Every collection includes its count, so concatenated values are unambiguous.
 Declared dependency names and normalized requirements are included before
 exports. The hash is SHA-256 over these bytes. Version 1 is retained only as a
-draft hash identifier and is not emitted for new descriptors.
+draft hash identifier and is not emitted for new descriptors. Version 2 remains
+readable as a draft identifier but omitted pure callable signatures.
 
 Two modules conflict when they export the same qualified identity, claim an
 exclusive event kind incompatibly, or provide different definitions for the
 same canonical tag constructor. Conflicts produce `E4003`; source import order
 never resolves them.
 
-The resulting public interface is:
+Pure function signatures declare callable module conversions and constructors;
+host operations declare effectful capability calls. The resulting public
+interface is:
 
 ```text
 ModuleDescriptor {
-    identity, language_range, dependencies, types, validators, events,
+    identity, language_range, dependencies, types, validators, functions, events,
     tags, operations, errors, vectors, canonical_hash
 }
 ```

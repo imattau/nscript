@@ -1,0 +1,53 @@
+{
+  "schema": "nscript-ir/0.1",
+  "profile": "standard",
+  "modules": [
+    {
+      "name": "nip01",
+      "version": "0.1.0",
+      "sha256": "5045a9191569e3d97e7bbb0e202d38aeb63a07c28ae816bf7e350f0062c2d2cd"
+    },
+    {
+      "name": "nip46",
+      "version": "0.1.0",
+      "sha256": "c5f6f6dd3059aee1e08b54c39412bc5c200e167e03b173c0e7eec0c85d677031"
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "account",
+      "kind": "signer"
+    },
+    {
+      "name": "public",
+      "kind": "relayset"
+    }
+  ],
+  "permissions": [
+    "publish Note to public",
+    "relay public",
+    "sign Note with account"
+  ],
+  "operations": [
+    {
+      "op": "create_event",
+      "result": "%0",
+      "event": "Note",
+      "kind": 1,
+      "content": "Hello, Nostr",
+      "created_at": "host"
+    },
+    {
+      "op": "sign_event",
+      "result": "%1",
+      "event": "%0",
+      "signer": "account"
+    },
+    {
+      "op": "publish_event",
+      "result": "%2",
+      "event": "%1",
+      "relayset": "public"
+    }
+  ]
+}

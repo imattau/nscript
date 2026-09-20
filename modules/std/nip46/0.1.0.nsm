@@ -7,4 +7,5 @@ error SignerError {
     field message: Text
 }
 
+operation nip46() -> Signer effect Sign permission sign
 operation sign_event(event: UnsignedEvent) -> Result<SignedEvent,SignerError> effect Sign permission sign_event

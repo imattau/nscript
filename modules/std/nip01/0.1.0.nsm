@@ -8,6 +8,13 @@ record MetadataContent {
     field picture: Option<Text>
 }
 
+event Note {
+    kind: 1
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+}
+
 event Metadata {
     kind: 0
     mode: replaceable
