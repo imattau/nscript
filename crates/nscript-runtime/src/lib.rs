@@ -2111,6 +2111,147 @@ impl SubscriptionHost for RealRelayHost {
     }
 }
 
+/// Reusable connection pool for multiple Nostr relays.
+#[derive(Debug, Default)]
+pub struct RealRelayPool {
+    relays: BTreeMap<String, RealRelayHost>,
+    handles: BTreeMap<u64, (String, SubscriptionHandle)>,
+    next_handle: u64,
+}
+
+impl RealRelayPool {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            relays: BTreeMap::new(),
+            handles: BTreeMap::new(),
+            next_handle: 1,
+        }
+    }
+
+    /// Connect and add a relay to the pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RelayUnavailable` when the relay cannot be connected.
+    pub fn add_relay(&mut self, relay: impl Into<String>) -> Result<(), RuntimeError> {
+        let relay = relay.into();
+        let host = RealRelayHost::connect(relay.clone())?;
+        self.relays.insert(relay, host);
+        Ok(())
+    }
+
+    /// Reconnect every pooled relay and invalidate subscription handles.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first relay connection failure.
+    pub fn reconnect_all(&mut self) -> Result<(), RuntimeError> {
+        self.handles.clear();
+        for relay in self.relays.values_mut() {
+            relay.reconnect()?;
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn relay_urls(&self) -> Vec<String> {
+        self.relays.keys().cloned().collect()
+    }
+
+    fn select_relay(&self, relayset: Option<&str>) -> Option<String> {
+        relayset
+            .and_then(|name| self.relays.contains_key(name).then(|| name.to_owned()))
+            .or_else(|| self.relays.keys().next().cloned())
+    }
+}
+
+impl RelayHost for RealRelayPool {
+    fn publish(
+        &mut self,
+        invocation: InvocationId,
+        event: &SignedEvent,
+        relayset: &str,
+    ) -> Result<PublishReport, RuntimeError> {
+        if let Some(relay) = self.relays.get_mut(relayset) {
+            return relay.publish(invocation, event, relayset);
+        }
+        let mut outcomes = Vec::new();
+        for (name, relay) in &mut self.relays {
+            outcomes.extend(relay.publish(invocation, event, name)?.outcomes);
+        }
+        if outcomes.is_empty() {
+            return Err(RuntimeError::RelayUnavailable {
+                relayset: relayset.to_owned(),
+            });
+        }
+        Ok(PublishReport { outcomes })
+    }
+}
+
+impl SubscriptionHost for RealRelayPool {
+    fn subscribe(
+        &mut self,
+        invocation: InvocationId,
+        request: &SubscriptionRequest,
+    ) -> Result<SubscriptionHandle, RuntimeError> {
+        let relay_name = self
+            .select_relay(request.relayset.as_deref())
+            .ok_or_else(|| RuntimeError::RelayUnavailable {
+                relayset: request.relayset.clone().unwrap_or_default(),
+            })?;
+        let relay =
+            self.relays
+                .get_mut(&relay_name)
+                .ok_or_else(|| RuntimeError::RelayUnavailable {
+                    relayset: relay_name.clone(),
+                })?;
+        let local = relay.subscribe(invocation, request)?;
+        let handle = SubscriptionHandle {
+            id: self.next_handle,
+        };
+        self.next_handle += 1;
+        self.handles.insert(handle.id, (relay_name, local));
+        Ok(handle)
+    }
+
+    fn unsubscribe(
+        &mut self,
+        invocation: InvocationId,
+        handle: &SubscriptionHandle,
+    ) -> Result<(), RuntimeError> {
+        let Some((relay_name, local)) = self.handles.remove(&handle.id) else {
+            return Err(RuntimeError::RelayUnavailable {
+                relayset: handle.id.to_string(),
+            });
+        };
+        self.relays
+            .get_mut(&relay_name)
+            .ok_or_else(|| RuntimeError::RelayUnavailable {
+                relayset: relay_name.clone(),
+            })?
+            .unsubscribe(invocation, &local)
+    }
+
+    fn poll(
+        &mut self,
+        invocation: InvocationId,
+        handle: &SubscriptionHandle,
+    ) -> Result<SubscriptionBatch, RuntimeError> {
+        let (relay_name, local) = self.handles.get(&handle.id).cloned().ok_or_else(|| {
+            RuntimeError::RelayUnavailable {
+                relayset: handle.id.to_string(),
+            }
+        })?;
+        self.relays
+            .get_mut(&relay_name)
+            .ok_or_else(|| RuntimeError::RelayUnavailable {
+                relayset: relay_name.clone(),
+            })?
+            .poll(invocation, &local)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FakeRelayHost {
     pub relays: BTreeMap<String, bool>,
@@ -4149,6 +4290,25 @@ mod tests {
             RealRelayHost::connect("wss://127.0.0.1:1"),
             Err(RuntimeError::RelayUnavailable { relayset })
                 if relayset == "wss://127.0.0.1:1"
+        ));
+    }
+
+    #[test]
+    fn real_relay_pool_routes_empty_pool_as_unavailable() {
+        let mut pool = RealRelayPool::new();
+        let request = SubscriptionRequest {
+            event_type: "Note".to_owned(),
+            relayset: Some("public".to_owned()),
+            kinds: vec![1],
+            tag_equals: Vec::new(),
+            cursor: None,
+            author: None,
+            since: None,
+            limit: None,
+        };
+        assert!(matches!(
+            pool.subscribe(1, &request),
+            Err(RuntimeError::RelayUnavailable { relayset }) if relayset == "public"
         ));
     }
 

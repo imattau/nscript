@@ -317,6 +317,9 @@ the conformance backend. `RealRelayHost::reconnect` provides an explicit
 session reset boundary; `reconnect_with_backoff` supplies bounded exponential
 retry policy for callers that want recovery before rebuilding subscriptions.
 The adapter now enables native-root Rustls support for `wss://` relay URLs.
+`RealRelayPool` now reuses one WebSocket per relay, routes globally unique
+subscription handles to their owning connection, fans out publications, and
+supports reconnect-all recovery.
 
 ## Deferred
 
