@@ -32,6 +32,8 @@ publication defaults and hardened-agent restrictions:
 
 ```bash
 cargo run -p nscript-cli -- check conformance/valid/default-publish.ns
+cargo run -p nscript-cli -- module check conformance/modules/valid/nip10.nsm
+cargo run -p nscript-cli -- module hash conformance/modules/valid/nip10.nsm
 ```
 
 ## Repository map

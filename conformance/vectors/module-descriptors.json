@@ -1,0 +1,9 @@
+{
+  "encoding": "NSM canonical descriptor v1",
+  "vectors": [
+    {
+      "source": "../modules/valid/nip10.nsm",
+      "sha256": "61b91456a056048526f89026784d84699bfccf2bf6e06b331e6fa2c0594781a8"
+    }
+  ]
+}

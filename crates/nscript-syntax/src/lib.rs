@@ -2,6 +2,8 @@
 
 use std::collections::BTreeSet;
 
+use unicode_ident::{is_xid_continue, is_xid_start};
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Span {
     pub start: usize,
@@ -67,19 +69,15 @@ pub struct Diagnostic {
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn lex(source: &str) -> Vec<Token> {
-    let bytes = source.as_bytes();
     let mut tokens = Vec::new();
-    let (mut offset, mut line, mut column) = (0, 1, 1);
+    let mut chars = source.char_indices().peekable();
+    let (mut line, mut column) = (1, 1);
 
-    while offset < bytes.len() {
-        let start = offset;
+    while let Some((start, character)) = chars.next() {
         let start_column = column;
-        match bytes[offset] {
-            b' ' | b'\t' | b'\r' => {
-                offset += 1;
-                column += 1;
-            }
-            b'\n' => {
+        match character {
+            ' ' | '\t' | '\r' => column += 1,
+            '\n' => {
                 tokens.push(Token {
                     kind: TokenKind::Newline,
                     span: Span {
@@ -89,90 +87,103 @@ pub fn lex(source: &str) -> Vec<Token> {
                         column,
                     },
                 });
-                offset += 1;
                 line += 1;
                 column = 1;
             }
-            b'/' if bytes.get(offset + 1) == Some(&b'/') => {
-                while offset < bytes.len() && bytes[offset] != b'\n' {
-                    offset += 1;
+            '/' if matches!(chars.peek(), Some((_, '/'))) => {
+                chars.next();
+                column += 2;
+                while let Some((_, next)) = chars.peek() {
+                    if *next == '\n' {
+                        break;
+                    }
+                    chars.next();
                     column += 1;
                 }
             }
-            b'"' => {
-                offset += 1;
+            '"' => {
                 column += 1;
-                let value_start = offset;
-                while offset < bytes.len() && bytes[offset] != b'"' {
-                    if bytes[offset] == b'\\' && offset + 1 < bytes.len() {
-                        offset += 2;
-                        column += 2;
+                let value_start = start + 1;
+                let mut value_end = value_start;
+                let mut escaped = false;
+                for (offset, next) in chars.by_ref() {
+                    if !escaped && next == '"' {
+                        value_end = offset;
+                        column += 1;
+                        break;
+                    }
+                    if next == '\n' {
+                        line += 1;
+                        column = 1;
                     } else {
-                        offset += 1;
                         column += 1;
                     }
+                    value_end = offset + next.len_utf8();
+                    escaped = !escaped && next == '\\';
+                    if next != '\\' {
+                        escaped = false;
+                    }
                 }
-                let value = source[value_start..offset].to_owned();
-                if offset < bytes.len() {
-                    offset += 1;
-                    column += 1;
-                }
+                let end = chars.peek().map_or(source.len(), |(offset, _)| *offset);
                 tokens.push(Token {
-                    kind: TokenKind::String(value),
+                    kind: TokenKind::String(source[value_start..value_end].to_owned()),
                     span: Span {
                         start,
-                        end: offset,
+                        end,
                         line,
                         column: start_column,
                     },
                 });
             }
-            byte if byte.is_ascii_alphabetic() || byte == b'_' => {
-                offset += 1;
+            character if character == '_' || is_xid_start(character) => {
                 column += 1;
-                while offset < bytes.len()
-                    && (bytes[offset].is_ascii_alphanumeric() || bytes[offset] == b'_')
-                {
-                    offset += 1;
+                let mut end = start + character.len_utf8();
+                while let Some((offset, next)) = chars.peek() {
+                    if !is_xid_continue(*next) {
+                        break;
+                    }
+                    end = *offset + next.len_utf8();
+                    chars.next();
                     column += 1;
                 }
                 tokens.push(Token {
-                    kind: TokenKind::Identifier(source[start..offset].to_owned()),
+                    kind: TokenKind::Identifier(source[start..end].to_owned()),
                     span: Span {
                         start,
-                        end: offset,
+                        end,
                         line,
                         column: start_column,
                     },
                 });
             }
-            byte if byte.is_ascii_digit() => {
-                offset += 1;
+            character if character.is_ascii_digit() => {
                 column += 1;
-                while offset < bytes.len()
-                    && (bytes[offset].is_ascii_digit() || bytes[offset] == b'_')
-                {
-                    offset += 1;
+                let mut end = start + 1;
+                while let Some((offset, next)) = chars.peek() {
+                    if !(next.is_ascii_digit() || *next == '_') {
+                        break;
+                    }
+                    end = *offset + 1;
+                    chars.next();
                     column += 1;
                 }
                 tokens.push(Token {
-                    kind: TokenKind::Number(source[start..offset].to_owned()),
+                    kind: TokenKind::Number(source[start..end].to_owned()),
                     span: Span {
                         start,
-                        end: offset,
+                        end,
                         line,
                         column: start_column,
                     },
                 });
             }
             symbol => {
-                offset += 1;
                 column += 1;
                 tokens.push(Token {
-                    kind: TokenKind::Symbol(char::from(symbol)),
+                    kind: TokenKind::Symbol(symbol),
                     span: Span {
                         start,
-                        end: offset,
+                        end: start + symbol.len_utf8(),
                         line,
                         column: start_column,
                     },
@@ -344,7 +355,20 @@ fn block_end(tokens: &[Token], start: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{RuntimeProfile, parse_program};
+    use super::{RuntimeProfile, TokenKind, lex, parse_program};
+
+    #[test]
+    fn lexes_unicode_xid_identifiers() {
+        let tokens = lex("let café = 1\nlet 東京 = café\n");
+        let identifiers = tokens
+            .iter()
+            .filter_map(|token| match &token.kind {
+                TokenKind::Identifier(value) => Some(value.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(identifiers, ["let", "café", "let", "東京", "café"]);
+    }
 
     #[test]
     fn parses_profile_defaults_and_publish() {

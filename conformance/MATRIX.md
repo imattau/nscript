@@ -11,7 +11,7 @@ against deterministic host fakes.
 | Permission/effect checking | `mentions.ns` | `missing-permission.ns` | Capability denial |
 | Publication defaults | `default-publish.ns` | `missing-default-signer.ns`, `missing-default-relays.ns` | Expansion trace planned |
 | Hardened-agent profile | `default-publish.ns` | `hardened-secret-key.ns`, `hardened-filesystem.ns` | Transitive dependency denial planned |
-| Declarative NIP modules | `modules/valid/nip10.nsm` | `modules/invalid/dynamic-wire-name.nsm` | Descriptor/hash vector planned |
+| Declarative NIP modules | `modules/valid/nip10.nsm` | `modules/invalid/dynamic-wire-name.nsm` | `vectors/module-descriptors.json` |
 | Secret-key isolation | Planned | `secret-without-capability.ns` | Secret redaction |
 | Query lowering and bounds | `mentions.ns` | `unbounded-local-filter.ns` | Filter trace planned |
 | Pattern exhaustiveness | `exhaustive-match.ns` | `non-exhaustive-match.ns`, `unreachable-pattern.ns` | — |

@@ -1,19 +1,15 @@
 [package]
-name = "nscript-cli"
+name = "nscript-modules"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "nscript"
-path = "src/main.rs"
-
 [dependencies]
-nscript-modules = { path = "../nscript-modules" }
-nscript-semantics = { path = "../nscript-semantics" }
 nscript-syntax = { path = "../nscript-syntax" }
+semver.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

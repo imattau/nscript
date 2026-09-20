@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/nscript-cli",
+    "crates/nscript-modules",
     "crates/nscript-semantics",
     "crates/nscript-syntax",
 ]
@@ -19,3 +20,8 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+[workspace.dependencies]
+semver = "1"
+sha2 = "0.10"
+unicode-ident = "1"
