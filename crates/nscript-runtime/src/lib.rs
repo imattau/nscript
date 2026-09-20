@@ -1,7 +1,8 @@
 //! Deterministic reference runtime and host capability contracts.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::{net::TcpStream, thread, time::Duration};
+use std::fmt::Write as _;
+use std::{fs, net::TcpStream, path::PathBuf, thread, time::Duration};
 
 use nscript_semantics::{
     CheckedArgument, CheckedHandler, CheckedProgram, CheckedPublication, CheckedScheduleKind,
@@ -722,6 +723,90 @@ impl TransactionalStorageHost for InMemoryStorage {
 impl IdempotencyHost for InMemoryStorage {
     fn claim_once(&mut self, _invocation: InvocationId, key: &str) -> Result<bool, RuntimeError> {
         Ok(self.claimed.insert(key.to_owned()))
+    }
+}
+
+/// Durable key/value storage host for local deployments.
+///
+/// The format is intentionally small and deterministic: one tab-separated
+/// record per line, with `v` records for values and `c` records for claims.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileStorage {
+    pub path: PathBuf,
+    pub values: BTreeMap<String, String>,
+    pub claimed: BTreeSet<String>,
+}
+
+impl FileStorage {
+    /// Opens an existing store or creates an empty one in memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::StoreConflict`] when the file cannot be read or
+    /// contains malformed records.
+    pub fn open(path: impl Into<PathBuf>) -> Result<Self, RuntimeError> {
+        let path = path.into();
+        let mut storage = Self {
+            path,
+            values: BTreeMap::new(),
+            claimed: BTreeSet::new(),
+        };
+        if storage.path.exists() {
+            let contents =
+                fs::read_to_string(&storage.path).map_err(|_| RuntimeError::StoreConflict)?;
+            for line in contents.lines() {
+                let mut fields = line.splitn(3, '\t');
+                match (fields.next(), fields.next(), fields.next()) {
+                    (Some("v"), Some(key), Some(value)) => {
+                        storage.values.insert(key.to_owned(), value.to_owned());
+                    }
+                    (Some("c"), Some(key), None) => {
+                        storage.claimed.insert(key.to_owned());
+                    }
+                    _ => return Err(RuntimeError::StoreConflict),
+                }
+            }
+        }
+        Ok(storage)
+    }
+
+    fn persist(&self) -> Result<(), RuntimeError> {
+        let mut output = String::new();
+        for (key, value) in &self.values {
+            let _ = writeln!(output, "v\t{key}\t{value}");
+        }
+        for key in &self.claimed {
+            let _ = writeln!(output, "c\t{key}");
+        }
+        let temp = self.path.with_extension("tmp");
+        fs::write(&temp, output).map_err(|_| RuntimeError::StoreConflict)?;
+        fs::rename(temp, &self.path).map_err(|_| RuntimeError::StoreConflict)
+    }
+}
+
+impl StorageHost for FileStorage {
+    fn begin(&mut self, _invocation: InvocationId) -> StorageTransaction {
+        StorageTransaction {
+            reads: self.values.clone(),
+            ..StorageTransaction::default()
+        }
+    }
+}
+
+impl TransactionalStorageHost for FileStorage {
+    fn commit(&mut self, transaction: StorageTransaction) {
+        self.values.extend(transaction.writes);
+        let _ = self.persist();
+    }
+}
+
+impl IdempotencyHost for FileStorage {
+    fn claim_once(&mut self, _invocation: InvocationId, key: &str) -> Result<bool, RuntimeError> {
+        if !self.claimed.insert(key.to_owned()) {
+            return Ok(false);
+        }
+        self.persist()?;
+        Ok(true)
     }
 }
 
@@ -3814,6 +3899,26 @@ mod tests {
             select_replaceable_event([&tie_high, &tie_low]),
             Some(&tie_low)
         );
+    }
+
+    #[test]
+    fn file_storage_persists_transactions_and_claims() {
+        let path = std::env::temp_dir().join(format!("nscript-storage-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut storage = FileStorage::open(&path).expect("opens file storage");
+        let mut transaction = storage.begin(1);
+        transaction.put("answer", "42");
+        storage.commit(transaction);
+        assert!(storage.claim_once(1, "event-1").expect("claims once"));
+        drop(storage);
+        let mut reopened = FileStorage::open(&path).expect("reopens file storage");
+        assert_eq!(reopened.begin(2).get("answer"), Some("42"));
+        assert!(
+            !reopened
+                .claim_once(2, "event-1")
+                .expect("deduplicates claim")
+        );
+        let _ = std::fs::remove_file(path);
     }
     use nscript_semantics::CheckedPublication;
     use nscript_syntax::Span;

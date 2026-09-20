@@ -325,6 +325,10 @@ timer overlap rejection, and missing/incompatible package resolution tests.
 Added `nscript package manifest`, which validates an NScript source program and
 emits an `npack`-compatible manifest with runtime capability requirements and
 an NScript permission/effect review section.
+Added a durable `FileStorage` host for local deployments. It preserves the
+existing transactional and idempotency interfaces using deterministic
+tab-separated records and atomic replacement, providing a real persistent
+backend without expanding the Draft 0.1 dependency surface.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
