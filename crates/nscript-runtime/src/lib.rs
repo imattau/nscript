@@ -112,6 +112,11 @@ pub struct UserStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthenticatedRelay {
+    pub relay: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -201,6 +206,7 @@ pub enum OperationValue {
     Label(Label),
     Draft(Draft),
     UserStatus(UserStatus),
+    AuthenticatedRelay(AuthenticatedRelay),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1060,6 +1066,21 @@ impl OperationHost for FakeOperationHost {
                         accepted: true,
                         detail: "user status lowered".to_owned(),
                     }],
+                }))
+            }
+            ("nip42", "authenticate") => {
+                let [OperationValue::Text(relay)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if !relay.starts_with("wss://") || relay.len() <= 7 {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::AuthenticatedRelay(AuthenticatedRelay {
+                    relay: relay.clone(),
                 }))
             }
             ("nip65", "publish_relay_list") => {
@@ -1938,6 +1959,31 @@ mod tests {
             )
             .expect("status host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip42_authenticates_secure_relays() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip42", "authenticate"),
+                &mut host,
+                "nip42",
+                "authenticate",
+                &[OperationValue::Text("wss://relay.example".to_owned())],
+            )
+            .expect("relay auth host available");
+        assert!(matches!(
+            result,
+            OperationValue::AuthenticatedRelay(AuthenticatedRelay { relay })
+                if relay == "wss://relay.example"
+        ));
     }
 
     #[test]

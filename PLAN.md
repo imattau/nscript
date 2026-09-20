@@ -106,6 +106,8 @@ performing relay, signer, storage, or other host effects.
   signing, and relay effects for publishing workflows.
 - Added NIP-38 typed `UserStatus` records and `publish_status`, with validated
   presence/activity fields and source/runtime conformance coverage.
+- Added NIP-42 authenticated relay sessions as a runtime capability, with
+  explicit relay/signing permission, URL validation, and typed session output.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

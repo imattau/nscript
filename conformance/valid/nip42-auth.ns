@@ -1,0 +1,8 @@
+// NIP-42 authentication is an explicit relay/signing capability.
+use nip42
+
+permissions {
+    relay_auth
+}
+
+let session = nip42.authenticate("wss://relay.example")

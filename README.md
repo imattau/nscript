@@ -128,6 +128,10 @@ NIP-38 user status uses typed `UserStatus` records for presence and activity.
 `nip38.publish_status` validates the status and content through an explicit
 signing/relay capability.
 
+NIP-42 relay authentication is exposed as the typed `nip42.authenticate`
+runtime primitive. It validates secure relay URLs and requires an explicit
+relay-auth capability before returning an authenticated session.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.
