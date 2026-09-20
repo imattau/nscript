@@ -268,6 +268,8 @@ publication count, and schedule count without executing external effects.
 explicitly suppressing all external host effects.
 The `--json` variant provides the same dry-run manifest for CI and agent
 review tooling.
+Normal `run` now registers checked timers through the same runtime scheduler
+and reports their assigned handles before executing operations/publications.
 Inspect output also lists checked handler event types and lowered author/tag
 predicates for pre-execution review.
 The first handler-execution slice now records checked `on` handlers and lowers

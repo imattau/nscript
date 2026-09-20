@@ -221,6 +221,14 @@ fn run_program(arguments: &[String]) -> ExitCode {
     let audit = nscript_runtime::RecordingAudit::default();
     let mut runtime = nscript_runtime::Runtime::new(relay, signer, clock, audit);
     let checked = checked.expect("checked program");
+    let mut timers = nscript_runtime::FakeTimerHost::default();
+    if let Err(error) = runtime.schedule_program(&mut timers, &checked) {
+        eprintln!("error[R1003]: {error:?}");
+        return ExitCode::from(1);
+    }
+    for timer in &timers.schedules {
+        println!("timer {} at {}", timer.name, timer.next_at);
+    }
     let operation_policy = checked.operation_calls.iter().fold(
         nscript_runtime::OperationPolicy::default(),
         |policy, call| policy.allow(&call.module, &call.operation),
