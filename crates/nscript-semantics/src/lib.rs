@@ -67,6 +67,7 @@ pub struct CheckedHandler {
     pub author: Option<String>,
     pub tag_equals: Vec<(String, String)>,
     pub body_items: usize,
+    pub body: Vec<Item>,
     pub span: Span,
 }
 
@@ -872,6 +873,7 @@ impl<'a> Checker<'a> {
                         author,
                         tag_equals,
                         body_items: body.len(),
+                        body: body.clone(),
                         span,
                     });
                 } else {

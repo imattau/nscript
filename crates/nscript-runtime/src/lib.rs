@@ -5,7 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use nscript_semantics::{
     CheckedArgument, CheckedHandler, CheckedProgram, CheckedPublication, CheckedScheduleKind,
 };
-use nscript_syntax::Program;
+use nscript_syntax::{
+    Program,
+    ast::{ExprKind, Item, StatementKind},
+};
 
 pub type InvocationId = u64;
 
@@ -1254,6 +1257,60 @@ where
             self.unsubscribe(subscription_host, &handle)?;
         }
         Ok(dispatched)
+    }
+
+    /// Execute the currently supported handler body subset through host effects.
+    ///
+    /// The initial interpreter slice supports direct `print("...")` statements;
+    /// unsupported statements return a stable runtime error instead of being
+    /// silently skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns logging or unsupported-body failures.
+    pub fn execute_handler_body<H: LogHost>(
+        &mut self,
+        handler: &CheckedHandler,
+        log_host: &mut H,
+    ) -> Result<(), RuntimeError> {
+        for item in &handler.body {
+            let Item::Statement(statement) = item else {
+                continue;
+            };
+            let StatementKind::Expression(expression) = &statement.value else {
+                return Err(RuntimeError::OperationUnavailable {
+                    module: "handler".to_owned(),
+                    operation: "body_statement".to_owned(),
+                });
+            };
+            let ExprKind::Call { callee, arguments } = &expression.value else {
+                return Err(RuntimeError::OperationUnavailable {
+                    module: "handler".to_owned(),
+                    operation: "body_expression".to_owned(),
+                });
+            };
+            if !matches!(&callee.value, ExprKind::Identifier(name) if name == "print")
+                || arguments.len() != 1
+            {
+                return Err(RuntimeError::OperationUnavailable {
+                    module: "handler".to_owned(),
+                    operation: "body_call".to_owned(),
+                });
+            }
+            let ExprKind::Text(message) = &arguments[0].value else {
+                return Err(RuntimeError::InvalidOperationArguments {
+                    operation: "print".to_owned(),
+                });
+            };
+            self.log(
+                log_host,
+                &LogRecord {
+                    level: "info".to_owned(),
+                    message: message.clone(),
+                },
+            )?;
+        }
+        Ok(())
     }
 
     /// Run a staged storage transaction and commit it only when the closure succeeds.
@@ -3318,6 +3375,30 @@ mod tests {
             subscriptions[0].tag_equals,
             vec![("t".to_owned(), "nostrhost".to_owned())]
         );
+    }
+
+    #[test]
+    fn handler_body_executes_print_through_log_host() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note { print(\"hello\") }";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut logs = FakeLogHost {
+            max_message_bytes: 16,
+            ..Default::default()
+        };
+        runtime
+            .execute_handler_body(&checked.handlers[0], &mut logs)
+            .expect("print statement executes");
+        assert_eq!(logs.records.len(), 1);
+        assert_eq!(logs.records[0].message, "hello");
     }
 
     #[test]

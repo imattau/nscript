@@ -274,9 +274,9 @@ It also lowers checked handlers into and reports typed subscriptions before
 executing external operations.
 Inspect output also lists checked handler event types and lowered author/tag
 predicates for pre-execution review.
-The first handler-execution slice now records checked `on` handlers and lowers
-them into typed subscription requests; handler body interpretation remains the
-next step.
+Checked handlers retain their typed AST body, and the first interpreter slice
+executes direct `print("…")` statements through the bounded, audited
+`LogHost`; broader expression and control-flow evaluation remains next.
 Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
 Signed-event values now carry typed `(tag, value)` pairs, allowing lowered tag
