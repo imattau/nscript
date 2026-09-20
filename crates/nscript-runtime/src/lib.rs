@@ -1075,6 +1075,11 @@ where
         if !request.kinds.is_empty() && !request.kinds.contains(&event.unsigned.kind) {
             return false;
         }
+        if let Some(since) = request.since
+            && event.unsigned.created_at < since
+        {
+            return false;
+        }
         if let Some(author) = &request.author
             && author != &event.signer
         {
@@ -3292,7 +3297,7 @@ mod tests {
             tag_equals: Vec::new(),
             cursor: None,
             author: Some("alice".to_owned()),
-            since: None,
+            since: Some(100),
             limit: None,
         };
         let event = SignedEvent {
@@ -3321,6 +3326,14 @@ mod tests {
             FakeClock,
             RecordingAudit,
         >::matches_subscription(&request, &wrong_author));
+        let mut stale = event;
+        stale.unsigned.created_at = 99;
+        assert!(!Runtime::<
+            FakeRelayHost,
+            FakeSignerHost,
+            FakeClock,
+            RecordingAudit,
+        >::matches_subscription(&request, &stale));
     }
 
     #[test]
