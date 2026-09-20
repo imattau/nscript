@@ -2,7 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nscript_semantics::{CheckedArgument, CheckedProgram, CheckedPublication, CheckedScheduleKind};
+use nscript_semantics::{
+    CheckedArgument, CheckedHandler, CheckedProgram, CheckedPublication, CheckedScheduleKind,
+};
 use nscript_syntax::Program;
 
 pub type InvocationId = u64;
@@ -1162,6 +1164,58 @@ where
             .to_owned(),
         });
         result.map(|()| true)
+    }
+
+    /// Run one polling cycle for every checked handler.
+    ///
+    /// This composes handler lowering, subscription lifecycle, bounded polling,
+    /// idempotency, and transactional body execution. The callback is the
+    /// interpreter seam for handler statements.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first subscription, polling, idempotency, storage, or body
+    /// failure.
+    pub fn run_handler_cycle<H, I, T, F>(
+        &mut self,
+        checked: &CheckedProgram,
+        relayset: Option<&str>,
+        subscription_host: &mut H,
+        idempotency_host: &mut I,
+        storage_host: &mut T,
+        mut body: F,
+    ) -> Result<usize, RuntimeError>
+    where
+        H: SubscriptionHost,
+        I: IdempotencyHost,
+        T: TransactionalStorageHost,
+        F: FnMut(
+            &CheckedHandler,
+            &SignedEvent,
+            &mut StorageTransaction,
+        ) -> Result<(), RuntimeError>,
+    {
+        let subscriptions = Self::handler_subscriptions(checked, relayset);
+        let mut dispatched = 0;
+        for (handler, request) in checked.handlers.iter().zip(subscriptions.iter()) {
+            let handle = self.subscribe(subscription_host, request)?;
+            let batch = self.poll_subscription(subscription_host, &handle)?;
+            for event in batch.events {
+                let key = event.id.clone();
+                if self.dispatch_event_transactional(
+                    request,
+                    &event,
+                    idempotency_host,
+                    storage_host,
+                    &key,
+                    |event, transaction| body(handler, event, transaction),
+                )? {
+                    dispatched += 1;
+                }
+            }
+            self.unsubscribe(subscription_host, &handle)?;
+        }
+        Ok(dispatched)
     }
 
     /// Run a staged storage transaction and commit it only when the closure succeeds.
@@ -3368,6 +3422,37 @@ mod tests {
             Err(RuntimeError::Cancelled)
         );
         assert_eq!(storage.values.get("seen").map(String::as_str), Some("yes"));
+    }
+
+    #[test]
+    fn handler_cycle_composes_subscription_and_transaction_boundaries() {
+        let source = "permissions {\n    read Note from public\n    relay public\n}\non Note { }";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut relay = FakeRelayHost::default();
+        let mut claims = InMemoryStorage::default();
+        let mut storage = InMemoryStorage::default();
+        let dispatched = runtime
+            .run_handler_cycle(
+                &checked,
+                Some("public"),
+                &mut relay,
+                &mut claims,
+                &mut storage,
+                |_, _, _| Ok(()),
+            )
+            .expect("empty cycle succeeds");
+        assert_eq!(dispatched, 0);
+        assert_eq!(relay.subscriptions.len(), 1);
+        assert_eq!(relay.closed_subscriptions.len(), 1);
     }
 
     #[test]

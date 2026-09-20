@@ -273,6 +273,8 @@ delivered signed events before body execution.
 host-controlled body callback exactly once, auditing handler success/failure.
 `Runtime::dispatch_event_transactional` composes that boundary with staged
 storage, committing handler state only on successful body completion.
+`Runtime::run_handler_cycle` now composes the full one-cycle transport path:
+handler lowering, subscribe, poll, dispatch, transaction, and unsubscribe.
 
 ## Deferred
 
