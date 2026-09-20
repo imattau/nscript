@@ -87,6 +87,10 @@ before publication.
 NIP-66 relay monitoring uses typed `RelayStatus` values and validates uptime and
 latency bounds before publication.
 
+NIP-5A site deployment uses typed `SiteDeployment` values and explicit
+storage/signing/relay capabilities; it does not grant ambient filesystem or
+shell access.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

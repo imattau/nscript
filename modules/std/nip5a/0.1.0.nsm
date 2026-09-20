@@ -1,0 +1,14 @@
+module nip5a @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/5A.md"
+
+record SiteDeployment {
+    field domain: Text
+    field source: Text
+}
+
+error SiteDeploymentError {
+    field message: Text
+}
+
+operation publish_site(deployment: SiteDeployment) -> Result<PublishReport,SiteDeploymentError> effect Storage,Sign,Relay permission deploy_site

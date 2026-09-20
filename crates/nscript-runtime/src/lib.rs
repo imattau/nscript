@@ -126,6 +126,12 @@ pub struct RelayStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SiteDeployment {
+    pub domain: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
@@ -142,6 +148,7 @@ pub enum OperationValue {
     PaymentIntent(PaymentIntent),
     CalendarEvent(CalendarEvent),
     RelayStatus(RelayStatus),
+    SiteDeployment(SiteDeployment),
     PublishReport(PublishReport),
 }
 
@@ -957,6 +964,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip5a", "publish_site") => {
+                let [OperationValue::SiteDeployment(deployment)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if deployment.domain.is_empty() || deployment.source.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://site-deployment".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: operation.to_owned(),
@@ -1489,5 +1515,29 @@ mod tests {
             })],
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn nip5a_publishes_scoped_site_deployment() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip5a", "publish_site"),
+                &mut host,
+                "nip5a",
+                "publish_site",
+                &[OperationValue::SiteDeployment(SiteDeployment {
+                    domain: "example.com".to_owned(),
+                    source: "blossom://site-manifest".to_owned(),
+                })],
+            )
+            .expect("site deployment operation is authorized");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 }

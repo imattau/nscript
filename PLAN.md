@@ -81,6 +81,8 @@ performing relay, signer, storage, or other host effects.
   validation and deterministic runtime coverage.
 - Added typed NIP-66 `RelayStatus` publication with uptime and latency bounds
   for relay monitoring automation.
+- Added typed NIP-5A `SiteDeployment` publication with explicit storage,
+  signing, and relay effects for NostrHost-oriented deployment workflows.
 
 ## Deferred
 
