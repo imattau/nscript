@@ -9,6 +9,8 @@ rust-version.workspace = true
 [dependencies]
 nscript-semantics = { path = "../nscript-semantics" }
 nscript-syntax = { path = "../nscript-syntax" }
+serde_json.workspace = true
+tungstenite.workspace = true
 
 [lints]
 workspace = true

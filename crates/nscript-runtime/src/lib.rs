@@ -1,6 +1,7 @@
 //! Deterministic reference runtime and host capability contracts.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::net::TcpStream;
 
 use nscript_semantics::{
     CheckedArgument, CheckedHandler, CheckedProgram, CheckedPublication, CheckedScheduleKind,
@@ -9,6 +10,9 @@ use nscript_syntax::{
     Program,
     ast::{ExprKind, Item, StatementKind},
 };
+use serde_json::{Value, json};
+use tungstenite::stream::MaybeTlsStream;
+use tungstenite::{Message, WebSocket, client::connect};
 
 pub type InvocationId = u64;
 
@@ -1854,6 +1858,198 @@ fn payment_amount(arguments: &[OperationValue]) -> Option<i64> {
             })
         }
         _ => None,
+    }
+}
+
+#[derive(Debug)]
+/// Minimal production relay adapter for `ws://` Nostr relays.
+///
+/// The adapter keeps one WebSocket session, translates typed subscription
+/// requests into NIP-01 filters, drains `EVENT` frames through `EOSE`, and
+/// publishes signed events while preserving relay outcomes.
+pub struct RealRelayHost {
+    relay: String,
+    socket: WebSocket<MaybeTlsStream<TcpStream>>,
+    next_subscription: u64,
+    subscriptions: BTreeMap<u64, String>,
+}
+
+impl RealRelayHost {
+    /// Connect to a relay URL.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RelayUnavailable` when the URL cannot be opened.
+    pub fn connect(relay: impl Into<String>) -> Result<Self, RuntimeError> {
+        let relay = relay.into();
+        let (socket, _) = connect(relay.as_str()).map_err(|_| RuntimeError::RelayUnavailable {
+            relayset: relay.clone(),
+        })?;
+        Ok(Self {
+            relay,
+            socket,
+            next_subscription: 1,
+            subscriptions: BTreeMap::new(),
+        })
+    }
+
+    fn send_json(&mut self, value: &Value) -> Result<(), RuntimeError> {
+        self.socket
+            .send(Message::Text(value.to_string().into()))
+            .map_err(|_| RuntimeError::RelayUnavailable {
+                relayset: self.relay.clone(),
+            })
+    }
+
+    fn receive_json(&mut self) -> Result<Value, RuntimeError> {
+        loop {
+            let message = self
+                .socket
+                .read()
+                .map_err(|_| RuntimeError::RelayUnavailable {
+                    relayset: self.relay.clone(),
+                })?;
+            if let Message::Text(text) = message {
+                return serde_json::from_str(&text).map_err(|_| RuntimeError::RelayUnavailable {
+                    relayset: self.relay.clone(),
+                });
+            }
+        }
+    }
+
+    fn parse_event(value: &Value) -> Option<SignedEvent> {
+        let object = value.as_object()?;
+        let tags = object
+            .get("tags")?
+            .as_array()?
+            .iter()
+            .filter_map(|tag| {
+                let values = tag.as_array()?;
+                Some((
+                    values.first()?.as_str()?.to_owned(),
+                    values.get(1)?.as_str()?.to_owned(),
+                ))
+            })
+            .collect();
+        Some(SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Event".to_owned(),
+                kind: u16::try_from(object.get("kind")?.as_u64()?).ok()?,
+                content: object.get("content")?.as_str()?.to_owned(),
+                tags,
+                created_at: object.get("created_at")?.as_u64()?,
+            },
+            signer: object.get("pubkey")?.as_str()?.to_owned(),
+            id: object.get("id")?.as_str()?.to_owned(),
+            signature: object.get("sig")?.as_str()?.to_owned(),
+        })
+    }
+}
+
+impl RelayHost for RealRelayHost {
+    fn publish(
+        &mut self,
+        _invocation: InvocationId,
+        event: &SignedEvent,
+        _relayset: &str,
+    ) -> Result<PublishReport, RuntimeError> {
+        self.send_json(&json!([
+            "EVENT",
+            {
+                "id": event.id,
+                "pubkey": event.signer,
+                "created_at": event.unsigned.created_at,
+                "kind": event.unsigned.kind,
+                "tags": event.unsigned.wire_tags(),
+                "content": event.unsigned.content,
+                "sig": event.signature,
+            }
+        ]))?;
+        let response = self.receive_json()?;
+        let accepted = response.get(0).and_then(Value::as_str) == Some("OK")
+            && response.get(2).and_then(Value::as_bool).unwrap_or(false);
+        Ok(PublishReport {
+            outcomes: vec![RelayOutcome {
+                relay: self.relay.clone(),
+                accepted,
+                detail: response
+                    .get(3)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            }],
+        })
+    }
+}
+
+impl SubscriptionHost for RealRelayHost {
+    fn subscribe(
+        &mut self,
+        _invocation: InvocationId,
+        request: &SubscriptionRequest,
+    ) -> Result<SubscriptionHandle, RuntimeError> {
+        let id = self.next_subscription;
+        self.next_subscription += 1;
+        let mut filter = serde_json::Map::new();
+        if !request.kinds.is_empty() {
+            filter.insert("kinds".to_owned(), json!(request.kinds));
+        }
+        if let Some(author) = &request.author {
+            filter.insert("authors".to_owned(), json!([author]));
+        }
+        if let Some(since) = request.since {
+            filter.insert("since".to_owned(), json!(since));
+        }
+        if let Some(limit) = request.limit {
+            filter.insert("limit".to_owned(), json!(limit));
+        }
+        for (name, value) in &request.tag_equals {
+            filter.insert(format!("#{name}"), json!([value]));
+        }
+        self.send_json(&json!(["REQ", id.to_string(), Value::Object(filter)]))?;
+        self.subscriptions.insert(id, id.to_string());
+        Ok(SubscriptionHandle { id })
+    }
+
+    fn unsubscribe(
+        &mut self,
+        _invocation: InvocationId,
+        handle: &SubscriptionHandle,
+    ) -> Result<(), RuntimeError> {
+        self.send_json(&json!(["CLOSE", handle.id.to_string()]))?;
+        self.subscriptions.remove(&handle.id);
+        Ok(())
+    }
+
+    fn poll(
+        &mut self,
+        _invocation: InvocationId,
+        handle: &SubscriptionHandle,
+    ) -> Result<SubscriptionBatch, RuntimeError> {
+        let subscription = self.subscriptions.get(&handle.id).cloned().ok_or_else(|| {
+            RuntimeError::RelayUnavailable {
+                relayset: self.relay.clone(),
+            }
+        })?;
+        let mut events = Vec::new();
+        loop {
+            let frame = self.receive_json()?;
+            match frame.get(0).and_then(Value::as_str) {
+                Some("EVENT") if frame.get(1).and_then(Value::as_str) == Some(&subscription) => {
+                    if let Some(event) = frame.get(2).and_then(Self::parse_event) {
+                        events.push(event);
+                    }
+                }
+                Some("EOSE") if frame.get(1).and_then(Value::as_str) == Some(&subscription) => {
+                    return Ok(SubscriptionBatch {
+                        events,
+                        complete: true,
+                        cursor: None,
+                    });
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -3857,6 +4053,27 @@ mod tests {
         assert_eq!(logs.records.len(), 2);
         assert_eq!(logs.records[0].message, "t=one");
         assert_eq!(logs.records[1].message, "t=two");
+    }
+
+    #[test]
+    fn real_relay_adapter_decodes_nip01_event_frames() {
+        let frame = serde_json::json!({
+            "id": "event-1",
+            "pubkey": "alice",
+            "created_at": 100,
+            "kind": 1,
+            "tags": [["t", "nostr"]],
+            "content": "hello",
+            "sig": "signature"
+        });
+        let event = RealRelayHost::parse_event(&frame).expect("valid NIP-01 event");
+        assert_eq!(event.id, "event-1");
+        assert_eq!(event.signer, "alice");
+        assert_eq!(event.unsigned.kind, 1);
+        assert_eq!(
+            event.unsigned.tags,
+            vec![("t".to_owned(), "nostr".to_owned())]
+        );
     }
 
     #[test]
