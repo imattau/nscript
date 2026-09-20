@@ -165,6 +165,8 @@ performing relay, signer, storage, or other host effects.
   relay-backed stream filters with deterministic fake-host coverage.
 - Added audited subscription cancellation through `Runtime::unsubscribe`,
   completing host-owned stream lifecycle management.
+- Added typed `SubscriptionBatch` polling with completeness metadata through
+  `Runtime::poll_subscription`, covering the relay stream delivery boundary.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

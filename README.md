@@ -223,6 +223,8 @@ Stream and query lowering can use `SubscriptionHost` and `Runtime::subscribe`
 with typed event filters, keeping relay lifecycle and transport policy in the
 host runtime. `Runtime::unsubscribe` closes those handles through the same
 audited capability boundary.
+`Runtime::poll_subscription` drains typed event batches and preserves
+EOSE-like completeness metadata for stream consumers.
 
 ## Repository map
 

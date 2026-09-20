@@ -131,6 +131,12 @@ pub struct SubscriptionHandle {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubscriptionBatch {
+    pub events: Vec<SignedEvent>,
+    pub complete: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScheduleRequest {
     pub name: String,
     pub next_at: u64,
@@ -528,6 +534,17 @@ pub trait SubscriptionHost {
         invocation: InvocationId,
         handle: &SubscriptionHandle,
     ) -> Result<(), RuntimeError>;
+
+    /// Drain the next batch of events for a subscription.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable runtime error when the handle is unknown or delivery fails.
+    fn poll(
+        &mut self,
+        invocation: InvocationId,
+        handle: &SubscriptionHandle,
+    ) -> Result<SubscriptionBatch, RuntimeError>;
 }
 
 pub trait HttpHost {
@@ -824,6 +841,33 @@ where
             operation: "unsubscribe".to_owned(),
             target: handle.id.to_string(),
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
+    }
+
+    /// Poll an audited event batch from a typed subscription.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's delivery failure.
+    pub fn poll_subscription<H: SubscriptionHost>(
+        &mut self,
+        host: &mut H,
+        handle: &SubscriptionHandle,
+    ) -> Result<SubscriptionBatch, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.poll(invocation, handle);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "poll_subscription".to_owned(),
+            target: handle.id.to_string(),
+            result: match &result {
+                Ok(batch) if batch.complete => "complete",
+                Ok(_) => "ok",
+                Err(_) => "error",
+            }
+            .to_owned(),
         });
         result
     }
@@ -1139,6 +1183,7 @@ pub struct FakeRelayHost {
     pub subscriptions: Vec<SubscriptionRequest>,
     pub next_subscription: u64,
     pub closed_subscriptions: BTreeSet<u64>,
+    pub queued_events: BTreeMap<u64, Vec<SignedEvent>>,
 }
 
 impl RelayHost for FakeRelayHost {
@@ -1216,6 +1261,25 @@ impl SubscriptionHost for FakeRelayHost {
         }
         self.closed_subscriptions.insert(handle.id);
         Ok(())
+    }
+
+    fn poll(
+        &mut self,
+        _invocation: InvocationId,
+        handle: &SubscriptionHandle,
+    ) -> Result<SubscriptionBatch, RuntimeError> {
+        if handle.id == 0 || handle.id > self.next_subscription {
+            return Err(RuntimeError::InvalidOperationArguments {
+                operation: "poll_subscription".to_owned(),
+            });
+        }
+        if self.closed_subscriptions.contains(&handle.id) {
+            return Err(RuntimeError::Cancelled);
+        }
+        Ok(SubscriptionBatch {
+            events: self.queued_events.remove(&handle.id).unwrap_or_default(),
+            complete: true,
+        })
     }
 }
 
@@ -2704,11 +2768,17 @@ mod tests {
         assert_eq!(handle, SubscriptionHandle { id: 1 });
         assert_eq!(relay.subscriptions, vec![request]);
         assert_eq!(runtime.audit.entries[0].operation, "subscribe");
+        let batch = runtime
+            .poll_subscription(&mut relay, &handle)
+            .expect("subscription polls");
+        assert!(batch.events.is_empty());
+        assert!(batch.complete);
+        assert_eq!(runtime.audit.entries[1].result, "complete");
         runtime
             .unsubscribe(&mut relay, &handle)
             .expect("subscription closes");
         assert!(relay.closed_subscriptions.contains(&1));
-        assert_eq!(runtime.audit.entries[1].operation, "unsubscribe");
+        assert_eq!(runtime.audit.entries[2].operation, "unsubscribe");
 
         let invalid = SubscriptionRequest {
             event_type: "Note".to_owned(),
@@ -2721,13 +2791,13 @@ mod tests {
             Err(RuntimeError::InvalidOperationArguments { operation })
                 if operation == "subscribe"
         ));
-        assert_eq!(runtime.audit.entries[2].result, "error");
+        assert_eq!(runtime.audit.entries[3].result, "error");
         assert!(matches!(
             runtime.unsubscribe(&mut relay, &SubscriptionHandle { id: 9 }),
             Err(RuntimeError::InvalidOperationArguments { operation })
                 if operation == "unsubscribe"
         ));
-        assert_eq!(runtime.audit.entries[3].result, "error");
+        assert_eq!(runtime.audit.entries[4].result, "error");
     }
 
     #[test]
