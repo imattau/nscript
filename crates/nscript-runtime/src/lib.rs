@@ -540,6 +540,10 @@ pub trait StorageHost {
     fn begin(&mut self, invocation: InvocationId) -> StorageTransaction;
 }
 
+pub trait TransactionalStorageHost: StorageHost {
+    fn commit(&mut self, transaction: StorageTransaction);
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InMemoryStorage {
     pub values: BTreeMap<String, String>,
@@ -548,6 +552,12 @@ pub struct InMemoryStorage {
 impl StorageHost for InMemoryStorage {
     fn begin(&mut self, _invocation: InvocationId) -> StorageTransaction {
         StorageTransaction::default()
+    }
+}
+
+impl TransactionalStorageHost for InMemoryStorage {
+    fn commit(&mut self, transaction: StorageTransaction) {
+        self.values.extend(transaction.writes);
     }
 }
 
@@ -713,6 +723,42 @@ where
             operation: "http_request".to_owned(),
             target: request.url.clone(),
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
+    }
+
+    /// Run a staged storage transaction and commit it only when the closure succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns the closure's error; failed transactions are discarded.
+    pub fn storage_transaction<H, F>(
+        &mut self,
+        host: &mut H,
+        operation: &str,
+        f: F,
+    ) -> Result<(), RuntimeError>
+    where
+        H: TransactionalStorageHost,
+        F: FnOnce(&mut StorageTransaction) -> Result<(), RuntimeError>,
+    {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let mut transaction = host.begin(invocation);
+        let result = f(&mut transaction);
+        if result.is_ok() {
+            host.commit(transaction);
+        }
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: operation.to_owned(),
+            target: "storage".to_owned(),
+            result: if result.is_ok() {
+                "committed"
+            } else {
+                "rolled_back"
+            }
+            .to_owned(),
         });
         result
     }
@@ -2282,6 +2328,37 @@ mod tests {
             storage.values.get("seen").map(String::as_str),
             Some("event-1")
         );
+    }
+
+    #[test]
+    fn runtime_storage_transaction_commits_only_successful_work() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut storage = InMemoryStorage::default();
+
+        runtime
+            .storage_transaction(&mut storage, "save_state", |transaction| {
+                transaction.put("seen", "event-1");
+                Ok(())
+            })
+            .expect("successful transaction commits");
+
+        let result = runtime.storage_transaction(&mut storage, "fail_state", |transaction| {
+            transaction.put("seen", "event-2");
+            Err(RuntimeError::Cancelled)
+        });
+        assert_eq!(result, Err(RuntimeError::Cancelled));
+        assert_eq!(
+            storage.values.get("seen").map(String::as_str),
+            Some("event-1")
+        );
+        assert_eq!(runtime.audit.entries.len(), 2);
+        assert_eq!(runtime.audit.entries[0].result, "committed");
+        assert_eq!(runtime.audit.entries[1].result, "rolled_back");
     }
 
     #[test]

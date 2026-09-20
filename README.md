@@ -207,6 +207,10 @@ runtime entry point validates the session through the adapter and records the
 authentication attempt in the audit stream.
 NIP-98 requests can then run through an allowlisted `HttpHost` adapter via
 `Runtime::execute_http`, with the request recorded in the audit stream.
+Stateful hosts can implement `TransactionalStorageHost` so
+`Runtime::storage_transaction` stages writes and commits them only when the
+script operation succeeds; failed transactions are discarded and audited as
+`rolled_back`.
 
 ## Repository map
 

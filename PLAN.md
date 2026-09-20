@@ -151,6 +151,9 @@ performing relay, signer, storage, or other host effects.
   `Runtime::authenticate_relay` entry point for authenticated relay sessions.
 - Added an allowlisted `HttpHost` adapter and audited `Runtime::execute_http`
   entry point for controlled NIP-98 web bridging.
+- Added transactional storage execution: `TransactionalStorageHost` commits
+  staged writes only after a successful closure, rolls failed work back, and
+  records committed/rolled-back outcomes in the runtime audit stream.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
