@@ -57,6 +57,8 @@ performing relay, signer, storage, or other host effects.
   through the authorized operation host boundary.
 - Wired `nscript run` to execute checked module calls and added a NIP-44 source
   conformance fixture proving the CLI path.
+- Added a NIP-17 source fixture with typed `PrivateMessage` construction and a
+  fake relay publication report from the composed operation host.
 
 ## Deferred
 

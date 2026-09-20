@@ -32,6 +32,7 @@ pub struct CheckedPublication {
 pub enum CheckedArgument {
     Text(String),
     PubKey(String),
+    PrivateMessage { content: String, recipient: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -884,6 +885,23 @@ impl<'a> Checker<'a> {
                             ExprKind::Text(value) => Some(CheckedArgument::Text(value.clone())),
                             ExprKind::Identifier(value) => {
                                 Some(CheckedArgument::PubKey(value.clone()))
+                            }
+                            ExprKind::Construct { name, fields }
+                                if name.value == "PrivateMessage" =>
+                            {
+                                let content = fields.iter().find_map(|(field, value)| {
+                                    (field.value == "content").then(|| match &value.value {
+                                        ExprKind::Text(text) => text.clone(),
+                                        _ => String::new(),
+                                    })
+                                })?;
+                                let recipient = fields.iter().find_map(|(field, value)| {
+                                    (field.value == "recipient").then(|| match &value.value {
+                                        ExprKind::Identifier(identifier) => identifier.clone(),
+                                        _ => String::new(),
+                                    })
+                                })?;
+                                Some(CheckedArgument::PrivateMessage { content, recipient })
                             }
                             _ => None,
                         })

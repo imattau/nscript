@@ -1,0 +1,11 @@
+// NIP-17 composes encrypted private messaging through typed module operations.
+use nip17
+
+permissions {
+    private_message
+}
+
+let result = nip17.send_private(PrivateMessage {
+    content: "hello";
+    recipient: alice;
+})

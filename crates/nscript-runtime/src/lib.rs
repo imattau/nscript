@@ -307,6 +307,12 @@ where
                     .map(|argument| match argument {
                         CheckedArgument::Text(value) => OperationValue::Text(value.clone()),
                         CheckedArgument::PubKey(value) => OperationValue::PubKey(value.clone()),
+                        CheckedArgument::PrivateMessage { content, recipient } => {
+                            OperationValue::PrivateMessage(PrivateMessage {
+                                content: content.clone(),
+                                recipient: recipient.clone(),
+                            })
+                        }
                     })
                     .collect::<Vec<_>>();
                 self.invoke_authorized_operation(
