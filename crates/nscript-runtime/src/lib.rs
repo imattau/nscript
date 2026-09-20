@@ -889,6 +889,28 @@ where
         result
     }
 
+    /// Poll a batch and atomically claim each event before handler delivery.
+    ///
+    /// # Errors
+    ///
+    /// Returns the subscription or idempotency-host failure.
+    pub fn poll_and_claim<H: SubscriptionHost, I: IdempotencyHost>(
+        &mut self,
+        subscription_host: &mut H,
+        idempotency_host: &mut I,
+        handle: &SubscriptionHandle,
+    ) -> Result<SubscriptionBatch, RuntimeError> {
+        let mut batch = self.poll_subscription(subscription_host, handle)?;
+        let mut claimed = Vec::with_capacity(batch.events.len());
+        for event in batch.events {
+            if self.claim_once(idempotency_host, &event.id)? {
+                claimed.push(event);
+            }
+        }
+        batch.events = claimed;
+        Ok(batch)
+    }
+
     /// Set the maximum number of events accepted from one subscription batch.
     pub fn set_max_subscription_batch(&mut self, limit: usize) {
         self.max_subscription_batch = limit;
@@ -2869,6 +2891,47 @@ mod tests {
             runtime.poll_subscription(&mut relay, &limited),
             Err(RuntimeError::ResourceLimit { resource }) if resource == "subscription_batch"
         ));
+    }
+
+    #[test]
+    fn polling_and_claiming_filters_persisted_duplicates() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut relay = FakeRelayHost::default();
+        let request = SubscriptionRequest {
+            event_type: "Note".to_owned(),
+            relayset: None,
+            kinds: vec![1],
+            tag_equals: Vec::new(),
+            author: None,
+            since: None,
+            limit: Some(10),
+        };
+        let handle = runtime.subscribe(&mut relay, &request).expect("subscribe");
+        relay.queued_events.insert(
+            handle.id,
+            vec![SignedEvent {
+                unsigned: UnsignedEvent {
+                    event_type: "Note".to_owned(),
+                    kind: 1,
+                    content: "hello".to_owned(),
+                    created_at: 100,
+                },
+                signer: "alice".to_owned(),
+                id: "event-claim".to_owned(),
+                signature: "sig".to_owned(),
+            }],
+        );
+        let mut storage = InMemoryStorage::default();
+        let batch = runtime
+            .poll_and_claim(&mut relay, &mut storage, &handle)
+            .expect("claim batch");
+        assert_eq!(batch.events.len(), 1);
+        assert!(storage.claimed.contains("event-claim"));
     }
 
     #[test]

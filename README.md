@@ -233,6 +233,8 @@ They also carry typed event kinds and tag-equality predicates, avoiding raw
 JSON filter construction.
 The runtime enforces a configurable maximum batch size (1024 by default) to
 bound relay-driven memory and handler work.
+`Runtime::poll_and_claim` combines that bound with atomic event-ID claims for
+duplicate-safe stream handlers.
 
 ## Repository map
 

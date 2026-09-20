@@ -175,6 +175,8 @@ performing relay, signer, storage, or other host effects.
   validation before relay dispatch.
 - Added a configurable subscription batch resource limit, rejecting oversized
   relay deliveries before they reach script handlers.
+- Added `Runtime::poll_and_claim`, composing bounded polling with atomic
+  idempotency claims before event handler delivery.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
