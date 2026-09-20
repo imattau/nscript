@@ -127,6 +127,8 @@ performing relay, signer, storage, or other host effects.
   sync results.
 - Added NIP-84 typed `Highlight` records and `publish_highlight`, with source
   and content validation for reading/annotation workflows.
+- Added NIP-85 typed `Assertion` records and `publish_assertion`, with explicit
+  subject/kind/value validation for trust and reputation workflows.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

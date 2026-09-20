@@ -180,6 +180,13 @@ pub struct Highlight {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Assertion {
+    pub subject: String,
+    pub kind: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -280,6 +287,7 @@ pub enum OperationValue {
     SyncRequest(SyncRequest),
     SyncResult(SyncResult),
     Highlight(Highlight),
+    Assertion(Assertion),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1323,6 +1331,28 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip85", "publish_assertion") => {
+                let [OperationValue::Assertion(assertion)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if assertion.subject.is_empty()
+                    || assertion.kind.is_empty()
+                    || assertion.value.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://assertions".to_owned(),
+                        accepted: true,
+                        detail: "trusted assertion lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1603,6 +1633,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             (Some(source), Some(content)) => {
                 OperationValue::Highlight(Highlight { source, content })
             }
+            _ => value.clone(),
+        },
+        "Assertion" => match (text("subject"), text("kind"), text("value")) {
+            (Some(subject), Some(kind), Some(value)) => OperationValue::Assertion(Assertion {
+                subject,
+                kind,
+                value,
+            }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2577,6 +2615,43 @@ mod tests {
                 }],
             )
             .expect("highlight host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip85_lowers_trusted_assertions() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip85", "publish_assertion"),
+                &mut host,
+                "nip85",
+                "publish_assertion",
+                &[OperationValue::Record {
+                    name: "Assertion".to_owned(),
+                    fields: vec![
+                        (
+                            "subject".to_owned(),
+                            OperationValue::Text("npub1subject".to_owned()),
+                        ),
+                        (
+                            "kind".to_owned(),
+                            OperationValue::Text("reputation".to_owned()),
+                        ),
+                        (
+                            "value".to_owned(),
+                            OperationValue::Text("trusted".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("assertion host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

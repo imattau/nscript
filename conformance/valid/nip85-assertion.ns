@@ -1,0 +1,12 @@
+// NIP-85 trusted assertions provide typed trust/reputation signals.
+use nip85
+
+permissions {
+    assertion
+}
+
+let result = nip85.publish_assertion(Assertion {
+    subject: "npub1subject";
+    kind: "reputation";
+    value: "trusted";
+})
