@@ -11,6 +11,10 @@ use crate::{ModuleDependency, ModuleDescriptor, parse_module};
 const BUILTINS: &[(&str, &str)] = &[
     ("keys", include_str!("../../../modules/std/keys/0.1.0.nsm")),
     (
+        "nip02",
+        include_str!("../../../modules/std/nip02/0.1.0.nsm"),
+    ),
+    (
         "nip01",
         include_str!("../../../modules/std/nip01/0.1.0.nsm"),
     ),
@@ -509,7 +513,7 @@ mod tests {
     fn discovers_standard_layout() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules/std");
         let mut registry = ModuleRegistry::default();
-        assert_eq!(registry.load_root(&root).unwrap(), 10);
+        assert_eq!(registry.load_root(&root).unwrap(), 11);
     }
 
     #[test]

@@ -74,6 +74,11 @@ pub struct AppData {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FollowList {
+    pub people: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
@@ -82,6 +87,7 @@ pub enum OperationValue {
     PrivateMessage(PrivateMessage),
     RelayList(RelayList),
     AppData(AppData),
+    FollowList(FollowList),
     PublishReport(PublishReport),
 }
 
@@ -786,6 +792,20 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip02", "publish_follow_list") => {
+                let [OperationValue::FollowList(_list)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://follows".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: operation.to_owned(),
@@ -1097,6 +1117,29 @@ mod tests {
                 })],
             )
             .expect("application-data operation is authorized");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip02_publishes_typed_follow_lists() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip02", "publish_follow_list"),
+                &mut host,
+                "nip02",
+                "publish_follow_list",
+                &[OperationValue::FollowList(FollowList {
+                    people: vec!["00".repeat(32)],
+                })],
+            )
+            .expect("follow-list operation is authorized");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 }

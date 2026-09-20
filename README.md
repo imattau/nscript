@@ -66,6 +66,9 @@ through an explicit `Sign`/`Relay` capability operation.
 NIP-78 application data is represented as typed addressable `AppData` and
 published through the same explicit capability boundary.
 
+NIP-02 follow lists use a typed `FollowList` value and an explicit
+`Sign`/`Relay` publication operation.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

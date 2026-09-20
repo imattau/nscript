@@ -67,6 +67,8 @@ performing relay, signer, storage, or other host effects.
   publication host operation with deterministic outcome coverage.
 - Added typed NIP-78 `AppData` with explicit addressable application-data
   publication and deterministic runtime coverage.
+- Added typed NIP-02 `FollowList` publication with explicit follow-list
+  capability effects and deterministic runtime coverage.
 
 ## Deferred
 
