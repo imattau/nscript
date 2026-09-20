@@ -1,0 +1,11 @@
+// NIP-84 highlights support reading, annotation, and knowledge workflows.
+use nip84
+
+permissions {
+    highlight
+}
+
+let result = nip84.publish_highlight(Highlight {
+    source: "https://example.com/article";
+    content: "A useful passage";
+})

@@ -125,6 +125,8 @@ performing relay, signer, storage, or other host effects.
 - Added NIP-77 Negentropy synchronization as a typed runtime primitive with
   explicit relay/storage effects, secure relay validation, and deterministic
   sync results.
+- Added NIP-84 typed `Highlight` records and `publish_highlight`, with source
+  and content validation for reading/annotation workflows.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

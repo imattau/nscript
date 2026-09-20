@@ -163,6 +163,10 @@ NIP-77 synchronization uses typed `SyncRequest` and `SyncResult` values.
 `nip77.synchronize` validates secure relay/cursor inputs and keeps Negentropy
 transport behind explicit relay/storage capabilities.
 
+NIP-84 highlights use typed `Highlight` records for reading and annotation
+workflows. `nip84.publish_highlight` validates source and content before
+publication through an explicit signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

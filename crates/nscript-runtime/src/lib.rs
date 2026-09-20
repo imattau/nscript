@@ -174,6 +174,12 @@ pub struct SyncResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Highlight {
+    pub source: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -273,6 +279,7 @@ pub enum OperationValue {
     VideoEvent(VideoEvent),
     SyncRequest(SyncRequest),
     SyncResult(SyncResult),
+    Highlight(Highlight),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1297,6 +1304,25 @@ impl OperationHost for FakeOperationHost {
                     removed: 0,
                 }))
             }
+            ("nip84", "publish_highlight") => {
+                let [OperationValue::Highlight(highlight)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if highlight.source.is_empty() || highlight.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://highlights".to_owned(),
+                        accepted: true,
+                        detail: "highlight source/content lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1570,6 +1596,12 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         "SyncRequest" => match (text("relay"), text("cursor")) {
             (Some(relay), Some(cursor)) => {
                 OperationValue::SyncRequest(SyncRequest { relay, cursor })
+            }
+            _ => value.clone(),
+        },
+        "Highlight" => match (text("source"), text("content")) {
+            (Some(source), Some(content)) => {
+                OperationValue::Highlight(Highlight { source, content })
             }
             _ => value.clone(),
         },
@@ -2513,6 +2545,39 @@ mod tests {
                 removed: 0,
             })
         );
+    }
+
+    #[test]
+    fn nip84_lowers_highlights_with_sources() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip84", "publish_highlight"),
+                &mut host,
+                "nip84",
+                "publish_highlight",
+                &[OperationValue::Record {
+                    name: "Highlight".to_owned(),
+                    fields: vec![
+                        (
+                            "source".to_owned(),
+                            OperationValue::Text("https://example.com/article".to_owned()),
+                        ),
+                        (
+                            "content".to_owned(),
+                            OperationValue::Text("A useful passage".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("highlight host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 
     #[test]
