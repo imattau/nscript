@@ -1481,6 +1481,22 @@ where
                 right,
             } if matches!(operator.as_str(), "==" | "!=" | "contains") => {
                 if operator == "contains" {
+                    if let Some(tag_name) = Self::handler_tag_name(left) {
+                        let Some(needle) = Self::handler_text(right, event) else {
+                            return Err(RuntimeError::InvalidOperationArguments {
+                                operation: "handler_condition".to_owned(),
+                            });
+                        };
+                        let event =
+                            event.ok_or_else(|| RuntimeError::InvalidOperationArguments {
+                                operation: "handler_condition".to_owned(),
+                            })?;
+                        return Ok(event
+                            .unsigned
+                            .tags
+                            .iter()
+                            .any(|(name, value)| name == &tag_name && value == &needle));
+                    }
                     let (Some(haystack), Some(needle)) = (
                         Self::handler_text(left, event),
                         Self::handler_text(right, event),
@@ -1559,6 +1575,26 @@ where
             _ => Err(RuntimeError::InvalidOperationArguments {
                 operation: "handler_condition".to_owned(),
             }),
+        }
+    }
+
+    fn handler_tag_name(expression: &nscript_syntax::ast::Expr) -> Option<String> {
+        let ExprKind::Member { value, name } = &expression.value else {
+            return None;
+        };
+        let ExprKind::Member {
+            value: tags,
+            name: tag_name,
+        } = &value.value
+        else {
+            return None;
+        };
+        if matches!(&tags.value, ExprKind::Identifier(base) if base == "event")
+            && tag_name.value == "tags"
+        {
+            Some(name.value.clone())
+        } else {
+            None
         }
     }
 
@@ -3678,7 +3714,7 @@ mod tests {
 
     #[test]
     fn handler_body_can_match_delivered_event_fields() {
-        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    if event.author == \"alice\" && event.kind == 1 && event.content contains \"nostr\" {\n        print(\"matched\")\n    }\n}";
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    if event.author == \"alice\" && event.kind == 1 && event.tags.t contains \"nostrhost\" && event.content contains \"nostr\" {\n        print(\"matched\")\n    }\n}";
         let program = nscript_syntax::parse_program(source).0;
         let (checked, diagnostics) = nscript_semantics::check(&program);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -3688,7 +3724,7 @@ mod tests {
                 event_type: "Note".to_owned(),
                 kind: 1,
                 content: "hello nostr".to_owned(),
-                tags: Vec::new(),
+                tags: vec![("t".to_owned(), "nostrhost".to_owned())],
                 created_at: 100,
             },
             signer: "alice".to_owned(),
