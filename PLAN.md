@@ -63,6 +63,8 @@ performing relay, signer, storage, or other host effects.
   validation and conversion to nominal `PubKey`, including invalid-input tests.
 - Extended NIP-19 with nominal `Nprofile`, `Nevent`, and `Naddr` values and
   checksum-validated constructors.
+- Added the typed NIP-65 `RelayList` schema and an authorized relay-list
+  publication host operation with deterministic outcome coverage.
 
 ## Deferred
 

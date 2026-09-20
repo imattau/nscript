@@ -60,6 +60,9 @@ NIP-19 identifiers also have a pure typed host path: valid `npub`, `nprofile`,
 `nevent`, and `naddr` Bech32 values are checksum-verified before becoming
 nominal identifier values; `npub` can then convert to a nominal `PubKey`.
 
+NIP-65 relay preferences are represented as a typed `RelayList` and published
+through an explicit `Sign`/`Relay` capability operation.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

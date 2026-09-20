@@ -62,12 +62,19 @@ pub struct PrivateMessage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelayList {
+    pub read: Vec<String>,
+    pub write: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
     EncryptedText(String),
     GiftWrap(String),
     PrivateMessage(PrivateMessage),
+    RelayList(RelayList),
     PublishReport(PublishReport),
 }
 
@@ -743,6 +750,20 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip65", "publish_relay_list") => {
+                let [OperationValue::RelayList(_list)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://relay-list".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: operation.to_owned(),
@@ -1007,5 +1028,29 @@ mod tests {
                 host.call_function("nip19", function, &[FunctionValue::Text(value.to_owned())]);
             assert!(result.is_ok());
         }
+    }
+
+    #[test]
+    fn nip65_publishes_typed_relay_preferences() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip65", "publish_relay_list"),
+                &mut host,
+                "nip65",
+                "publish_relay_list",
+                &[OperationValue::RelayList(RelayList {
+                    read: vec!["wss://read.example".to_owned()],
+                    write: vec!["wss://write.example".to_owned()],
+                })],
+            )
+            .expect("relay-list operation is authorized");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 }
