@@ -47,11 +47,25 @@ pub struct CheckedOperationCall {
     pub span: Span,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CheckedScheduleKind {
+    Every,
+    At,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedSchedule {
+    pub kind: CheckedScheduleKind,
+    pub value: u64,
+    pub span: Span,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CheckedProgram {
     pub effects: BTreeSet<Effect>,
     pub publications: Vec<CheckedPublication>,
     pub operation_calls: Vec<CheckedOperationCall>,
+    pub schedules: Vec<CheckedSchedule>,
 }
 
 const HARDENED_FORBIDDEN: &[&str] = &[
@@ -582,6 +596,23 @@ fn validate_type(type_ref: &TypeRef, known: &BTreeSet<String>, diagnostics: &mut
     }
 }
 
+fn schedule_value(expression: &Expr, every: bool) -> Option<u64> {
+    match &expression.value {
+        ExprKind::Duration { value, unit } if every => {
+            let multiplier = match unit.as_str() {
+                "s" => 1,
+                "m" => 60,
+                "h" => 60 * 60,
+                "d" => 24 * 60 * 60,
+                _ => return None,
+            };
+            value.checked_mul(multiplier)
+        }
+        ExprKind::Integer(value) if !every => (*value).try_into().ok(),
+        _ => None,
+    }
+}
+
 #[must_use]
 pub fn check(program: &Program) -> (Option<CheckedProgram>, Vec<Diagnostic>) {
     let mut checker = Checker::new(program);
@@ -590,6 +621,7 @@ pub fn check(program: &Program) -> (Option<CheckedProgram>, Vec<Diagnostic>) {
         effects: checker.effects,
         publications: checker.publications,
         operation_calls: checker.operation_calls,
+        schedules: checker.schedules,
     });
     (result, checker.diagnostics)
 }
@@ -610,6 +642,7 @@ struct Checker<'a> {
     effects: BTreeSet<Effect>,
     publications: Vec<CheckedPublication>,
     operation_calls: Vec<CheckedOperationCall>,
+    schedules: Vec<CheckedSchedule>,
     diagnostics: Vec<Diagnostic>,
     event_bindings: BTreeSet<String>,
 }
@@ -624,6 +657,7 @@ impl<'a> Checker<'a> {
             effects: BTreeSet::new(),
             publications: Vec::new(),
             operation_calls: Vec::new(),
+            schedules: Vec::new(),
             diagnostics: Vec::new(),
             event_bindings: BTreeSet::new(),
         };
@@ -809,6 +843,28 @@ impl<'a> Checker<'a> {
                 self.effects.insert(Effect::Clock);
                 self.require_named(span, "clock");
                 self.check_expr(duration, locals);
+                let every = matches!(statement, StatementKind::Every { .. });
+                if let Some(value) = schedule_value(duration, every) {
+                    self.schedules.push(CheckedSchedule {
+                        kind: if every {
+                            CheckedScheduleKind::Every
+                        } else {
+                            CheckedScheduleKind::At
+                        },
+                        value,
+                        span,
+                    });
+                } else {
+                    self.diagnostics.push(Diagnostic {
+                        code: "E1301",
+                        message: if every {
+                            "every requires a literal duration (s, m, h, or d)".to_owned()
+                        } else {
+                            "at requires a non-negative integer timestamp".to_owned()
+                        },
+                        span: duration.span,
+                    });
+                }
                 self.check_items(body, &mut locals.clone());
             }
             StatementKind::Send { value, signer } => {

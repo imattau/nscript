@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nscript_semantics::{CheckedArgument, CheckedProgram, CheckedPublication};
+use nscript_semantics::{CheckedArgument, CheckedProgram, CheckedPublication, CheckedScheduleKind};
 use nscript_syntax::Program;
 
 pub type InvocationId = u64;
@@ -773,6 +773,39 @@ where
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
         });
         result
+    }
+
+    /// Schedule all statically checked `every` and `at` declarations.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first host scheduling failure.
+    pub fn schedule_program<H: TimerHost>(
+        &mut self,
+        host: &mut H,
+        checked: &CheckedProgram,
+    ) -> Result<Vec<TimerHandle>, RuntimeError> {
+        let now = self.clock.now();
+        checked
+            .schedules
+            .iter()
+            .enumerate()
+            .map(|(index, schedule)| {
+                let request = ScheduleRequest {
+                    name: format!("schedule-{index}"),
+                    next_at: match schedule.kind {
+                        CheckedScheduleKind::Every => now.saturating_add(schedule.value),
+                        CheckedScheduleKind::At => schedule.value,
+                    },
+                    interval: match schedule.kind {
+                        CheckedScheduleKind::Every => Some(schedule.value),
+                        CheckedScheduleKind::At => None,
+                    },
+                    catch_up: false,
+                };
+                self.schedule_timer(host, &request)
+            })
+            .collect()
     }
 
     /// Run a staged storage transaction and commit it only when the closure succeeds.
@@ -2471,6 +2504,30 @@ mod tests {
             Err(RuntimeError::ResourceLimit { resource }) if resource == "timer"
         ));
         assert_eq!(runtime.audit.entries[1].result, "error");
+    }
+
+    #[test]
+    fn checked_program_schedules_every_and_at_declarations() {
+        let source = "permissions {\n    clock\n    log\n}\nevery 5m { print(\"tick\") }\nat 200 { print(\"once\") }";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock { now: 100 },
+            RecordingAudit::default(),
+        );
+        let mut timers = FakeTimerHost::default();
+        let handles = runtime
+            .schedule_program(&mut timers, &checked)
+            .expect("schedules are accepted");
+        assert_eq!(handles, vec![TimerHandle { id: 1 }, TimerHandle { id: 2 }]);
+        assert_eq!(timers.schedules[0].next_at, 400);
+        assert_eq!(timers.schedules[0].interval, Some(300));
+        assert_eq!(timers.schedules[1].next_at, 200);
     }
 
     #[test]

@@ -214,6 +214,8 @@ script operation succeeds; failed transactions are discarded and audited as
 Timer declarations can be handed to a host through `TimerHost` and
 `Runtime::schedule_timer`, preserving deterministic schedule metadata while
 keeping wakeups and civil-time policy outside the script.
+The semantic checker now emits schedule descriptors for literal `every` and
+`at` declarations, and `Runtime::schedule_program` registers them in order.
 
 ## Repository map
 

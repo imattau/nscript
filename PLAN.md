@@ -157,6 +157,8 @@ performing relay, signer, storage, or other host effects.
 - Added a host-controlled `TimerHost` and audited `Runtime::schedule_timer`
   entry point for deterministic `every`/`at` scheduling with interval and
   catch-up metadata.
+- Added checked schedule descriptors and `Runtime::schedule_program`, lowering
+  literal `every` durations and `at` timestamps from source into host timers.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
