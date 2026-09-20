@@ -159,6 +159,8 @@ performing relay, signer, storage, or other host effects.
   catch-up metadata.
 - Added checked schedule descriptors and `Runtime::schedule_program`, lowering
   literal `every` durations and `at` timestamps from source into host timers.
+- Added atomic idempotency claims through `IdempotencyHost` and
+  `Runtime::claim_once`, with duplicate-delivery outcomes recorded in audit.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

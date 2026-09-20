@@ -216,6 +216,9 @@ Timer declarations can be handed to a host through `TimerHost` and
 keeping wakeups and civil-time policy outside the script.
 The semantic checker now emits schedule descriptors for literal `every` and
 `at` declarations, and `Runtime::schedule_program` registers them in order.
+Idempotent handlers can use `IdempotencyHost` and `Runtime::claim_once` to
+atomically claim event IDs; duplicate deliveries return `false` and are
+audited without rerunning the handler.
 
 ## Repository map
 

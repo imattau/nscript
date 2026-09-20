@@ -570,9 +570,19 @@ pub trait TransactionalStorageHost: StorageHost {
     fn commit(&mut self, transaction: StorageTransaction);
 }
 
+pub trait IdempotencyHost {
+    /// Atomically claim a key for one delivery.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable runtime error when the idempotency store is unavailable.
+    fn claim_once(&mut self, invocation: InvocationId, key: &str) -> Result<bool, RuntimeError>;
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InMemoryStorage {
     pub values: BTreeMap<String, String>,
+    pub claimed: BTreeSet<String>,
 }
 
 impl StorageHost for InMemoryStorage {
@@ -584,6 +594,12 @@ impl StorageHost for InMemoryStorage {
 impl TransactionalStorageHost for InMemoryStorage {
     fn commit(&mut self, transaction: StorageTransaction) {
         self.values.extend(transaction.writes);
+    }
+}
+
+impl IdempotencyHost for InMemoryStorage {
+    fn claim_once(&mut self, _invocation: InvocationId, key: &str) -> Result<bool, RuntimeError> {
+        Ok(self.claimed.insert(key.to_owned()))
     }
 }
 
@@ -838,6 +854,33 @@ where
                 "committed"
             } else {
                 "rolled_back"
+            }
+            .to_owned(),
+        });
+        result
+    }
+
+    /// Atomically claim an idempotency key for a delivered event.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's idempotency-store failure.
+    pub fn claim_once<H: IdempotencyHost>(
+        &mut self,
+        host: &mut H,
+        key: &str,
+    ) -> Result<bool, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.claim_once(invocation, key);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "claim_once".to_owned(),
+            target: key.to_owned(),
+            result: match result {
+                Ok(true) => "claimed",
+                Ok(false) => "already_claimed",
+                Err(_) => "error",
             }
             .to_owned(),
         });
@@ -2469,6 +2512,23 @@ mod tests {
         assert_eq!(runtime.audit.entries.len(), 2);
         assert_eq!(runtime.audit.entries[0].result, "committed");
         assert_eq!(runtime.audit.entries[1].result, "rolled_back");
+    }
+
+    #[test]
+    fn once_claims_are_atomic_and_audited() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut storage = InMemoryStorage::default();
+        assert_eq!(runtime.claim_once(&mut storage, "event-1"), Ok(true));
+        assert_eq!(runtime.claim_once(&mut storage, "event-1"), Ok(false));
+        assert_eq!(runtime.claim_once(&mut storage, "event-2"), Ok(true));
+        assert_eq!(storage.claimed.len(), 2);
+        assert_eq!(runtime.audit.entries[0].result, "claimed");
+        assert_eq!(runtime.audit.entries[1].result, "already_claimed");
     }
 
     #[test]
