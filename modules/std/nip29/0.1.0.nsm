@@ -1,0 +1,15 @@
+module nip29 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/29.md"
+use nip01 @ "^0.1"
+
+record GroupMessage {
+    field group: Text
+    field content: Text
+}
+
+error GroupError {
+    field message: Text
+}
+
+operation publish_group_message(message: GroupMessage) -> Result<PublishReport,GroupError> effect Sign,Relay permission group_message

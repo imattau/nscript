@@ -98,6 +98,8 @@ performing relay, signer, storage, or other host effects.
 - Added NIP-23 typed `Article` records and `publish_article`, modeling
   addressable long-form content with validated identifiers and source/runtime
   coverage.
+- Added NIP-29 typed `GroupMessage` records and `publish_group_message`, with
+  explicit group scope, validation, and source/runtime conformance coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

@@ -87,6 +87,12 @@ pub struct Article {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupMessage {
+    pub group: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -172,6 +178,7 @@ pub enum OperationValue {
     Repost(Repost),
     Comment(Comment),
     Article(Article),
+    GroupMessage(GroupMessage),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -957,6 +964,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip29", "publish_group_message") => {
+                let [OperationValue::GroupMessage(message)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if message.group.is_empty() || message.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://groups".to_owned(),
+                        accepted: true,
+                        detail: "group scope lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1160,6 +1186,12 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                 title,
                 content,
             }),
+            _ => value.clone(),
+        },
+        "GroupMessage" => match (text("group"), text("content")) {
+            (Some(group), Some(content)) => {
+                OperationValue::GroupMessage(GroupMessage { group, content })
+            }
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -1672,6 +1704,39 @@ mod tests {
                 }],
             )
             .expect("article host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip29_lowers_group_scoped_messages() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip29", "publish_group_message"),
+                &mut host,
+                "nip29",
+                "publish_group_message",
+                &[OperationValue::Record {
+                    name: "GroupMessage".to_owned(),
+                    fields: vec![
+                        (
+                            "group".to_owned(),
+                            OperationValue::Text("nostr-dev".to_owned()),
+                        ),
+                        (
+                            "content".to_owned(),
+                            OperationValue::Text("Release discussion".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("group message host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

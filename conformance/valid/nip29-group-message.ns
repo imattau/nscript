@@ -1,0 +1,11 @@
+// NIP-29 messages carry an explicit relay-group scope.
+use nip29
+
+permissions {
+    group_message
+}
+
+let result = nip29.publish_group_message(GroupMessage {
+    group: "nostr-dev";
+    content: "Release discussion";
+})

@@ -112,6 +112,10 @@ NIP-23 long-form content uses typed addressable `Article` records.
 `nip23.publish_article` validates the identifier, title, and body before
 publication through an explicit signing/relay capability.
 
+NIP-29 group messages use typed `GroupMessage` records with explicit group
+scope. `nip29.publish_group_message` validates the scope before publication
+through the signing/relay capability boundary.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.
