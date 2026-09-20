@@ -57,3 +57,7 @@ Normative terms such as **MUST**, **SHOULD**, and **MAY** follow RFC 2119 usage.
 
 Run `./scripts/check-spec.sh` before submitting a change. It validates the local
 documentation links, JSON vectors, negative-fixture metadata, and whitespace.
+
+## License
+
+NScript is available under the [MIT License](LICENSE).
