@@ -54,3 +54,6 @@ is the primary sandbox target after the language semantics have been validated.
 
 Design changes should begin as an issue or RFC and include conformance examples.
 Normative terms such as **MUST**, **SHOULD**, and **MAY** follow RFC 2119 usage.
+
+Run `./scripts/check-spec.sh` before submitting a change. It validates the local
+documentation links, JSON vectors, negative-fixture metadata, and whitespace.
