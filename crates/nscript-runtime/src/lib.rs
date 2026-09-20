@@ -699,6 +699,7 @@ pub struct Runtime<R, S, C, A> {
     pub audit: A,
     next_invocation: InvocationId,
     seen_event_ids: BTreeSet<String>,
+    max_subscription_batch: usize,
 }
 
 impl<R, S, C, A> Runtime<R, S, C, A>
@@ -716,6 +717,7 @@ where
             audit,
             next_invocation: 1,
             seen_event_ids: BTreeSet::new(),
+            max_subscription_batch: 1024,
         }
     }
 
@@ -862,11 +864,16 @@ where
     ) -> Result<SubscriptionBatch, RuntimeError> {
         let invocation = self.next_invocation;
         self.next_invocation += 1;
-        let result = host.poll(invocation, handle).map(|mut batch| {
+        let result = host.poll(invocation, handle).and_then(|mut batch| {
+            if batch.events.len() > self.max_subscription_batch {
+                return Err(RuntimeError::ResourceLimit {
+                    resource: "subscription_batch".to_owned(),
+                });
+            }
             batch
                 .events
                 .retain(|event| self.seen_event_ids.insert(event.id.clone()));
-            batch
+            Ok(batch)
         });
         self.audit.record(AuditEntry {
             invocation,
@@ -880,6 +887,11 @@ where
             .to_owned(),
         });
         result
+    }
+
+    /// Set the maximum number of events accepted from one subscription batch.
+    pub fn set_max_subscription_batch(&mut self, limit: usize) {
+        self.max_subscription_batch = limit;
     }
 
     /// Execute an authenticated request through a dedicated HTTP adapter.
@@ -2787,7 +2799,7 @@ mod tests {
             .subscribe(&mut relay, &request)
             .expect("valid subscription");
         assert_eq!(handle, SubscriptionHandle { id: 1 });
-        assert_eq!(relay.subscriptions, vec![request]);
+        assert_eq!(relay.subscriptions, vec![request.clone()]);
         assert_eq!(runtime.audit.entries[0].operation, "subscribe");
         let event = SignedEvent {
             unsigned: UnsignedEvent {
@@ -2834,6 +2846,29 @@ mod tests {
                 if operation == "unsubscribe"
         ));
         assert_eq!(runtime.audit.entries[4].result, "error");
+
+        runtime.set_max_subscription_batch(0);
+        let limited = runtime
+            .subscribe(&mut relay, &request)
+            .expect("second subscription");
+        relay.queued_events.insert(
+            limited.id,
+            vec![SignedEvent {
+                unsigned: UnsignedEvent {
+                    event_type: "Note".to_owned(),
+                    kind: 1,
+                    content: "limited".to_owned(),
+                    created_at: 101,
+                },
+                signer: "alice".to_owned(),
+                id: "event-2".to_owned(),
+                signature: "sig-2".to_owned(),
+            }],
+        );
+        assert!(matches!(
+            runtime.poll_subscription(&mut relay, &limited),
+            Err(RuntimeError::ResourceLimit { resource }) if resource == "subscription_batch"
+        ));
     }
 
     #[test]

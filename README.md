@@ -231,6 +231,8 @@ Subscription filters may include an explicit relay set, keeping relay routing
 policy visible to the host and auditable at stream creation.
 They also carry typed event kinds and tag-equality predicates, avoiding raw
 JSON filter construction.
+The runtime enforces a configurable maximum batch size (1024 by default) to
+bound relay-driven memory and handler work.
 
 ## Repository map
 

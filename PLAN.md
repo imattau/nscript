@@ -173,6 +173,8 @@ performing relay, signer, storage, or other host effects.
   host validation before stream creation.
 - Added typed kind and tag-equality predicates to subscription filters, with
   validation before relay dispatch.
+- Added a configurable subscription batch resource limit, rejecting oversized
+  relay deliveries before they reach script handlers.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
