@@ -59,8 +59,8 @@ checked source calls can now be executed through that boundary.
 Constructed module arguments retain their nominal record name and recursively
 typed fields when crossing from checked source into the runtime. This keeps
 source-level forms such as `PrivateMessage { ... }` distinct from untyped JSON
-while allowing hosts to normalize or validate the record at the capability
-boundary.
+while allowing hosts to normalize and validate scalar NIP records at the
+capability boundary.
 
 NIP-19 identifiers also have a pure typed host path: valid `npub`, `nprofile`,
 `nevent`, and `naddr` Bech32 values are checksum-verified before becoming

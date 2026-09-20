@@ -85,8 +85,9 @@ performing relay, signer, storage, or other host effects.
   signing, and relay effects for NostrHost-oriented deployment workflows.
 - Added a generic typed-record boundary for checked module arguments. Source
   constructors now lower recursively into runtime records, preserving nominal
-  record names and field values across the capability boundary; the NIP-17
-  host accepts both its legacy typed value and the generic source form.
+  record names and field values across the capability boundary. Runtime hosts
+  normalize scalar NIP records into their validated typed values before
+  dispatch, while preserving legacy typed host calls.
 
 ## Deferred
 

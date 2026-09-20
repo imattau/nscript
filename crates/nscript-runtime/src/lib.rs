@@ -755,6 +755,8 @@ impl OperationHost for FakeOperationHost {
         operation: &str,
         arguments: &[OperationValue],
     ) -> Result<OperationValue, RuntimeError> {
+        let normalized = arguments.iter().map(normalize_record).collect::<Vec<_>>();
+        let arguments = normalized.as_slice();
         match (module, operation) {
             ("nip44", "encrypt_text") => {
                 let [
@@ -1011,6 +1013,118 @@ impl OperationHost for FakeOperationHost {
             }),
         }
     }
+}
+
+fn normalize_record(value: &OperationValue) -> OperationValue {
+    let OperationValue::Record { name, fields } = value else {
+        return value.clone();
+    };
+    let text = |key: &str| record_text(fields, key);
+    let integer = |key: &str| record_integer(fields, key);
+    let pubkey = |key: &str| record_pubkey(fields, key);
+    match name.as_str() {
+        "PrivateMessage" => match (text("content"), pubkey("recipient")) {
+            (Some(content), Some(recipient)) => {
+                OperationValue::PrivateMessage(PrivateMessage { content, recipient })
+            }
+            _ => value.clone(),
+        },
+        "AppData" => match (text("identifier"), text("content")) {
+            (Some(identifier), Some(content)) => OperationValue::AppData(AppData {
+                identifier,
+                content,
+            }),
+            _ => value.clone(),
+        },
+        "Reaction" => match (text("content"), text("target")) {
+            (Some(content), Some(target)) => OperationValue::Reaction(Reaction { target, content }),
+            _ => value.clone(),
+        },
+        "DeletionRequest" => match (text("target"), text("reason")) {
+            (Some(target), Some(reason)) => {
+                OperationValue::DeletionRequest(DeletionRequest { target, reason })
+            }
+            _ => value.clone(),
+        },
+        "ZapRequest" => match (pubkey("recipient"), integer("amount"), text("message")) {
+            (Some(recipient), Some(amount), Some(message)) => {
+                OperationValue::ZapRequest(ZapRequest {
+                    recipient,
+                    amount,
+                    message,
+                })
+            }
+            _ => value.clone(),
+        },
+        "CalendarEvent" => match (
+            text("title"),
+            integer("start"),
+            integer("end"),
+            text("location"),
+        ) {
+            (Some(title), Some(start), Some(end), Some(location))
+                if let (Ok(start), Ok(end)) = (u64::try_from(start), u64::try_from(end)) =>
+            {
+                OperationValue::CalendarEvent(CalendarEvent {
+                    title,
+                    start,
+                    end,
+                    location,
+                })
+            }
+            _ => value.clone(),
+        },
+        "RelayStatus" => match (
+            text("relay"),
+            integer("uptime_percent"),
+            integer("latency_ms"),
+        ) {
+            (Some(relay), Some(uptime_percent), Some(latency_ms))
+                if let Ok(uptime_percent) = u8::try_from(uptime_percent) =>
+            {
+                OperationValue::RelayStatus(RelayStatus {
+                    relay,
+                    uptime_percent,
+                    latency_ms,
+                })
+            }
+            _ => value.clone(),
+        },
+        "SiteDeployment" => match (text("domain"), text("source")) {
+            (Some(domain), Some(source)) => {
+                OperationValue::SiteDeployment(SiteDeployment { domain, source })
+            }
+            _ => value.clone(),
+        },
+        _ => value.clone(),
+    }
+}
+
+fn record_text(fields: &[(String, OperationValue)], key: &str) -> Option<String> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::Text(value) => Some(value.clone()),
+            _ => None,
+        })?
+    })
+}
+
+fn record_integer(fields: &[(String, OperationValue)], key: &str) -> Option<i64> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::Integer(value) => Some(*value),
+            _ => None,
+        })?
+    })
+}
+
+fn record_pubkey(fields: &[(String, OperationValue)], key: &str) -> Option<String> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::PubKey(value) => Some(value.clone()),
+            _ => None,
+        })?
+    })
 }
 
 impl AuditHost for RecordingAudit {
