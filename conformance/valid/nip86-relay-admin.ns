@@ -1,0 +1,12 @@
+// NIP-86 relay management requires an explicit administrative capability.
+use nip86
+
+permissions {
+    relay_admin
+}
+
+let result = nip86.manage_relay(RelayAdminRequest {
+    relay: "wss://relay.example";
+    action: "allow";
+    subject: "npub1operator";
+})

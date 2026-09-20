@@ -1,0 +1,15 @@
+module nip86 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/86.md"
+
+record RelayAdminRequest {
+    field relay: RelayUrl
+    field action: Text
+    field subject: Text
+}
+
+error RelayAdminError {
+    field message: Text
+}
+
+operation manage_relay(request: RelayAdminRequest) -> Result<PublishReport,RelayAdminError> effect Relay permission relay_admin

@@ -171,6 +171,10 @@ NIP-85 trusted assertions use typed `Assertion` records for trust and
 reputation signals. `nip85.publish_assertion` validates subject, kind, and
 value before publication through an explicit signing/relay capability.
 
+NIP-86 relay management uses typed `RelayAdminRequest` values.
+`nip86.manage_relay` validates the relay/action/subject tuple and requires an
+explicit relay-admin capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

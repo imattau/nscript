@@ -187,6 +187,13 @@ pub struct Assertion {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelayAdminRequest {
+    pub relay: String,
+    pub action: String,
+    pub subject: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -288,6 +295,7 @@ pub enum OperationValue {
     SyncResult(SyncResult),
     Highlight(Highlight),
     Assertion(Assertion),
+    RelayAdminRequest(RelayAdminRequest),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1353,6 +1361,28 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip86", "manage_relay") => {
+                let [OperationValue::RelayAdminRequest(request)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if !request.relay.starts_with("wss://")
+                    || request.action.is_empty()
+                    || request.subject.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: request.relay.clone(),
+                        accepted: true,
+                        detail: format!("relay admin action: {}", request.action),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1641,6 +1671,16 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                 kind,
                 value,
             }),
+            _ => value.clone(),
+        },
+        "RelayAdminRequest" => match (text("relay"), text("action"), text("subject")) {
+            (Some(relay), Some(action), Some(subject)) => {
+                OperationValue::RelayAdminRequest(RelayAdminRequest {
+                    relay,
+                    action,
+                    subject,
+                })
+            }
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2652,6 +2692,43 @@ mod tests {
                 }],
             )
             .expect("assertion host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip86_lowers_relay_admin_requests() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip86", "manage_relay"),
+                &mut host,
+                "nip86",
+                "manage_relay",
+                &[OperationValue::Record {
+                    name: "RelayAdminRequest".to_owned(),
+                    fields: vec![
+                        (
+                            "relay".to_owned(),
+                            OperationValue::Text("wss://relay.example".to_owned()),
+                        ),
+                        (
+                            "action".to_owned(),
+                            OperationValue::Text("allow".to_owned()),
+                        ),
+                        (
+                            "subject".to_owned(),
+                            OperationValue::Text("npub1operator".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("relay admin host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

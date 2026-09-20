@@ -129,6 +129,8 @@ performing relay, signer, storage, or other host effects.
   and content validation for reading/annotation workflows.
 - Added NIP-85 typed `Assertion` records and `publish_assertion`, with explicit
   subject/kind/value validation for trust and reputation workflows.
+- Added NIP-86 typed `RelayAdminRequest` and `manage_relay`, with secure relay
+  validation and explicit relay-admin capability enforcement.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
