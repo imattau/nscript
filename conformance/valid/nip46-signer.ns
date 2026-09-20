@@ -1,0 +1,8 @@
+// NIP-46 provisioning returns a remote signer capability, never a secret key.
+use nip46
+
+permissions {
+    remote_signer
+}
+
+let signer = nip46.nip46()

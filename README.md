@@ -197,6 +197,10 @@ NIP-47 wallet payments use typed `WalletPayment` and `PaymentResult` values.
 Policies can additionally constrain payment authority with
 `allow_payment_up_to`, which rejects over-budget requests before host dispatch.
 
+NIP-46 provisioning returns a typed `SignerSession` capability through the
+operation host. Scripts receive a remote signer handle rather than private key
+material.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

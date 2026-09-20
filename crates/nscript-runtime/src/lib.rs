@@ -234,6 +234,11 @@ pub struct AuthenticatedRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignerSession {
+    pub provider: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WalletPayment {
     pub invoice: String,
     pub amount: i64,
@@ -355,6 +360,7 @@ pub enum OperationValue {
     BlobStored(BlobStored),
     HttpAuthRequest(HttpAuthRequest),
     AuthenticatedRequest(AuthenticatedRequest),
+    SignerSession(SignerSession),
     WalletPayment(WalletPayment),
     PaymentResult(PaymentResult),
     RelayList(RelayList),
@@ -1007,6 +1013,16 @@ impl OperationHost for FakeOperationHost {
         let normalized = arguments.iter().map(normalize_record).collect::<Vec<_>>();
         let arguments = normalized.as_slice();
         match (module, operation) {
+            ("nip46", "nip46") => {
+                if !arguments.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::SignerSession(SignerSession {
+                    provider: "nip46://remote-signer".to_owned(),
+                }))
+            }
             ("nip44", "encrypt_text") => {
                 let [
                     OperationValue::Text(text),
@@ -3128,6 +3144,32 @@ mod tests {
                 invoice: "lnbc1example".to_owned(),
                 amount: 1000,
                 settled: true,
+            })
+        );
+    }
+
+    #[test]
+    fn nip46_provisions_remote_signer_sessions_without_keys() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip46", "nip46"),
+                &mut host,
+                "nip46",
+                "nip46",
+                &[],
+            )
+            .expect("signer provisioning host available");
+        assert_eq!(
+            result,
+            OperationValue::SignerSession(SignerSession {
+                provider: "nip46://remote-signer".to_owned(),
             })
         );
     }
