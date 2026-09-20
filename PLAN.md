@@ -91,6 +91,8 @@ performing relay, signer, storage, or other host effects.
 - Added the first next-tranche module, NIP-10, with typed `Reply` records,
   root/target references, a `publish_reply` operation, reply-tag lowering, and
   valid source/runtime conformance coverage.
+- Added NIP-18 typed `Repost` records and `publish_repost`, with validated event
+  references, repost lowering, and source/runtime conformance coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

@@ -1,0 +1,14 @@
+module nip18 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/18.md"
+use nip01 @ "^0.1"
+
+record Repost {
+    field target: EventId
+}
+
+error RepostError {
+    field message: Text
+}
+
+operation publish_repost(repost: Repost) -> Result<PublishReport,RepostError> effect Sign,Relay permission repost

@@ -1,0 +1,10 @@
+// NIP-18 reposts lower into a kind-6-style event reference.
+use nip18
+
+permissions {
+    repost
+}
+
+let result = nip18.publish_repost(Repost {
+    target: "event-to-repost";
+})

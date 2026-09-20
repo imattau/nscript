@@ -101,6 +101,9 @@ NIP-10 replies use typed root and target references. `nip10.publish_reply`
 lowers a checked `Reply` record to reply-tag semantics through an explicit
 signing/relay capability.
 
+NIP-18 reposts use typed `Repost` records. `nip18.publish_repost` lowers the
+ target reference through the same explicit signing/relay capability boundary.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

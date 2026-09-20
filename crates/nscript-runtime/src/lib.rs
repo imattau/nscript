@@ -69,6 +69,11 @@ pub struct ThreadReply {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Repost {
+    pub target: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -151,6 +156,7 @@ pub enum OperationValue {
     GiftWrap(String),
     PrivateMessage(PrivateMessage),
     ThreadReply(ThreadReply),
+    Repost(Repost),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -876,6 +882,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip18", "publish_repost") => {
+                let [OperationValue::Repost(repost)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if repost.target.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://reposts".to_owned(),
+                        accepted: true,
+                        detail: "repost tag lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1062,6 +1087,10 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                 root,
                 content,
             }),
+            _ => value.clone(),
+        },
+        "Repost" => match text("target") {
+            Some(target) => OperationValue::Repost(Repost { target }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -1477,6 +1506,33 @@ mod tests {
                 }],
             )
             .expect("reply host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip18_lowers_reposts_to_event_references() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip18", "publish_repost"),
+                &mut host,
+                "nip18",
+                "publish_repost",
+                &[OperationValue::Record {
+                    name: "Repost".to_owned(),
+                    fields: vec![(
+                        "target".to_owned(),
+                        OperationValue::Text("event-to-repost".to_owned()),
+                    )],
+                }],
+            )
+            .expect("repost host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 
