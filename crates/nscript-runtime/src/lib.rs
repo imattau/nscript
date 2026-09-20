@@ -1,7 +1,7 @@
 //! Deterministic reference runtime and host capability contracts.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::TcpStream;
+use std::{net::TcpStream, thread, time::Duration};
 
 use nscript_semantics::{
     CheckedArgument, CheckedHandler, CheckedProgram, CheckedPublication, CheckedScheduleKind,
@@ -1902,13 +1902,53 @@ impl RealRelayHost {
     ///
     /// Returns `RelayUnavailable` when the socket cannot be re-established.
     pub fn reconnect(&mut self) -> Result<(), RuntimeError> {
-        let (socket, _) =
-            connect(self.relay.as_str()).map_err(|_| RuntimeError::RelayUnavailable {
-                relayset: self.relay.clone(),
-            })?;
-        self.socket = socket;
+        self.socket = Self::connect_socket(&self.relay)?;
         self.subscriptions.clear();
         Ok(())
+    }
+
+    /// Reconnect with bounded exponential backoff.
+    ///
+    /// Attempts are capped at eight and each delay at five seconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RelayUnavailable` after all attempts fail.
+    pub fn reconnect_with_backoff(
+        &mut self,
+        attempts: u8,
+        initial_delay: Duration,
+    ) -> Result<(), RuntimeError> {
+        let attempts = attempts.clamp(1, 8);
+        let mut delay = initial_delay.min(Duration::from_secs(5));
+        let mut last_error = None;
+        for attempt in 0..attempts {
+            match Self::connect_socket(&self.relay) {
+                Ok(socket) => {
+                    self.socket = socket;
+                    self.subscriptions.clear();
+                    return Ok(());
+                }
+                Err(error) => last_error = Some(error),
+            }
+            if attempt + 1 < attempts {
+                thread::sleep(delay);
+                delay = (delay * 2).min(Duration::from_secs(5));
+            }
+        }
+        Err(
+            last_error.unwrap_or_else(|| RuntimeError::RelayUnavailable {
+                relayset: self.relay.clone(),
+            }),
+        )
+    }
+
+    fn connect_socket(relay: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, RuntimeError> {
+        connect(relay)
+            .map(|(socket, _)| socket)
+            .map_err(|_| RuntimeError::RelayUnavailable {
+                relayset: relay.to_owned(),
+            })
     }
 
     fn send_json(&mut self, value: &Value) -> Result<(), RuntimeError> {

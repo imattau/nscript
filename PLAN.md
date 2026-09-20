@@ -315,7 +315,8 @@ typed filter lowering, `REQ`/`EVENT`/`EOSE`/`CLOSE` handling, signed-event
 decoding, and publication `OK` outcomes. The deterministic fake host remains
 the conformance backend. `RealRelayHost::reconnect` provides an explicit
 session reset boundary; automatic retry/backoff and TLS transport remain
-follow-up hardening.
+follow-up hardening. `reconnect_with_backoff` now supplies bounded exponential
+retry policy for callers that want recovery before rebuilding subscriptions.
 
 ## Deferred
 
