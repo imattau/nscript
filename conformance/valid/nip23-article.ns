@@ -1,0 +1,12 @@
+// NIP-23 long-form content is an addressable article event.
+use nip23
+
+permissions {
+    article
+}
+
+let result = nip23.publish_article(Article {
+    identifier: "first-post";
+    title: "Hello Nostr";
+    content: "Long-form content belongs here.";
+})

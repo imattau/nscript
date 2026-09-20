@@ -80,6 +80,13 @@ pub struct Comment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Article {
+    pub identifier: String,
+    pub title: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -164,6 +171,7 @@ pub enum OperationValue {
     ThreadReply(ThreadReply),
     Repost(Repost),
     Comment(Comment),
+    Article(Article),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -927,6 +935,28 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip23", "publish_article") => {
+                let [OperationValue::Article(article)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if article.identifier.is_empty()
+                    || article.title.is_empty()
+                    || article.content.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://articles".to_owned(),
+                        accepted: true,
+                        detail: "addressable article lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1093,6 +1123,7 @@ impl OperationHost for FakeOperationHost {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn normalize_record(value: &OperationValue) -> OperationValue {
     let OperationValue::Record { name, fields } = value else {
         return value.clone();
@@ -1121,6 +1152,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         },
         "Comment" => match (text("target"), text("content")) {
             (Some(target), Some(content)) => OperationValue::Comment(Comment { target, content }),
+            _ => value.clone(),
+        },
+        "Article" => match (text("identifier"), text("title"), text("content")) {
+            (Some(identifier), Some(title), Some(content)) => OperationValue::Article(Article {
+                identifier,
+                title,
+                content,
+            }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -1596,6 +1635,43 @@ mod tests {
                 }],
             )
             .expect("comment host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip23_lowers_addressable_articles() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip23", "publish_article"),
+                &mut host,
+                "nip23",
+                "publish_article",
+                &[OperationValue::Record {
+                    name: "Article".to_owned(),
+                    fields: vec![
+                        (
+                            "identifier".to_owned(),
+                            OperationValue::Text("first-post".to_owned()),
+                        ),
+                        (
+                            "title".to_owned(),
+                            OperationValue::Text("Hello Nostr".to_owned()),
+                        ),
+                        (
+                            "content".to_owned(),
+                            OperationValue::Text("Long-form content belongs here.".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("article host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

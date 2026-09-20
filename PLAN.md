@@ -95,6 +95,9 @@ performing relay, signer, storage, or other host effects.
   references, repost lowering, and source/runtime conformance coverage.
 - Added NIP-22 typed `Comment` records and `publish_comment`, allowing comments
   to target arbitrary events with validated content and source/runtime coverage.
+- Added NIP-23 typed `Article` records and `publish_article`, modeling
+  addressable long-form content with validated identifiers and source/runtime
+  coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

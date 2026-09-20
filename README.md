@@ -108,6 +108,10 @@ NIP-22 comments use typed `Comment` records with arbitrary event targets.
 `nip22.publish_comment` validates and lowers the target/content pair through an
 explicit signing/relay capability.
 
+NIP-23 long-form content uses typed addressable `Article` records.
+`nip23.publish_article` validates the identifier, title, and body before
+publication through an explicit signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.
