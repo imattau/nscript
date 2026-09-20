@@ -28,10 +28,25 @@ pub struct CheckedPublication {
     pub span: Span,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CheckedArgument {
+    Text(String),
+    PubKey(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedOperationCall {
+    pub module: String,
+    pub operation: String,
+    pub arguments: Vec<CheckedArgument>,
+    pub span: Span,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CheckedProgram {
     pub effects: BTreeSet<Effect>,
     pub publications: Vec<CheckedPublication>,
+    pub operation_calls: Vec<CheckedOperationCall>,
 }
 
 const HARDENED_FORBIDDEN: &[&str] = &[
@@ -569,6 +584,7 @@ pub fn check(program: &Program) -> (Option<CheckedProgram>, Vec<Diagnostic>) {
     let result = checker.diagnostics.is_empty().then_some(CheckedProgram {
         effects: checker.effects,
         publications: checker.publications,
+        operation_calls: checker.operation_calls,
     });
     (result, checker.diagnostics)
 }
@@ -588,6 +604,7 @@ struct Checker<'a> {
     defaults_relays: Option<String>,
     effects: BTreeSet<Effect>,
     publications: Vec<CheckedPublication>,
+    operation_calls: Vec<CheckedOperationCall>,
     diagnostics: Vec<Diagnostic>,
     event_bindings: BTreeSet<String>,
 }
@@ -601,6 +618,7 @@ impl<'a> Checker<'a> {
             defaults_relays: program.defaults.relays.as_ref().map(|item| item.0.clone()),
             effects: BTreeSet::new(),
             publications: Vec::new(),
+            operation_calls: Vec::new(),
             diagnostics: Vec::new(),
             event_bindings: BTreeSet::new(),
         };
@@ -798,6 +816,7 @@ impl<'a> Checker<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn check_expr(&mut self, expression: &Expr, locals: &BTreeMap<String, TypeRef>) {
         match &expression.value {
             ExprKind::Select(select) => {
@@ -856,6 +875,26 @@ impl<'a> Checker<'a> {
                 }
             }
             ExprKind::Call { callee, arguments } => {
+                if let Some(path) = expression_path(callee)
+                    && let Some((module, operation)) = path.split_once('.')
+                {
+                    let checked_arguments = arguments
+                        .iter()
+                        .filter_map(|argument| match &argument.value {
+                            ExprKind::Text(value) => Some(CheckedArgument::Text(value.clone())),
+                            ExprKind::Identifier(value) => {
+                                Some(CheckedArgument::PubKey(value.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    self.operation_calls.push(CheckedOperationCall {
+                        module: module.to_owned(),
+                        operation: operation.to_owned(),
+                        arguments: checked_arguments,
+                        span: expression.span,
+                    });
+                }
                 if matches!(&callee.value, ExprKind::Identifier(name) if name == "print") {
                     self.effects.insert(Effect::Log);
                     self.require_named(expression.span, "log");

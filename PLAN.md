@@ -53,6 +53,8 @@ performing relay, signer, storage, or other host effects.
   undeclared module operations are denied before reaching a host capability.
 - Added module-call validation: qualified and unqualified imported exports are
   checked for ambiguity, argument arity, and declared operation permissions.
+- Carried checked module calls into `CheckedProgram` and added runtime execution
+  through the authorized operation host boundary.
 
 ## Deferred
 

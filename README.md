@@ -51,7 +51,8 @@ The built-in module graph now includes typed NIP-44 encryption, NIP-59 gift
 wrapping, and NIP-17 private-message contracts. These modules declare the
 protocol types and required effects; host implementations remain capability
 bound and are not given raw private keys. Runtime operation dispatch checks an
-explicit capability policy before invoking any module host operation.
+explicit capability policy before invoking any module host operation, and
+checked source calls can now be executed through that boundary.
 
 ## Repository map
 

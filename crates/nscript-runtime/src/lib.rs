@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nscript_semantics::{CheckedProgram, CheckedPublication};
+use nscript_semantics::{CheckedArgument, CheckedProgram, CheckedPublication};
 use nscript_syntax::Program;
 
 pub type InvocationId = u64;
@@ -284,6 +284,40 @@ where
             });
         }
         self.invoke_operation(host, module, operation, arguments)
+    }
+
+    /// Execute operation calls collected by static checking.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first capability, argument, or host operation failure.
+    pub fn run_operations<H: OperationHost>(
+        &mut self,
+        checked: &CheckedProgram,
+        policy: &OperationPolicy,
+        host: &mut H,
+    ) -> Result<Vec<OperationValue>, RuntimeError> {
+        checked
+            .operation_calls
+            .iter()
+            .map(|call| {
+                let arguments = call
+                    .arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        CheckedArgument::Text(value) => OperationValue::Text(value.clone()),
+                        CheckedArgument::PubKey(value) => OperationValue::PubKey(value.clone()),
+                    })
+                    .collect::<Vec<_>>();
+                self.invoke_authorized_operation(
+                    policy,
+                    host,
+                    &call.module,
+                    &call.operation,
+                    &arguments,
+                )
+            })
+            .collect()
     }
 
     fn execute_publication(
@@ -680,5 +714,35 @@ mod tests {
             }
         );
         assert!(runtime.audit.entries.is_empty());
+    }
+
+    #[test]
+    fn checked_source_calls_execute_through_operation_host() {
+        let source = "let result = nip44.encrypt_text(\"secret\", alice)\n";
+        let (program, parse_diagnostics) = nscript_syntax::parse_program(source);
+        assert!(parse_diagnostics.is_empty());
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty());
+        let checked = checked.expect("source is statically valid");
+        assert_eq!(checked.operation_calls.len(), 1);
+
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let values = runtime
+            .run_operations(
+                &checked,
+                &OperationPolicy::default().allow("nip44", "encrypt_text"),
+                &mut host,
+            )
+            .expect("authorized source call succeeds");
+        assert!(matches!(
+            values.first(),
+            Some(OperationValue::EncryptedText(_))
+        ));
     }
 }
