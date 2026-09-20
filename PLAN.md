@@ -167,6 +167,8 @@ performing relay, signer, storage, or other host effects.
   completing host-owned stream lifecycle management.
 - Added typed `SubscriptionBatch` polling with completeness metadata through
   `Runtime::poll_subscription`, covering the relay stream delivery boundary.
+- Added runtime event-ID deduplication during subscription polling, preventing
+  relay retries from invoking handlers twice for the same signed event.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

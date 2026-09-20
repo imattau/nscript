@@ -695,6 +695,7 @@ pub struct Runtime<R, S, C, A> {
     pub clock: C,
     pub audit: A,
     next_invocation: InvocationId,
+    seen_event_ids: BTreeSet<String>,
 }
 
 impl<R, S, C, A> Runtime<R, S, C, A>
@@ -711,6 +712,7 @@ where
             clock,
             audit,
             next_invocation: 1,
+            seen_event_ids: BTreeSet::new(),
         }
     }
 
@@ -857,7 +859,12 @@ where
     ) -> Result<SubscriptionBatch, RuntimeError> {
         let invocation = self.next_invocation;
         self.next_invocation += 1;
-        let result = host.poll(invocation, handle);
+        let result = host.poll(invocation, handle).map(|mut batch| {
+            batch
+                .events
+                .retain(|event| self.seen_event_ids.insert(event.id.clone()));
+            batch
+        });
         self.audit.record(AuditEntry {
             invocation,
             operation: "poll_subscription".to_owned(),
@@ -2768,10 +2775,22 @@ mod tests {
         assert_eq!(handle, SubscriptionHandle { id: 1 });
         assert_eq!(relay.subscriptions, vec![request]);
         assert_eq!(runtime.audit.entries[0].operation, "subscribe");
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "hello".to_owned(),
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "event-1".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        relay.queued_events.insert(1, vec![event.clone(), event]);
         let batch = runtime
             .poll_subscription(&mut relay, &handle)
             .expect("subscription polls");
-        assert!(batch.events.is_empty());
+        assert_eq!(batch.events.len(), 1);
         assert!(batch.complete);
         assert_eq!(runtime.audit.entries[1].result, "complete");
         runtime

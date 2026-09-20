@@ -225,6 +225,8 @@ host runtime. `Runtime::unsubscribe` closes those handles through the same
 audited capability boundary.
 `Runtime::poll_subscription` drains typed event batches and preserves
 EOSE-like completeness metadata for stream consumers.
+The runtime also suppresses repeated signed-event IDs across relay retries
+before batches reach script handlers.
 
 ## Repository map
 
