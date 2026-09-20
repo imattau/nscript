@@ -132,6 +132,9 @@ NIP-42 relay authentication is exposed as the typed `nip42.authenticate`
 runtime primitive. It validates secure relay URLs and requires an explicit
 relay-auth capability before returning an authenticated session.
 
+NIP-45 event counts use `nip45.count_events` to return an aggregate integer
+ from a validated filter without downloading the matching events.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

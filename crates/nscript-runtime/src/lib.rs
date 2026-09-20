@@ -1083,6 +1083,19 @@ impl OperationHost for FakeOperationHost {
                     relay: relay.clone(),
                 }))
             }
+            ("nip45", "count_events") => {
+                let [OperationValue::Text(filter)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if filter.trim().is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::Integer(0))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1984,6 +1997,27 @@ mod tests {
             OperationValue::AuthenticatedRelay(AuthenticatedRelay { relay })
                 if relay == "wss://relay.example"
         ));
+    }
+
+    #[test]
+    fn nip45_returns_event_counts_without_materializing_events() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip45", "count_events"),
+                &mut host,
+                "nip45",
+                "count_events",
+                &[OperationValue::Text("kind:1 since:24h".to_owned())],
+            )
+            .expect("count host available");
+        assert_eq!(result, OperationValue::Integer(0));
     }
 
     #[test]

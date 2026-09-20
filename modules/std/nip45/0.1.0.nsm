@@ -1,0 +1,9 @@
+module nip45 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/45.md"
+
+error CountError {
+    field message: Text
+}
+
+operation count_events(filter: Text) -> Result<Int,CountError> effect Relay permission event_count
