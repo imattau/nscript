@@ -31,8 +31,12 @@ pub struct CheckedPublication {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CheckedArgument {
     Text(String),
+    Integer(i64),
     PubKey(String),
-    PrivateMessage { content: String, recipient: String },
+    Record {
+        name: String,
+        fields: Vec<(String, CheckedArgument)>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -879,33 +883,7 @@ impl<'a> Checker<'a> {
                 if let Some(path) = expression_path(callee)
                     && let Some((module, operation)) = path.split_once('.')
                 {
-                    let checked_arguments = arguments
-                        .iter()
-                        .filter_map(|argument| match &argument.value {
-                            ExprKind::Text(value) => Some(CheckedArgument::Text(value.clone())),
-                            ExprKind::Identifier(value) => {
-                                Some(CheckedArgument::PubKey(value.clone()))
-                            }
-                            ExprKind::Construct { name, fields }
-                                if name.value == "PrivateMessage" =>
-                            {
-                                let content = fields.iter().find_map(|(field, value)| {
-                                    (field.value == "content").then(|| match &value.value {
-                                        ExprKind::Text(text) => text.clone(),
-                                        _ => String::new(),
-                                    })
-                                })?;
-                                let recipient = fields.iter().find_map(|(field, value)| {
-                                    (field.value == "recipient").then(|| match &value.value {
-                                        ExprKind::Identifier(identifier) => identifier.clone(),
-                                        _ => String::new(),
-                                    })
-                                })?;
-                                Some(CheckedArgument::PrivateMessage { content, recipient })
-                            }
-                            _ => None,
-                        })
-                        .collect();
+                    let checked_arguments = arguments.iter().filter_map(checked_argument).collect();
                     self.operation_calls.push(CheckedOperationCall {
                         module: module.to_owned(),
                         operation: operation.to_owned(),
@@ -1095,6 +1073,22 @@ impl<'a> Checker<'a> {
             message: format!("operation requires `{permission}` permission"),
             span,
         });
+    }
+}
+
+fn checked_argument(expression: &Expr) -> Option<CheckedArgument> {
+    match &expression.value {
+        ExprKind::Text(value) => Some(CheckedArgument::Text(value.clone())),
+        ExprKind::Integer(value) => Some(CheckedArgument::Integer(*value)),
+        ExprKind::Identifier(value) => Some(CheckedArgument::PubKey(value.clone())),
+        ExprKind::Construct { name, fields } => Some(CheckedArgument::Record {
+            name: name.value.clone(),
+            fields: fields
+                .iter()
+                .filter_map(|(field, value)| Some((field.value.clone(), checked_argument(value)?)))
+                .collect(),
+        }),
+        _ => None,
     }
 }
 

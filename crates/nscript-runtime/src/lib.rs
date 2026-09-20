@@ -134,7 +134,12 @@ pub struct SiteDeployment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
+    Integer(i64),
     PubKey(String),
+    Record {
+        name: String,
+        fields: Vec<(String, OperationValue)>,
+    },
     EncryptedText(String),
     GiftWrap(String),
     PrivateMessage(PrivateMessage),
@@ -409,16 +414,7 @@ where
                 let arguments = call
                     .arguments
                     .iter()
-                    .map(|argument| match argument {
-                        CheckedArgument::Text(value) => OperationValue::Text(value.clone()),
-                        CheckedArgument::PubKey(value) => OperationValue::PubKey(value.clone()),
-                        CheckedArgument::PrivateMessage { content, recipient } => {
-                            OperationValue::PrivateMessage(PrivateMessage {
-                                content: content.clone(),
-                                recipient: recipient.clone(),
-                            })
-                        }
-                    })
+                    .map(checked_to_operation)
                     .collect::<Vec<_>>();
                 self.invoke_authorized_operation(
                     policy,
@@ -501,6 +497,21 @@ where
             return Err(RuntimeError::PublicationRejected);
         }
         Ok(report)
+    }
+}
+
+fn checked_to_operation(argument: &CheckedArgument) -> OperationValue {
+    match argument {
+        CheckedArgument::Text(value) => OperationValue::Text(value.clone()),
+        CheckedArgument::Integer(value) => OperationValue::Integer(*value),
+        CheckedArgument::PubKey(value) => OperationValue::PubKey(value.clone()),
+        CheckedArgument::Record { name, fields } => OperationValue::Record {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, value)| (field.clone(), checked_to_operation(value)))
+                .collect(),
+        },
     }
 }
 
@@ -812,11 +823,22 @@ impl OperationHost for FakeOperationHost {
                 Ok(OperationValue::EncryptedText(payload.to_owned()))
             }
             ("nip17", "send_private") => {
-                let [OperationValue::PrivateMessage(_message)] = arguments else {
+                let valid = match arguments {
+                    [OperationValue::PrivateMessage(_)] => true,
+                    [OperationValue::Record { name, fields }] if name == "PrivateMessage" => {
+                        matches!(
+                            fields.as_slice(),
+                            [(content, OperationValue::Text(_)), (recipient, OperationValue::PubKey(_))]
+                                if content == "content" && recipient == "recipient"
+                        )
+                    }
+                    _ => false,
+                };
+                if !valid {
                     return Err(RuntimeError::InvalidOperationArguments {
                         operation: operation.to_owned(),
                     });
-                };
+                }
                 Ok(OperationValue::PublishReport(PublishReport {
                     outcomes: vec![RelayOutcome {
                         relay: "fake://private".to_owned(),
@@ -1128,7 +1150,30 @@ mod tests {
             )
             .expect("private-message host available");
         assert!(matches!(message, OperationValue::PublishReport(report) if report.accepted()));
-        assert_eq!(runtime.audit.entries.len(), 3);
+        let record_message = runtime
+            .invoke_operation(
+                &mut host,
+                "nip17",
+                "send_private",
+                &[OperationValue::Record {
+                    name: "PrivateMessage".to_owned(),
+                    fields: vec![
+                        (
+                            "content".to_owned(),
+                            OperationValue::Text("hello".to_owned()),
+                        ),
+                        (
+                            "recipient".to_owned(),
+                            OperationValue::PubKey("alice".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("generic private-message record host available");
+        assert!(
+            matches!(record_message, OperationValue::PublishReport(report) if report.accepted())
+        );
+        assert_eq!(runtime.audit.entries.len(), 4);
     }
 
     #[test]
