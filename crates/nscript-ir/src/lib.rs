@@ -27,8 +27,12 @@ pub struct NostrIr {
 #[must_use]
 pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-    // One shared `() -> ()` function type for capability host calls and main.
-    push_section(&mut module, 1, &[1, 0x60, 0, 0]);
+    // Type 0: capability handle, type 1: typed payload ptr/len, type 2: main.
+    push_section(
+        &mut module,
+        1,
+        &[3, 0x60, 0, 0, 0x60, 2, 0x7f, 0x7f, 0, 0x60, 0, 0],
+    );
     let operation_imports = ir
         .operations
         .iter()
@@ -55,14 +59,14 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
             push_name(&mut imports, "nscript");
             push_name(&mut imports, operation);
             imports.push(0);
-            imports.push(0);
+            imports.push(1); // ptr/len ABI
         }
         push_section(&mut module, 2, &imports);
     }
     // Define and export an executable entry point. Each declared capability is
     // called in stable order; host bindings provide the real typed arguments in
     // the next lowering stage.
-    push_section(&mut module, 3, &[1, 0]);
+    push_section(&mut module, 3, &[1, 2]);
     let mut export = Vec::new();
     push_u32(&mut export, 1);
     push_name(&mut export, "nscript_main");
@@ -82,6 +86,7 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
         );
     }
     for index in ir.capabilities.len()..(ir.capabilities.len() + operation_imports.len()) {
+        body.extend_from_slice(&[0x41, 0, 0x41, 0]); // ptr=0, len=0 until memory lowering
         body.push(0x10);
         push_u32(
             &mut body,

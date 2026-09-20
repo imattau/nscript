@@ -339,7 +339,9 @@ artifact. The artifact now exports `nscript_main` and deterministically invokes
 declared capability imports. A `nscript.dispatch` custom section carries the
 serialized typed operation trace, and each lowered operation is now exposed as
 a deterministic `op:<index>:<name>` host import invoked by `nscript_main`.
-Direct value ABI lowering remains the next WASM increment.
+Operation imports now expose a first typed ABI as `(ptr, len)` pairs, with the
+dispatch metadata remaining the authoritative payload until linear-memory
+encoding is added.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
