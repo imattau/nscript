@@ -285,6 +285,8 @@ host-controlled body callback exactly once, auditing handler success/failure.
 storage, committing handler state only on successful body completion.
 `Runtime::run_handler_cycle` now composes the full one-cycle transport path:
 handler lowering, subscribe, poll, dispatch, transaction, and unsubscribe.
+The conformance test exercises a queued signed event through that full path and
+verifies committed handler state.
 
 ## Deferred
 

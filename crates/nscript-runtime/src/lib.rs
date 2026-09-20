@@ -3483,6 +3483,21 @@ mod tests {
             RecordingAudit::default(),
         );
         let mut relay = FakeRelayHost::default();
+        relay.queued_events.insert(
+            1,
+            vec![SignedEvent {
+                unsigned: UnsignedEvent {
+                    event_type: "Note".to_owned(),
+                    kind: 1,
+                    content: "hello".to_owned(),
+                    tags: Vec::new(),
+                    created_at: 100,
+                },
+                signer: "alice".to_owned(),
+                id: "event-cycle".to_owned(),
+                signature: "sig".to_owned(),
+            }],
+        );
         let mut claims = InMemoryStorage::default();
         let mut storage = InMemoryStorage::default();
         let dispatched = runtime
@@ -3492,10 +3507,14 @@ mod tests {
                 &mut relay,
                 &mut claims,
                 &mut storage,
-                |_, _, _| Ok(()),
+                |_, _, transaction| {
+                    transaction.put("last", "event-cycle");
+                    Ok(())
+                },
             )
             .expect("empty cycle succeeds");
-        assert_eq!(dispatched, 0);
+        assert_eq!(dispatched, 1);
+        assert_eq!(storage.values.get("last").map(String::as_str), Some("event-cycle"));
         assert_eq!(relay.subscriptions.len(), 1);
         assert_eq!(relay.closed_subscriptions.len(), 1);
     }
