@@ -1,0 +1,12 @@
+// NIP-89 application handlers advertise routing for event kinds.
+use nip89
+
+permissions {
+    app_handler
+}
+
+let result = nip89.publish_handler(AppHandler {
+    kind: "1";
+    app: "nscript-reader";
+    endpoint: "https://apps.example/nostr";
+})

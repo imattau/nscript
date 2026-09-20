@@ -175,6 +175,10 @@ NIP-86 relay management uses typed `RelayAdminRequest` values.
 `nip86.manage_relay` validates the relay/action/subject tuple and requires an
 explicit relay-admin capability.
 
+NIP-89 application handlers use typed `AppHandler` records to advertise event
+ routing. `nip89.publish_handler` validates kind, application, and endpoint
+ before publication through an explicit signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

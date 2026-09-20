@@ -194,6 +194,13 @@ pub struct RelayAdminRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppHandler {
+    pub kind: String,
+    pub app: String,
+    pub endpoint: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -296,6 +303,7 @@ pub enum OperationValue {
     Highlight(Highlight),
     Assertion(Assertion),
     RelayAdminRequest(RelayAdminRequest),
+    AppHandler(AppHandler),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1383,6 +1391,26 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip89", "publish_handler") => {
+                let [OperationValue::AppHandler(handler)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if handler.kind.is_empty() || handler.app.is_empty() || handler.endpoint.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://app-handlers".to_owned(),
+                        accepted: true,
+                        detail: "application handler lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1681,6 +1709,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                     subject,
                 })
             }
+            _ => value.clone(),
+        },
+        "AppHandler" => match (text("kind"), text("app"), text("endpoint")) {
+            (Some(kind), Some(app), Some(endpoint)) => OperationValue::AppHandler(AppHandler {
+                kind,
+                app,
+                endpoint,
+            }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2729,6 +2765,40 @@ mod tests {
                 }],
             )
             .expect("relay admin host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip89_lowers_application_handlers() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip89", "publish_handler"),
+                &mut host,
+                "nip89",
+                "publish_handler",
+                &[OperationValue::Record {
+                    name: "AppHandler".to_owned(),
+                    fields: vec![
+                        ("kind".to_owned(), OperationValue::Text("1".to_owned())),
+                        (
+                            "app".to_owned(),
+                            OperationValue::Text("nscript-reader".to_owned()),
+                        ),
+                        (
+                            "endpoint".to_owned(),
+                            OperationValue::Text("https://apps.example/nostr".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("handler host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

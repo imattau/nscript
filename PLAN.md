@@ -131,6 +131,8 @@ performing relay, signer, storage, or other host effects.
   subject/kind/value validation for trust and reputation workflows.
 - Added NIP-86 typed `RelayAdminRequest` and `manage_relay`, with secure relay
   validation and explicit relay-admin capability enforcement.
+- Added NIP-89 typed `AppHandler` records and `publish_handler`, with explicit
+  event-kind/application/endpoint routing validation.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
