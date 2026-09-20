@@ -181,6 +181,8 @@ performing relay, signer, storage, or other host effects.
   streams after reconnects.
 - Added bounded structured logging through `LogHost` and audited
   `Runtime::log`, keeping console output capability-scoped.
+- Added committed-value snapshots to storage transactions, allowing reads of
+  prior state while preserving staged-write rollback semantics.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

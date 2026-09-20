@@ -239,6 +239,8 @@ Subscription requests and batches carry opaque typed cursors so hosts can
 resume relay streams after reconnects without exposing transport details.
 Structured output goes through the bounded `LogHost`/`Runtime::log` boundary,
 with oversized messages rejected and outcomes audited.
+Storage transactions now snapshot committed values for reads, while writes
+remain staged until successful completion.
 
 ## Repository map
 

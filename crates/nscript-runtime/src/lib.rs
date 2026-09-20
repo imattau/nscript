@@ -661,7 +661,10 @@ pub struct InMemoryStorage {
 
 impl StorageHost for InMemoryStorage {
     fn begin(&mut self, _invocation: InvocationId) -> StorageTransaction {
-        StorageTransaction::default()
+        StorageTransaction {
+            reads: self.values.clone(),
+            ..StorageTransaction::default()
+        }
     }
 }
 
@@ -679,6 +682,7 @@ impl IdempotencyHost for InMemoryStorage {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct StorageTransaction {
+    reads: BTreeMap<String, String>,
     writes: BTreeMap<String, String>,
     committed: bool,
 }
@@ -690,7 +694,10 @@ impl StorageTransaction {
 
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.writes.get(key).map(String::as_str)
+        self.writes
+            .get(key)
+            .or_else(|| self.reads.get(key))
+            .map(String::as_str)
     }
 
     pub fn commit(mut self) {
@@ -2769,7 +2776,9 @@ mod tests {
         );
 
         let mut rolled_back = storage.begin(2);
+        assert_eq!(rolled_back.get("seen"), Some("event-1"));
         rolled_back.put("seen", "event-2");
+        assert_eq!(rolled_back.get("seen"), Some("event-2"));
         drop(rolled_back);
         assert_eq!(
             storage.values.get("seen").map(String::as_str),
