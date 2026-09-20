@@ -9,6 +9,10 @@ fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
     match arguments.as_slice() {
         [command, rest @ ..] if command == "check" => check_program(rest),
+        [command, format, rest @ ..] if command == "inspect" && format == "--json" => {
+            inspect_program(rest, true)
+        }
+        [command, rest @ ..] if command == "inspect" => inspect_program(rest, false),
         [command, rest @ ..] if command == "run" => run_program(rest),
         [command, emit, format, rest @ ..]
             if command == "compile" && emit == "--emit" && format == "ir" =>
@@ -26,7 +30,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript run [-M <directory>]... <file>\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [-M <directory>]... <file>\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -98,6 +102,51 @@ fn check_program(arguments: &[String]) -> ExitCode {
     };
     diagnostics.extend(analyze_with_modules(&program, &graph));
     finish(&path, diagnostics)
+}
+
+fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
+    let Ok((path, program, graph, mut diagnostics)) = load_program(arguments) else {
+        return ExitCode::from(2);
+    };
+    diagnostics.extend(analyze_with_modules(&program, &graph));
+    if !diagnostics.is_empty() {
+        return finish(&path, diagnostics);
+    }
+    let (checked, typed_diagnostics) = check(&program);
+    if !typed_diagnostics.is_empty() {
+        return finish(&path, typed_diagnostics);
+    }
+    let checked = checked.expect("a diagnostic-free program is checked");
+    if json {
+        let manifest = serde_json::json!({
+            "profile": format!("{:?}", program.profile).to_lowercase(),
+            "effects": checked.effects.iter().map(|effect| format!("{effect:?}").to_lowercase()).collect::<Vec<_>>(),
+            "operations": checked.operation_calls.iter().map(|call| format!("{}.{}", call.module, call.operation)).collect::<Vec<_>>(),
+            "publications": checked.publications.len(),
+            "schedules": checked.schedules.len(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&manifest).expect("manifest is serializable")
+        );
+    } else {
+        println!("profile: {:?}", program.profile);
+        println!(
+            "effects: {}",
+            checked
+                .effects
+                .iter()
+                .map(|effect| format!("{effect:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        for call in &checked.operation_calls {
+            println!("operation: {}.{}", call.module, call.operation);
+        }
+        println!("publications: {}", checked.publications.len());
+        println!("schedules: {}", checked.schedules.len());
+    }
+    ExitCode::SUCCESS
 }
 
 fn compile_program(arguments: &[String]) -> ExitCode {

@@ -21,6 +21,32 @@ fn checks_program_with_builtin_imports() {
 }
 
 #[test]
+fn inspects_program_permissions_as_json() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/idempotent-handler.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["profile"], "standard");
+    assert!(
+        value["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|effect| effect == "storage")
+    );
+    assert!(
+        value["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|effect| effect == "log")
+    );
+}
+
+#[test]
 fn reports_missing_module() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("check")

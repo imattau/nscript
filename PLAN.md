@@ -247,6 +247,24 @@ The acceptance bar for each addition is a typed module descriptor, capability
 and effect declarations, invalid-input fixtures, deterministic fake-host tests,
 and documented wire-level lowering to existing Nostr protocols.
 
+## Draft 0.1 hardening and feature freeze
+
+Draft 0.1 is now feature-frozen at the current NIP surface. New NIPs are
+deferred unless required to complete an existing feature. The next milestones
+are execution quality rather than protocol breadth:
+
+1. Drive the conformance matrix to zero remaining release-blocker cells.
+2. Execute `on`/`stream` handlers end to end with typed matching, idempotency,
+   transactional storage, timers, and effects.
+3. Add minimal real relay, NIP-46 signer, and SQLite storage hosts.
+4. Expose inspectable permission manifests and dry-run execution.
+5. Formalize signed package manifests and dependency locking.
+6. Add WASM only after runtime semantics and real-host behavior stabilize.
+
+The `nscript inspect [--json]` command is the first security-UX slice: it
+reports the checked profile, inferred effects, operation capabilities,
+publication count, and schedule count without executing external effects.
+
 ## Deferred
 
 Module operation dispatch, full handler/stream evaluation, live relays,
