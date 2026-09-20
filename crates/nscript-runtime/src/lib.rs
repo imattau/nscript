@@ -1361,9 +1361,10 @@ where
 
     /// Execute the currently supported handler body subset through host effects.
     ///
-    /// The initial interpreter slice supports direct `print("...")` statements
-    /// and boolean `if` branches; unsupported statements return a stable
-    /// runtime error instead of being silently skipped.
+    /// The interpreter supports direct `print(...)` statements, boolean `if`
+    /// branches, and bounded iteration over delivered event tags; unsupported
+    /// statements return a stable runtime error instead of being silently
+    /// skipped.
     ///
     /// # Errors
     ///
@@ -1373,7 +1374,7 @@ where
         handler: &CheckedHandler,
         log_host: &mut H,
     ) -> Result<(), RuntimeError> {
-        self.execute_handler_items(&handler.body, None, log_host)
+        self.execute_handler_items(&handler.body, None, &mut BTreeMap::new(), log_host)
     }
 
     /// Execute a handler body with the delivered event available to conditions.
@@ -1390,13 +1391,14 @@ where
         event: &SignedEvent,
         log_host: &mut H,
     ) -> Result<(), RuntimeError> {
-        self.execute_handler_items(&handler.body, Some(event), log_host)
+        self.execute_handler_items(&handler.body, Some(event), &mut BTreeMap::new(), log_host)
     }
 
     fn execute_handler_items<H: LogHost>(
         &mut self,
         items: &[Item],
         event: Option<&SignedEvent>,
+        bindings: &mut BTreeMap<String, String>,
         log_host: &mut H,
     ) -> Result<(), RuntimeError> {
         for item in items {
@@ -1419,7 +1421,7 @@ where
                             operation: "body_call".to_owned(),
                         });
                     }
-                    let Some(message) = Self::handler_text(&arguments[0], event) else {
+                    let Some(message) = Self::handler_text(&arguments[0], event, bindings) else {
                         return Err(RuntimeError::InvalidOperationArguments {
                             operation: "print".to_owned(),
                         });
@@ -1437,18 +1439,27 @@ where
                     then_body,
                     else_body,
                 } => {
-                    if Self::evaluate_handler_condition(condition, event)? {
-                        self.execute_handler_items(then_body, event, log_host)?;
+                    if Self::evaluate_handler_condition(condition, event, bindings)? {
+                        self.execute_handler_items(then_body, event, bindings, log_host)?;
                     } else {
-                        self.execute_handler_items(else_body, event, log_host)?;
+                        self.execute_handler_items(else_body, event, bindings, log_host)?;
                     }
                 }
-                StatementKind::For { value, body, .. }
-                    if Self::is_event_tags(value) && event.is_some() =>
-                {
+                StatementKind::For {
+                    binding,
+                    value,
+                    body,
+                } if Self::is_event_tags(value) && event.is_some() => {
                     let event = event.expect("guarded event binding");
-                    for _tag in &event.unsigned.tags {
-                        self.execute_handler_items(body, Some(event), log_host)?;
+                    for (name, value) in &event.unsigned.tags {
+                        let previous =
+                            bindings.insert(binding.value.clone(), format!("{name}={value}"));
+                        self.execute_handler_items(body, Some(event), bindings, log_host)?;
+                        if let Some(previous) = previous {
+                            bindings.insert(binding.value.clone(), previous);
+                        } else {
+                            bindings.remove(&binding.value);
+                        }
                     }
                 }
                 _ => {
@@ -1465,22 +1476,23 @@ where
     fn evaluate_handler_condition(
         expression: &nscript_syntax::ast::Expr,
         event: Option<&SignedEvent>,
+        bindings: &BTreeMap<String, String>,
     ) -> Result<bool, RuntimeError> {
         match &expression.value {
             ExprKind::Bool(value) => Ok(*value),
             ExprKind::Unary { operator, value } if operator == "!" => {
-                Ok(!Self::evaluate_handler_condition(value, event)?)
+                Ok(!Self::evaluate_handler_condition(value, event, bindings)?)
             }
             ExprKind::Binary {
                 operator,
                 left,
                 right,
             } if operator == "&&" || operator == "||" => {
-                let left = Self::evaluate_handler_condition(left, event)?;
+                let left = Self::evaluate_handler_condition(left, event, bindings)?;
                 if operator == "&&" {
-                    Ok(left && Self::evaluate_handler_condition(right, event)?)
+                    Ok(left && Self::evaluate_handler_condition(right, event, bindings)?)
                 } else {
-                    Ok(left || Self::evaluate_handler_condition(right, event)?)
+                    Ok(left || Self::evaluate_handler_condition(right, event, bindings)?)
                 }
             }
             ExprKind::Binary {
@@ -1490,7 +1502,7 @@ where
             } if matches!(operator.as_str(), "==" | "!=" | "contains") => {
                 if operator == "contains" {
                     if let Some(tag_name) = Self::handler_tag_name(left) {
-                        let Some(needle) = Self::handler_text(right, event) else {
+                        let Some(needle) = Self::handler_text(right, event, bindings) else {
                             return Err(RuntimeError::InvalidOperationArguments {
                                 operation: "handler_condition".to_owned(),
                             });
@@ -1506,8 +1518,8 @@ where
                             .any(|(name, value)| name == &tag_name && value == &needle));
                     }
                     let (Some(haystack), Some(needle)) = (
-                        Self::handler_text(left, event),
-                        Self::handler_text(right, event),
+                        Self::handler_text(left, event, bindings),
+                        Self::handler_text(right, event, bindings),
                     ) else {
                         return Err(RuntimeError::InvalidOperationArguments {
                             operation: "handler_condition".to_owned(),
@@ -1526,8 +1538,8 @@ where
                         *value == Self::handler_integer(right, event)?
                     }
                     _ => match (
-                        Self::handler_text(left, event),
-                        Self::handler_text(right, event),
+                        Self::handler_text(left, event, bindings),
+                        Self::handler_text(right, event, bindings),
                     ) {
                         (Some(a), Some(b)) => a == b,
                         _ => {
@@ -1548,9 +1560,11 @@ where
     fn handler_text(
         expression: &nscript_syntax::ast::Expr,
         event: Option<&SignedEvent>,
+        bindings: &BTreeMap<String, String>,
     ) -> Option<String> {
         match &expression.value {
             ExprKind::Text(value) => Some(value.clone()),
+            ExprKind::Identifier(name) => bindings.get(name).cloned(),
             ExprKind::Member { value, name } if matches!(&value.value, ExprKind::Identifier(base) if base == "event") =>
             {
                 let event = event?;
@@ -3810,7 +3824,7 @@ mod tests {
 
     #[test]
     fn handler_body_iterates_event_tags() {
-        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    for tag in event.tags {\n        print(event.id)\n    }\n}";
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    for tag in event.tags {\n        print(tag)\n    }\n}";
         let program = nscript_syntax::parse_program(source).0;
         let (checked, diagnostics) = nscript_semantics::check(&program);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
@@ -3841,11 +3855,8 @@ mod tests {
             .execute_handler_body_for_event(&checked.handlers[0], &event, &mut logs)
             .expect("tag loop executes");
         assert_eq!(logs.records.len(), 2);
-        assert!(
-            logs.records
-                .iter()
-                .all(|record| record.message == "event-tags")
-        );
+        assert_eq!(logs.records[0].message, "t=one");
+        assert_eq!(logs.records[1].message, "t=two");
     }
 
     #[test]

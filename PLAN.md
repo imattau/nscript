@@ -289,8 +289,9 @@ Numeric `event.kind` equality and inequality are also available to handler
 conditions.
 Typed tag predicates now support `event.tags.<name> contains "value"`,
 preserving the protocol's tag structure while keeping handler code declarative.
-Basic `for tag in event.tags` iteration now executes handler bodies once per
-delivered tag; binding the tag value itself remains a follow-up slice.
+`for tag in event.tags` now binds each tag as a stable `name=value` text value
+for use in handler expressions, while keeping iteration bounded by the
+delivered event.
 Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
 Signed-event values now carry typed `(tag, value)` pairs, allowing lowered tag
