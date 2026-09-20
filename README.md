@@ -69,6 +69,9 @@ published through the same explicit capability boundary.
 NIP-02 follow lists use a typed `FollowList` value and an explicit
 `Sign`/`Relay` publication operation.
 
+NIP-25 reactions use a typed `Reaction` value with a nominal target `EventId`
+and the same explicit publication boundary.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

@@ -79,6 +79,12 @@ pub struct FollowList {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reaction {
+    pub target: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
@@ -88,6 +94,7 @@ pub enum OperationValue {
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
+    Reaction(Reaction),
     PublishReport(PublishReport),
 }
 
@@ -806,6 +813,20 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip25", "publish_reaction") => {
+                let [OperationValue::Reaction(_reaction)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://reactions".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: operation.to_owned(),
@@ -1140,6 +1161,30 @@ mod tests {
                 })],
             )
             .expect("follow-list operation is authorized");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip25_publishes_typed_reactions() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip25", "publish_reaction"),
+                &mut host,
+                "nip25",
+                "publish_reaction",
+                &[OperationValue::Reaction(Reaction {
+                    target: "11".repeat(32),
+                    content: "+".to_owned(),
+                })],
+            )
+            .expect("reaction operation is authorized");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 }

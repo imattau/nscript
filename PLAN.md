@@ -69,6 +69,8 @@ performing relay, signer, storage, or other host effects.
   publication and deterministic runtime coverage.
 - Added typed NIP-02 `FollowList` publication with explicit follow-list
   capability effects and deterministic runtime coverage.
+- Added typed NIP-25 `Reaction` publication referencing nominal `EventId`
+  values with deterministic runtime coverage.
 
 ## Deferred
 
