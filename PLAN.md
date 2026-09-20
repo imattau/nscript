@@ -59,6 +59,8 @@ performing relay, signer, storage, or other host effects.
   conformance fixture proving the CLI path.
 - Added a NIP-17 source fixture with typed `PrivateMessage` construction and a
   fake relay publication report from the composed operation host.
+- Added a pure-function host boundary with real NIP-19 `npub` Bech32 checksum
+  validation and conversion to nominal `PubKey`, including invalid-input tests.
 
 ## Deferred
 

@@ -71,6 +71,27 @@ pub enum OperationValue {
     PublishReport(PublishReport),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FunctionValue {
+    Text(String),
+    Npub(String),
+    PubKey(String),
+}
+
+pub trait PureFunctionHost {
+    /// Evaluate a declared pure module function without host side effects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-input or unavailable-function error.
+    fn call_function(
+        &mut self,
+        module: &str,
+        function: &str,
+        arguments: &[FunctionValue],
+    ) -> Result<FunctionValue, RuntimeError>;
+}
+
 pub trait OperationHost {
     /// Invoke a declared NIP module operation with typed values.
     ///
@@ -326,6 +347,29 @@ where
             .collect()
     }
 
+    /// Invoke a pure module function through its typed host implementation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the function host's validation or availability failure.
+    pub fn invoke_function<H: PureFunctionHost>(
+        &mut self,
+        host: &mut H,
+        module: &str,
+        function: &str,
+        arguments: &[FunctionValue],
+    ) -> Result<FunctionValue, RuntimeError> {
+        let result = host.call_function(module, function, arguments);
+        self.audit.record(AuditEntry {
+            invocation: self.next_invocation,
+            operation: format!("{module}.{function}"),
+            target: module.to_owned(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        self.next_invocation += 1;
+        result
+    }
+
     fn execute_publication(
         &mut self,
         invocation: InvocationId,
@@ -461,6 +505,139 @@ pub struct FakeOperationHost {
     encrypted: BTreeMap<String, String>,
     wrapped: BTreeMap<String, String>,
     next_value: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Nip19FunctionHost;
+
+impl PureFunctionHost for Nip19FunctionHost {
+    fn call_function(
+        &mut self,
+        module: &str,
+        function: &str,
+        arguments: &[FunctionValue],
+    ) -> Result<FunctionValue, RuntimeError> {
+        match (module, function, arguments) {
+            ("nip19", "npub", [FunctionValue::Text(value)]) => {
+                decode_npub(value).map(|_| FunctionValue::Npub(value.clone()))
+            }
+            ("nip19", "pubkey", [FunctionValue::Npub(value)]) => {
+                decode_npub(value).map(FunctionValue::PubKey)
+            }
+            _ => Err(RuntimeError::OperationUnavailable {
+                module: module.to_owned(),
+                operation: function.to_owned(),
+            }),
+        }
+    }
+}
+
+#[allow(clippy::format_collect)]
+fn decode_npub(value: &str) -> Result<String, RuntimeError> {
+    let (hrp, data) =
+        bech32_decode(value).ok_or_else(|| RuntimeError::InvalidOperationArguments {
+            operation: "nip19.npub".to_owned(),
+        })?;
+    if hrp != "npub" {
+        return Err(RuntimeError::InvalidOperationArguments {
+            operation: "nip19.npub".to_owned(),
+        });
+    }
+    let bytes = convert_bits(&data, 5, 8, false).ok_or_else(|| {
+        RuntimeError::InvalidOperationArguments {
+            operation: "nip19.npub".to_owned(),
+        }
+    })?;
+    if bytes.len() != 32 {
+        return Err(RuntimeError::InvalidOperationArguments {
+            operation: "nip19.npub".to_owned(),
+        });
+    }
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn bech32_decode(value: &str) -> Option<(String, Vec<u8>)> {
+    if value.len() < 8
+        || value
+            .chars()
+            .any(|character| character.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let separator = value.rfind('1')?;
+    let (hrp, encoded) = value.split_at(separator);
+    let encoded = encoded.as_bytes().get(1..)?;
+    let charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    let values = encoded
+        .iter()
+        .map(|byte| {
+            charset
+                .as_bytes()
+                .iter()
+                .position(|item| item == byte)
+                .and_then(|item| u8::try_from(item).ok())
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if values.len() < 6 || !bech32_verify(hrp.as_bytes(), &values) {
+        return None;
+    }
+    Some((hrp.to_owned(), values[..values.len() - 6].to_vec()))
+}
+
+fn bech32_verify(hrp: &[u8], values: &[u8]) -> bool {
+    let mut expanded = hrp.iter().map(|byte| byte >> 5).collect::<Vec<_>>();
+    expanded.push(0);
+    expanded.extend(hrp.iter().map(|byte| byte & 31));
+    expanded.extend(values);
+    bech32_polymod(&expanded) == 1
+}
+
+fn bech32_polymod(values: &[u8]) -> u32 {
+    let generators = [
+        0x3b6a_57b2_u32,
+        0x2650_8e6d,
+        0x1ea1_19fa,
+        0x3d42_33dd,
+        0x2a14_62b3,
+    ];
+    values.iter().fold(1_u32, |checksum, value| {
+        let top = checksum >> 25;
+        let mut next = (checksum & 0x1ff_ffff) << 5 ^ u32::from(*value);
+        for (index, generator) in generators.iter().enumerate() {
+            if (top >> index) & 1 == 1 {
+                next ^= generator;
+            }
+        }
+        next
+    })
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn convert_bits(data: &[u8], from: u8, to: u8, pad: bool) -> Option<Vec<u8>> {
+    let mut accumulator = 0_u32;
+    let mut bits = 0_u8;
+    let max_value = (1_u32 << to) - 1;
+    let max_accumulator = (1_u32 << (from + to - 1)) - 1;
+    let mut output = Vec::new();
+    for value in data {
+        if (*value >> from) != 0 {
+            return None;
+        }
+        accumulator = ((accumulator << from) | u32::from(*value)) & max_accumulator;
+        bits += from;
+        while bits >= to {
+            bits -= to;
+            output.push(((accumulator >> bits) & max_value) as u8);
+        }
+    }
+    if pad {
+        if bits > 0 {
+            output.push(((accumulator << (to - bits)) & max_value) as u8);
+        }
+    } else if bits >= from || ((accumulator << (to - bits)) & max_value) != 0 {
+        return None;
+    }
+    Some(output)
 }
 
 impl OperationHost for FakeOperationHost {
@@ -750,5 +927,51 @@ mod tests {
             values.first(),
             Some(OperationValue::EncryptedText(_))
         ));
+    }
+
+    #[test]
+    fn nip19_decodes_npub_to_nominal_pubkey() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = Nip19FunctionHost;
+        let encoded = "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzqujme";
+        let npub = runtime
+            .invoke_function(
+                &mut host,
+                "nip19",
+                "npub",
+                &[FunctionValue::Text(encoded.to_owned())],
+            )
+            .expect("valid npub");
+        assert_eq!(npub, FunctionValue::Npub(encoded.to_owned()));
+        let pubkey = runtime
+            .invoke_function(&mut host, "nip19", "pubkey", &[npub])
+            .expect("npub converts to pubkey");
+        assert_eq!(pubkey, FunctionValue::PubKey("00".repeat(32)));
+    }
+
+    #[test]
+    fn nip19_rejects_wrong_prefix_and_bad_checksum() {
+        let mut host = Nip19FunctionHost;
+        let wrong_prefix = host.call_function(
+            "nip19",
+            "npub",
+            &[FunctionValue::Text(
+                "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqql5j8p".to_owned(),
+            )],
+        );
+        assert!(wrong_prefix.is_err());
+        let bad_checksum = host.call_function(
+            "nip19",
+            "npub",
+            &[FunctionValue::Text(
+                "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzqujmx".to_owned(),
+            )],
+        );
+        assert!(bad_checksum.is_err());
     }
 }
