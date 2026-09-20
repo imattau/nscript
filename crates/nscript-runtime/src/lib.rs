@@ -117,6 +117,17 @@ pub struct AuthenticatedRelay {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchRequest {
+    pub query: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchResults {
+    pub query: String,
+    pub count: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -207,6 +218,8 @@ pub enum OperationValue {
     Draft(Draft),
     UserStatus(UserStatus),
     AuthenticatedRelay(AuthenticatedRelay),
+    SearchRequest(SearchRequest),
+    SearchResults(SearchResults),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1096,6 +1109,22 @@ impl OperationHost for FakeOperationHost {
                 }
                 Ok(OperationValue::Integer(0))
             }
+            ("nip50", "search_events") => {
+                let [OperationValue::SearchRequest(request)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if request.query.trim().is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::SearchResults(SearchResults {
+                    query: request.query.clone(),
+                    count: 0,
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1326,6 +1355,10 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             (Some(status), Some(content)) => {
                 OperationValue::UserStatus(UserStatus { status, content })
             }
+            _ => value.clone(),
+        },
+        "SearchRequest" => match text("query") {
+            Some(query) => OperationValue::SearchRequest(SearchRequest { query }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2018,6 +2051,39 @@ mod tests {
             )
             .expect("count host available");
         assert_eq!(result, OperationValue::Integer(0));
+    }
+
+    #[test]
+    fn nip50_lowers_search_queries_to_relay_requests() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip50", "search_events"),
+                &mut host,
+                "nip50",
+                "search_events",
+                &[OperationValue::Record {
+                    name: "SearchRequest".to_owned(),
+                    fields: vec![(
+                        "query".to_owned(),
+                        OperationValue::Text("nostr scripting".to_owned()),
+                    )],
+                }],
+            )
+            .expect("search host available");
+        assert_eq!(
+            result,
+            OperationValue::SearchResults(SearchResults {
+                query: "nostr scripting".to_owned(),
+                count: 0,
+            })
+        );
     }
 
     #[test]

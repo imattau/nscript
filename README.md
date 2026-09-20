@@ -135,6 +135,10 @@ relay-auth capability before returning an authenticated session.
 NIP-45 event counts use `nip45.count_events` to return an aggregate integer
  from a validated filter without downloading the matching events.
 
+NIP-50 search uses typed `SearchRequest` and `SearchResults` values.
+`nip50.search_events` validates query intent and delegates result retrieval to
+the relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

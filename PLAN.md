@@ -110,6 +110,8 @@ performing relay, signer, storage, or other host effects.
   explicit relay/signing permission, URL validation, and typed session output.
 - Added NIP-45 event counts as a relay effect, returning a typed integer for a
   validated filter without materializing matching events.
+- Added NIP-50 typed `SearchRequest`/`SearchResults` and `search_events`, with
+  explicit relay capability and query validation.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

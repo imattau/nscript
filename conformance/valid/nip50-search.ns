@@ -1,0 +1,10 @@
+// NIP-50 search keeps query intent explicit and relay-backed.
+use nip50
+
+permissions {
+    search
+}
+
+let results = nip50.search_events(SearchRequest {
+    query: "nostr scripting";
+})
