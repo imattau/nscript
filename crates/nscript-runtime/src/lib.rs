@@ -1443,6 +1443,14 @@ where
                         self.execute_handler_items(else_body, event, log_host)?;
                     }
                 }
+                StatementKind::For { value, body, .. }
+                    if Self::is_event_tags(value) && event.is_some() =>
+                {
+                    let event = event.expect("guarded event binding");
+                    for _tag in &event.unsigned.tags {
+                        self.execute_handler_items(body, Some(event), log_host)?;
+                    }
+                }
                 _ => {
                     return Err(RuntimeError::OperationUnavailable {
                         module: "handler".to_owned(),
@@ -1596,6 +1604,15 @@ where
         } else {
             None
         }
+    }
+
+    fn is_event_tags(expression: &nscript_syntax::ast::Expr) -> bool {
+        matches!(
+            &expression.value,
+            ExprKind::Member { value, name }
+                if matches!(&value.value, ExprKind::Identifier(base) if base == "event")
+                    && name.value == "tags"
+        )
     }
 
     /// Run a staged storage transaction and commit it only when the closure succeeds.
@@ -3789,6 +3806,46 @@ mod tests {
         assert_eq!(dispatched, 1);
         assert_eq!(logs.records[0].message, "hello");
         assert!(relay.closed_subscriptions.contains(&1));
+    }
+
+    #[test]
+    fn handler_body_iterates_event_tags() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    for tag in event.tags {\n        print(event.id)\n    }\n}";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "hello".to_owned(),
+                tags: vec![
+                    ("t".to_owned(), "one".to_owned()),
+                    ("t".to_owned(), "two".to_owned()),
+                ],
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "event-tags".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut logs = FakeLogHost::default();
+        runtime
+            .execute_handler_body_for_event(&checked.handlers[0], &event, &mut logs)
+            .expect("tag loop executes");
+        assert_eq!(logs.records.len(), 2);
+        assert!(
+            logs.records
+                .iter()
+                .all(|record| record.message == "event-tags")
+        );
     }
 
     #[test]
