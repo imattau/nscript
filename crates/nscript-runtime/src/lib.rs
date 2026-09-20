@@ -1195,6 +1195,52 @@ where
         result.map(|()| true)
     }
 
+    /// Dispatch an event through the built-in checked handler interpreter.
+    ///
+    /// # Errors
+    ///
+    /// Returns idempotency, storage, logging, or handler-body failures.
+    pub fn dispatch_checked_handler_transactional<I, T, L>(
+        &mut self,
+        request: &SubscriptionRequest,
+        event: &SignedEvent,
+        handler: &CheckedHandler,
+        idempotency_host: &mut I,
+        storage_host: &mut T,
+        log_host: &mut L,
+    ) -> Result<bool, RuntimeError>
+    where
+        I: IdempotencyHost,
+        T: TransactionalStorageHost,
+        L: LogHost,
+    {
+        if !Self::matches_subscription(request, event) {
+            return Ok(false);
+        }
+        if !self.claim_once(idempotency_host, &event.id)? {
+            return Ok(false);
+        }
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let transaction = storage_host.begin(invocation);
+        let result = self.execute_handler_body_for_event(handler, event, log_host);
+        if result.is_ok() {
+            storage_host.commit(transaction);
+        }
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "handler_transaction".to_owned(),
+            target: event.id.clone(),
+            result: if result.is_ok() {
+                "committed"
+            } else {
+                "rolled_back"
+            }
+            .to_owned(),
+        });
+        result.map(|()| true)
+    }
+
     /// Run one polling cycle for every checked handler.
     ///
     /// This composes handler lowering, subscription lifecycle, bounded polling,
@@ -1246,6 +1292,60 @@ where
                     |event, transaction| body(handler, event, transaction),
                 );
                 match result {
+                    Ok(true) => dispatched += 1,
+                    Ok(false) => {}
+                    Err(error) => {
+                        let _ = self.unsubscribe(subscription_host, &handle);
+                        return Err(error);
+                    }
+                }
+            }
+            self.unsubscribe(subscription_host, &handle)?;
+        }
+        Ok(dispatched)
+    }
+
+    /// Run one polling cycle using each checked handler's executable body.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first subscription, polling, idempotency, storage, logging,
+    /// or handler-body failure.
+    pub fn run_handler_cycle_with_event_body<H, I, T, L>(
+        &mut self,
+        checked: &CheckedProgram,
+        relayset: Option<&str>,
+        subscription_host: &mut H,
+        idempotency_host: &mut I,
+        storage_host: &mut T,
+        log_host: &mut L,
+    ) -> Result<usize, RuntimeError>
+    where
+        H: SubscriptionHost,
+        I: IdempotencyHost,
+        T: TransactionalStorageHost,
+        L: LogHost,
+    {
+        let subscriptions = Self::handler_subscriptions(checked, relayset);
+        let mut dispatched = 0;
+        for (handler, request) in checked.handlers.iter().zip(subscriptions.iter()) {
+            let handle = self.subscribe(subscription_host, request)?;
+            let batch = match self.poll_subscription(subscription_host, &handle) {
+                Ok(batch) => batch,
+                Err(error) => {
+                    let _ = self.unsubscribe(subscription_host, &handle);
+                    return Err(error);
+                }
+            };
+            for event in batch.events {
+                match self.dispatch_checked_handler_transactional(
+                    request,
+                    &event,
+                    handler,
+                    idempotency_host,
+                    storage_host,
+                    log_host,
+                ) {
                     Ok(true) => dispatched += 1,
                     Ok(false) => {}
                     Err(error) => {
@@ -3579,6 +3679,53 @@ mod tests {
             .execute_handler_body_for_event(&checked.handlers[0], &event, &mut logs)
             .expect("event-bound condition executes");
         assert_eq!(logs.records[0].message, "matched");
+    }
+
+    #[test]
+    fn handler_cycle_executes_event_aware_body() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    if event.author == \"alice\" {\n        print(\"matched\")\n    }\n}";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut relay = FakeRelayHost::default();
+        relay.queued_events.insert(
+            1,
+            vec![SignedEvent {
+                unsigned: UnsignedEvent {
+                    event_type: "Note".to_owned(),
+                    kind: 1,
+                    content: "hello".to_owned(),
+                    tags: Vec::new(),
+                    created_at: 100,
+                },
+                signer: "alice".to_owned(),
+                id: "event-handler-body".to_owned(),
+                signature: "sig".to_owned(),
+            }],
+        );
+        let mut claims = InMemoryStorage::default();
+        let mut storage = InMemoryStorage::default();
+        let mut logs = FakeLogHost::default();
+        let dispatched = runtime
+            .run_handler_cycle_with_event_body(
+                &checked,
+                Some("public"),
+                &mut relay,
+                &mut claims,
+                &mut storage,
+                &mut logs,
+            )
+            .expect("handler cycle executes body");
+        assert_eq!(dispatched, 1);
+        assert_eq!(logs.records[0].message, "matched");
+        assert!(relay.closed_subscriptions.contains(&1));
     }
 
     #[test]

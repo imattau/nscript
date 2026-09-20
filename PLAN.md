@@ -281,6 +281,8 @@ short-circuit boolean operators and literal equality; broader expressions and
 event-bound values remain next. The event-aware execution entry point now binds
 `event.id`, `event.author`, and `event.content` for equality and substring
 conditions, allowing delivered events to drive handler branches.
+`run_handler_cycle_with_event_body` now connects that interpreter to the full
+subscription → match → idempotency claim → transaction → unsubscribe path.
 Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
 Signed-event values now carry typed `(tag, value)` pairs, allowing lowered tag
