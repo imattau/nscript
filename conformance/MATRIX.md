@@ -20,14 +20,12 @@ against deterministic host fakes.
 | NIP-19 round trips | `nip19.ns` | Runtime invalid-input tests | Runtime npub round-trip vector |
 | NIP-46 validation | `hello-note.ns` | Dedicated signer-provision host test | Signer denial |
 | Typed tags | `mentions.ns` | Runtime wire-tags test | Serialization |
-| Replaceable events | `replaceable.ns` | `invalid-event-mode.ns` | Tie-break vector planned |
+| Replaceable events | `replaceable.ns` | `invalid-event-mode.ns` | Timestamp/lowest-id tie-break vector |
 | Timers | `timer.ns` | Runtime timer validation | Timer overlap |
 | HTTP origin policy | Example only | Dedicated HTTP host test | Redirect denial |
 | Partial relay publication | `hello-note.ns` | Runtime partial-publication test | Partial publication |
 | Package resolution | Resolver transitive-version tests | Missing/incompatible package tests | Resolver version-selection vector |
 
-The Draft 0.1 release-blocker cells for defaults, query lowering, and
-hardened-agent capability isolation are covered by executable vectors or
-inspectable traces. Replaceable-event tie-breaking remains a follow-up vector;
-new NIPs and broader runtime features are otherwise out of scope for the
-Draft 0.1 conformance freeze unless required to fix an existing vector.
+The Draft 0.1 release-blocker cells are covered by executable vectors or
+inspectable traces. New NIPs and broader runtime features are out of scope for
+the Draft 0.1 conformance freeze unless required to fix an existing vector.

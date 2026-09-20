@@ -44,6 +44,30 @@ pub struct SignedEvent {
     pub signature: String,
 }
 
+/// Returns whether `candidate` should replace `current` for one replaceable
+/// event address. NIP-01 selects the greatest `created_at`; equal timestamps
+/// are resolved by the lexicographically lowest event id.
+#[must_use]
+pub fn replaceable_event_wins(candidate: &SignedEvent, current: &SignedEvent) -> bool {
+    candidate.unsigned.created_at > current.unsigned.created_at
+        || (candidate.unsigned.created_at == current.unsigned.created_at
+            && candidate.id < current.id)
+}
+
+/// Selects the canonical event from an already-grouped replaceable address.
+#[must_use]
+pub fn select_replaceable_event<'a>(
+    events: impl IntoIterator<Item = &'a SignedEvent>,
+) -> Option<&'a SignedEvent> {
+    events.into_iter().reduce(|current, candidate| {
+        if replaceable_event_wins(candidate, current) {
+            candidate
+        } else {
+            current
+        }
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayOutcome {
     pub relay: String,
@@ -3762,6 +3786,35 @@ impl AuditHost for RecordingAudit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaceable_events_use_timestamp_then_lowest_id() {
+        let make = |created_at: u64, id: &str| SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Profile".to_owned(),
+                kind: 0,
+                content: id.to_owned(),
+                tags: Vec::new(),
+                created_at,
+            },
+            signer: "alice".to_owned(),
+            id: id.to_owned(),
+            signature: "sig".to_owned(),
+        };
+        let older = make(10, "ffff");
+        let newer = make(11, "zzzz");
+        let tie_high = make(11, "bbbb");
+        let tie_low = make(11, "aaaa");
+        assert_eq!(select_replaceable_event([&older, &newer]), Some(&newer));
+        assert_eq!(
+            select_replaceable_event([&newer, &tie_high]),
+            Some(&tie_high)
+        );
+        assert_eq!(
+            select_replaceable_event([&tie_high, &tie_low]),
+            Some(&tie_low)
+        );
+    }
     use nscript_semantics::CheckedPublication;
     use nscript_syntax::Span;
 

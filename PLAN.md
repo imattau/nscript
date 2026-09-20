@@ -326,10 +326,10 @@ Added `nscript package manifest`, which validates an NScript source program and
 emits an `npack`-compatible manifest with runtime capability requirements and
 an NScript permission/effect review section.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
-emits deterministic publication expansion and filter-lowering traces, and the
+emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
-imported module operations. Replaceable-event tie-breaking remains a separate
-follow-up vector in `conformance/MATRIX.md`.
+imported module operations, and replaceable-event selection now uses the
+NIP-01 timestamp/lowest-id tie-break rule.
 
 ## Deferred
 
