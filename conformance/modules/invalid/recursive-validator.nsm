@@ -1,0 +1,11 @@
+// error: E4003 recursive-validator
+module recursive_validator @ 0.1.0
+language ">=0.1.0 <0.2.0"
+
+validator first(value: Text) {
+    require second(value)
+}
+
+validator second(value: Text) {
+    require first(value)
+}

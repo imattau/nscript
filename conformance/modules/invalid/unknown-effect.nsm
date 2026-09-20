@@ -1,0 +1,5 @@
+// error: E4003 unknown-effect
+module unknown_effect @ 0.1.0
+language ">=0.1.0 <0.2.0"
+
+operation escape() -> Text effect Shell permission escape

@@ -397,8 +397,13 @@ mod tests {
                     requirement: VersionReq::parse(requirement).unwrap(),
                 })
                 .collect(),
+            types: Vec::new(),
+            validators: Vec::new(),
             events: Vec::new(),
             tags: Vec::new(),
+            operations: Vec::new(),
+            errors: Vec::new(),
+            vectors: Vec::new(),
             canonical_encoding: CANONICAL_ENCODING_VERSION,
             canonical_hash: ShaForTest::hash(name, version),
         }

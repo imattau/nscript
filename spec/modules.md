@@ -11,8 +11,8 @@ descriptor.
 
 Every module declares a unique name, semantic version, compatible NScript range,
 and optional upstream NIP reference. It may import exact or ranged module
-versions and export nominal types, records, enums, events, tags, host operations,
-errors, and conformance vectors.
+versions and export nominal types, records, enums, validators, events, tags,
+host operations, errors, and conformance vectors.
 
 ```nostr-module
 module nip10 @ 0.1.0
@@ -79,14 +79,16 @@ loaded interface.
 Canonical encoding version 2 begins with `NSM`, a zero byte, and version byte
 `2`. Counts and UTF-8 byte lengths are unsigned 32-bit big-endian integers;
 event kinds and tag positions are unsigned 16-bit big-endian integers. Header
-fields, events, tags, and validators are sorted by UTF-8 byte order. Tag slots
-are sorted by position. Optional values use a zero presence byte when absent and
-a one byte followed by the encoded string when present. Event modes are encoded
-as regular `0`, replaceable `1`, addressable `2`, and ephemeral `3`. Every
-collection includes its count, so concatenated values are unambiguous. Declared
-dependency names and normalized requirements are included before exports.
-The hash is SHA-256 over these bytes. Version 1 is retained only as a draft hash
-identifier and is not emitted for new descriptors.
+fields and every exported declaration category are sorted by UTF-8 name order.
+Record and error fields are sorted by name; operation and validator parameters
+retain positional order. Requirements, enum variants, and effects are sorted;
+tag slots are sorted by position. Optional values use a zero presence byte when
+absent and a one byte followed by the encoded string when present. Event modes
+are encoded as regular `0`, replaceable `1`, addressable `2`, and ephemeral `3`.
+Every collection includes its count, so concatenated values are unambiguous.
+Declared dependency names and normalized requirements are included before
+exports. The hash is SHA-256 over these bytes. Version 1 is retained only as a
+draft hash identifier and is not emitted for new descriptors.
 
 Two modules conflict when they export the same qualified identity, claim an
 exclusive event kind incompatibly, or provide different definitions for the
@@ -97,8 +99,8 @@ The resulting public interface is:
 
 ```text
 ModuleDescriptor {
-    identity, language_range, dependencies, types, events, tags,
-    operations, errors, vectors, canonical_hash
+    identity, language_range, dependencies, types, validators, events,
+    tags, operations, errors, vectors, canonical_hash
 }
 ```
 

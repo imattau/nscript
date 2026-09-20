@@ -43,6 +43,16 @@ fn describe_module(path: &str) -> ExitCode {
     for dependency in &descriptor.dependencies {
         println!("dependency {} {}", dependency.name, dependency.requirement);
     }
+    let mut types = descriptor.types.iter().collect::<Vec<_>>();
+    types.sort_by_key(|item| item.name());
+    for item in types {
+        println!("type {}", item.name());
+    }
+    let mut validators = descriptor.validators.iter().collect::<Vec<_>>();
+    validators.sort_by_key(|item| &item.name);
+    for validator in validators {
+        println!("validator {}", validator.name);
+    }
     let mut events = descriptor.events.iter().collect::<Vec<_>>();
     events.sort_by_key(|event| &event.name);
     for event in events {
@@ -52,6 +62,21 @@ fn describe_module(path: &str) -> ExitCode {
     tags.sort_by_key(|tag| &tag.name);
     for tag in tags {
         println!("tag {} wire={}", tag.name, tag.wire_name);
+    }
+    let mut operations = descriptor.operations.iter().collect::<Vec<_>>();
+    operations.sort_by_key(|item| &item.name);
+    for operation in operations {
+        println!("operation {}", operation.name);
+    }
+    let mut errors = descriptor.errors.iter().collect::<Vec<_>>();
+    errors.sort_by_key(|item| &item.name);
+    for error in errors {
+        println!("error {}", error.name);
+    }
+    let mut vectors = descriptor.vectors.iter().collect::<Vec<_>>();
+    vectors.sort_by_key(|item| &item.name);
+    for vector in vectors {
+        println!("vector {}", vector.name);
     }
     ExitCode::SUCCESS
 }

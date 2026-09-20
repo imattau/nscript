@@ -1,3 +1,24 @@
 module nip19 @ 0.1.0
 language ">=0.1.0 <0.2.0"
 reference "https://github.com/nostr-protocol/nips/blob/master/19.md"
+
+nominal Npub from Text {
+    require length(value) > 0
+}
+
+nominal NoteId from Text {
+    require length(value) > 0
+}
+
+enum EntityPrefix {
+    Npub,
+    Note,
+    Nprofile,
+    Nevent,
+    Naddr,
+    Nrelay,
+}
+
+validator non_empty(value: Text) {
+    require length(value) > 0
+}

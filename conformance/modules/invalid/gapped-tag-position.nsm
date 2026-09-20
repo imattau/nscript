@@ -1,0 +1,8 @@
+// error: E4003 gapped-tag-position
+module gapped_tag_position @ 0.1.0
+language ">=0.1.0 <0.2.0"
+
+tag Broken {
+    wire: "x"
+    field value: Text at 2
+}

@@ -1,0 +1,52 @@
+module full_schema @ 1.0.0
+language ">=0.1.0 <0.2.0"
+reference "https://example.test/full-schema"
+use nip01 @ "^0.1"
+
+nominal NonEmptyText from Text {
+    require length(value) > 0
+}
+
+record Profile {
+    field name: NonEmptyText
+    field about: Option<Text> = none
+}
+
+enum Presence {
+    Online,
+    Offline,
+}
+
+validator non_empty(value: Text) {
+    require length(value) > 0
+}
+
+validator profile_name(value: Text) {
+    require non_empty(value)
+}
+
+event ProfileEvent {
+    kind: 0
+    mode: replaceable
+    content: Profile as json<Profile>
+    tags: List<ProfileTag> = []
+    field profile: Profile
+    require profile_name(profile.name)
+}
+
+tag ProfileTag {
+    wire: "p"
+    field pubkey: PubKey at 1
+    field relay: Option<RelayUrl> at 2
+}
+
+operation fetch_profile(user: PubKey) -> Result<Profile,LookupError> effect Relay, Storage permission read_metadata
+
+error LookupError {
+    field message: Text
+}
+
+vector "profile" {
+    input: "alice",
+    valid: true
+}

@@ -2,3 +2,9 @@ module nip46 @ 0.1.0
 language ">=0.1.0 <0.2.0"
 reference "https://github.com/nostr-protocol/nips/blob/master/46.md"
 use nip01 @ "^0.1"
+
+error SignerError {
+    field message: Text
+}
+
+operation sign_event(event: UnsignedEvent) -> Result<SignedEvent,SignerError> effect Sign permission sign_event
