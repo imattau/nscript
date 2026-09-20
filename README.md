@@ -81,6 +81,9 @@ explicit signed publication operation.
 NIP-57 zaps produce a typed `PaymentIntent` through an explicit payment effect;
 creating a request does not silently authorize a transfer.
 
+NIP-52 calendar events use typed timestamps and reject inverted start/end ranges
+before publication.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

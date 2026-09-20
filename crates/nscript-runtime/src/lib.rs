@@ -111,6 +111,14 @@ pub struct PaymentIntent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CalendarEvent {
+    pub title: String,
+    pub start: u64,
+    pub end: u64,
+    pub location: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
@@ -125,6 +133,7 @@ pub enum OperationValue {
     UserList(UserList),
     ZapRequest(ZapRequest),
     PaymentIntent(PaymentIntent),
+    CalendarEvent(CalendarEvent),
     PublishReport(PublishReport),
 }
 
@@ -902,6 +911,25 @@ impl OperationHost for FakeOperationHost {
                     invoice: format!("fake-invoice-{}", request.amount),
                 }))
             }
+            ("nip52", "publish_calendar_event") => {
+                let [OperationValue::CalendarEvent(event)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if event.end <= event.start {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://calendar".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: operation.to_owned(),
@@ -1347,6 +1375,49 @@ mod tests {
                 recipient: "44".repeat(32),
                 amount: 0,
                 message: String::new(),
+            })],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn nip52_publishes_ordered_calendar_events() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip52", "publish_calendar_event"),
+                &mut host,
+                "nip52",
+                "publish_calendar_event",
+                &[OperationValue::CalendarEvent(CalendarEvent {
+                    title: "Nostr Meetup".to_owned(),
+                    start: 1_760_000_000,
+                    end: 1_760_003_600,
+                    location: "Melbourne".to_owned(),
+                })],
+            )
+            .expect("calendar operation is authorized");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip52_rejects_inverted_event_times() {
+        let mut host = FakeOperationHost::default();
+        let result = host.call(
+            1,
+            "nip52",
+            "publish_calendar_event",
+            &[OperationValue::CalendarEvent(CalendarEvent {
+                title: "invalid".to_owned(),
+                start: 10,
+                end: 9,
+                location: String::new(),
             })],
         );
         assert!(result.is_err());

@@ -77,6 +77,8 @@ performing relay, signer, storage, or other host effects.
   deterministic runtime coverage.
 - Added typed NIP-57 `ZapRequest` and `PaymentIntent`, enforcing positive
   amounts while keeping payment authorization outside request creation.
+- Added typed NIP-52 `CalendarEvent` publication with timestamp ordering
+  validation and deterministic runtime coverage.
 
 ## Deferred
 
