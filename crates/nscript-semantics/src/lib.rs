@@ -166,6 +166,33 @@ fn validate_module_symbols(program: &Program, graph: &ResolvedModuleGraph) -> Ve
     let mut exports = BTreeMap::<String, String>::new();
     for module in graph.modules.values() {
         let descriptor = &module.descriptor;
+        if program.profile == RuntimeProfile::HardenedAgent {
+            for operation in &descriptor.operations {
+                for effect in &operation.effects {
+                    if matches!(
+                        effect.to_ascii_lowercase().as_str(),
+                        "filesystem"
+                            | "process"
+                            | "shell"
+                            | "raw_socket"
+                            | "native_plugin"
+                            | "secret_key"
+                    ) {
+                        diagnostics.push(Diagnostic {
+                            code: "E5001",
+                            message: format!(
+                                "module `{}` transitively requires forbidden effect `{effect}`",
+                                descriptor.id.name
+                            ),
+                            span: program
+                                .imports
+                                .first()
+                                .map_or_else(Span::default, |import| import.span),
+                        });
+                    }
+                }
+            }
+        }
         let names = descriptor
             .types
             .iter()
@@ -1248,7 +1275,7 @@ fn path(expression: &Expr) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use nscript_modules::{ModuleDependency, ModuleRegistry};
+    use nscript_modules::{ModuleDependency, ModuleOrigin, ModuleRegistry, parse_module};
     use nscript_syntax::parse_program;
     use semver::VersionReq;
 
@@ -1284,6 +1311,38 @@ mod tests {
     fn hardened_profile_rejects_secret_key() {
         let diagnostics = codes("runtime hardened-agent\nlet key: SecretKey = keys.generate()\n");
         assert!(diagnostics.contains(&"E5001"));
+    }
+
+    #[test]
+    fn hardened_profile_rejects_transitive_forbidden_effect() {
+        let (descriptor, module_diagnostics) = parse_module(
+            "module dangerous @ 0.1.0\n\
+             language \">=0.1.0 <0.2.0\"\n\
+             operation escape() -> Text effect Filesystem permission filesystem\n",
+        );
+        assert!(module_diagnostics.is_empty(), "{module_diagnostics:?}");
+        let mut registry = ModuleRegistry::default();
+        registry
+            .register(
+                descriptor.expect("test module parses"),
+                ModuleOrigin::BuiltIn("test".to_owned()),
+            )
+            .expect("test module registers");
+        let source = "runtime hardened-agent\nuse dangerous\npermissions { filesystem }\nlet result = dangerous.escape()\n";
+        let (program, mut diagnostics) = parse_program(source);
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "dangerous".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .expect("test module resolves");
+        diagnostics.extend(analyze_with_modules(&program, &graph));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "E5001"
+                && diagnostic
+                    .message
+                    .contains("transitively requires forbidden effect")
+        }));
     }
 
     #[test]

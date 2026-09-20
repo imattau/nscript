@@ -231,11 +231,23 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
             "effects": checked.effects.iter().map(|effect| format!("{effect:?}").to_lowercase()).collect::<Vec<_>>(),
             "operations": checked.operation_calls.iter().map(|call| format!("{}.{}", call.module, call.operation)).collect::<Vec<_>>(),
             "publications": checked.publications.len(),
+            "publication_trace": checked.publications.iter().map(|publication| serde_json::json!({
+                "steps": [
+                    {"op": "create_event", "event": publication.event},
+                    {"op": "sign_event", "signer": publication.signer},
+                    {"op": "publish_event", "relayset": publication.relayset}
+                ]
+            })).collect::<Vec<_>>(),
             "schedules": checked.schedules.len(),
             "handlers": checked.handlers.iter().map(|handler| serde_json::json!({
                 "event": handler.event_type,
                 "author": handler.author,
                 "tags": handler.tag_equals,
+                "filter_trace": {
+                    "event": handler.event_type,
+                    "author": handler.author,
+                    "tags": handler.tag_equals
+                }
             })).collect::<Vec<_>>(),
         });
         println!(

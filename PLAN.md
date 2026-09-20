@@ -325,6 +325,11 @@ timer overlap rejection, and missing/incompatible package resolution tests.
 Added `nscript package manifest`, which validates an NScript source program and
 emits an `npack`-compatible manifest with runtime capability requirements and
 an NScript permission/effect review section.
+The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
+emits deterministic publication expansion and filter-lowering traces, and the
+hardened-agent profile rejects forbidden effects exposed transitively by
+imported module operations. Replaceable-event tie-breaking remains a separate
+follow-up vector in `conformance/MATRIX.md`.
 
 ## Deferred
 

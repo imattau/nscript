@@ -49,6 +49,25 @@ fn inspects_program_permissions_as_json() {
 }
 
 #[test]
+fn inspect_json_includes_publication_and_filter_traces() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/hello-note.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        value["publication_trace"][0]["steps"][0]["op"],
+        "create_event"
+    );
+    assert_eq!(
+        value["publication_trace"][0]["steps"][1]["op"],
+        "sign_event"
+    );
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])
