@@ -11,6 +11,7 @@ nscript-modules = { path = "../nscript-modules" }
 nscript-semantics = { path = "../nscript-semantics" }
 nscript-syntax = { path = "../nscript-syntax" }
 serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

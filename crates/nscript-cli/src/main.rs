@@ -24,7 +24,12 @@ fn main() -> ExitCode {
         [command, emit, format, rest @ ..]
             if command == "compile" && emit == "--emit" && format == "ir" =>
         {
-            compile_program(rest)
+            compile_program(rest, false)
+        }
+        [command, emit, format, rest @ ..]
+            if command == "compile" && emit == "--emit" && format == "wasm" =>
+        {
+            compile_program(rest, true)
         }
         [module, command, path] if module == "module" && command == "check" => {
             check_module(path, false)
@@ -37,7 +42,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript compile --emit ir|wasm [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -283,7 +288,7 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn compile_program(arguments: &[String]) -> ExitCode {
+fn compile_program(arguments: &[String], wasm: bool) -> ExitCode {
     let Ok((path, program, graph, mut diagnostics)) = load_program(arguments) else {
         return ExitCode::from(2);
     };
@@ -300,10 +305,18 @@ fn compile_program(arguments: &[String]) -> ExitCode {
         &checked.expect("a diagnostic-free program is checked"),
         &graph,
     );
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&ir).expect("IR contains only serializable values")
-    );
+    if wasm {
+        use std::io::Write;
+        let bytes = nscript_ir::emit_wasm(&ir);
+        if std::io::stdout().write_all(&bytes).is_err() {
+            return ExitCode::from(1);
+        }
+    } else {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&ir).expect("IR contains only serializable values")
+        );
+    }
     ExitCode::SUCCESS
 }
 

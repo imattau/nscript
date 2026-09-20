@@ -15,6 +15,87 @@ pub struct NostrIr {
     pub operations: Vec<IrOperation>,
 }
 
+/// Emits a deterministic, valid WASM container for checked `NScript` IR.
+///
+/// The first backend intentionally carries the IR as custom sections and
+/// declares capability imports; executable lowering is a later milestone.
+///
+/// # Panics
+///
+/// Panics only if the in-memory IR exceeds WASM's 32-bit section limits or
+/// cannot be serialized, neither of which can occur for a checked program.
+#[must_use]
+pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
+    let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+    if !ir.capabilities.is_empty() {
+        // One shared `() -> ()` function type for capability host calls.
+        push_section(&mut module, 1, &[1, 0x60, 0, 0]);
+        let mut imports = Vec::new();
+        push_u32(
+            &mut imports,
+            u32::try_from(ir.capabilities.len()).expect("capability count fits WASM"),
+        );
+        for capability in &ir.capabilities {
+            push_name(&mut imports, "nscript");
+            push_name(
+                &mut imports,
+                &format!("{}:{}", capability.kind, capability.name),
+            );
+            imports.push(0); // function import
+            imports.push(0); // type index
+        }
+        push_section(&mut module, 2, &imports);
+    }
+    let ir_json = serde_json::to_vec(ir).expect("IR is serializable");
+    push_custom_section(&mut module, "nscript.ir", &ir_json);
+    let capabilities = ir
+        .capabilities
+        .iter()
+        .map(|capability| format!("{}:{}", capability.kind, capability.name))
+        .collect::<Vec<_>>();
+    let capability_json = serde_json::to_vec(&capabilities).expect("capabilities are serializable");
+    push_custom_section(&mut module, "nscript.capabilities", &capability_json);
+    module
+}
+
+fn push_custom_section(module: &mut Vec<u8>, name: &str, payload: &[u8]) {
+    let mut section = Vec::new();
+    push_name(&mut section, name);
+    section.extend_from_slice(payload);
+    push_section(module, 0, &section);
+}
+
+fn push_section(module: &mut Vec<u8>, id: u8, payload: &[u8]) {
+    module.push(id);
+    push_u32(
+        module,
+        u32::try_from(payload.len()).expect("section payload fits WASM"),
+    );
+    module.extend_from_slice(payload);
+}
+
+fn push_name(output: &mut Vec<u8>, value: &str) {
+    push_u32(
+        output,
+        u32::try_from(value.len()).expect("name length fits WASM"),
+    );
+    output.extend_from_slice(value.as_bytes());
+}
+
+fn push_u32(output: &mut Vec<u8>, mut value: u32) {
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        output.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct IrModule {
     pub name: String,
@@ -185,4 +266,36 @@ fn suffix(mut base: String, preposition: &str, value: Option<&str>) -> String {
         base.push_str(value);
     }
     base
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NostrIr, emit_wasm};
+
+    #[test]
+    fn wasm_artifact_is_valid_container_with_capability_metadata() {
+        let ir = NostrIr {
+            schema: "nscript-ir/0.1",
+            profile: "standard",
+            modules: Vec::new(),
+            capabilities: vec![super::IrCapability {
+                name: "public".to_owned(),
+                kind: "relayset",
+            }],
+            permissions: vec!["publish Note".to_owned()],
+            operations: Vec::new(),
+        };
+        let bytes = emit_wasm(&ir);
+        assert_eq!(&bytes[..8], b"\0asm\x01\0\0\0");
+        assert!(
+            bytes
+                .windows(b"nscript.capabilities".len())
+                .any(|window| window == b"nscript.capabilities")
+        );
+        assert!(
+            bytes
+                .windows(b"relayset:public".len())
+                .any(|window| window == b"relayset:public")
+        );
+    }
 }

@@ -195,6 +195,17 @@ fn emits_golden_publication_ir() {
 }
 
 #[test]
+fn compiles_wasm_artifact_with_magic_header() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["compile", "--emit", "wasm"])
+        .arg(repository_path("conformance/valid/hello-note.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(&output.stdout[..8], b"\0asm\x01\0\0\0");
+}
+
+#[test]
 fn source_conformance_corpus_matches_expected_outcomes() {
     let valid_root = repository_path("conformance/valid");
     for entry in std::fs::read_dir(valid_root).unwrap() {
