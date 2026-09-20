@@ -120,6 +120,10 @@ NIP-32 labels use typed `Label` records with explicit namespace and value
 fields. `nip32.publish_label` validates classification metadata before
 publication through the signing/relay capability boundary.
 
+NIP-37 drafts use typed `Draft` records with explicit storage, signing, and
+relay effects. `nip37.save_draft` validates draft identity and content before
+staging publication.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

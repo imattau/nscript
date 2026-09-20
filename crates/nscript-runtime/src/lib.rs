@@ -100,6 +100,12 @@ pub struct Label {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Draft {
+    pub identifier: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -187,6 +193,7 @@ pub enum OperationValue {
     Article(Article),
     GroupMessage(GroupMessage),
     Label(Label),
+    Draft(Draft),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1010,6 +1017,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip37", "save_draft") => {
+                let [OperationValue::Draft(draft)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if draft.identifier.is_empty() || draft.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://drafts".to_owned(),
+                        accepted: true,
+                        detail: "draft stored and publication staged".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1226,6 +1252,13 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                 target,
                 namespace,
                 value,
+            }),
+            _ => value.clone(),
+        },
+        "Draft" => match (text("identifier"), text("content")) {
+            (Some(identifier), Some(content)) => OperationValue::Draft(Draft {
+                identifier,
+                content,
             }),
             _ => value.clone(),
         },
@@ -1806,6 +1839,39 @@ mod tests {
                 }],
             )
             .expect("label host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip37_lowers_stored_drafts() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip37", "save_draft"),
+                &mut host,
+                "nip37",
+                "save_draft",
+                &[OperationValue::Record {
+                    name: "Draft".to_owned(),
+                    fields: vec![
+                        (
+                            "identifier".to_owned(),
+                            OperationValue::Text("release-notes".to_owned()),
+                        ),
+                        (
+                            "content".to_owned(),
+                            OperationValue::Text("Work in progress".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("draft host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

@@ -1,0 +1,11 @@
+// NIP-37 drafts make publishing workflows explicit.
+use nip37
+
+permissions {
+    draft
+}
+
+let result = nip37.save_draft(Draft {
+    identifier: "release-notes";
+    content: "Work in progress";
+})

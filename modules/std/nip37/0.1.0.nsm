@@ -1,0 +1,15 @@
+module nip37 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/37.md"
+use nip01 @ "^0.1"
+
+record Draft {
+    field identifier: Text
+    field content: Text
+}
+
+error DraftError {
+    field message: Text
+}
+
+operation save_draft(draft: Draft) -> Result<PublishReport,DraftError> effect Storage,Sign,Relay permission draft

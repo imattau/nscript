@@ -102,6 +102,8 @@ performing relay, signer, storage, or other host effects.
   explicit group scope, validation, and source/runtime conformance coverage.
 - Added NIP-32 typed `Label` records and `publish_label`, with explicit
   namespace/value semantics for moderation and classification workflows.
+- Added NIP-37 typed `Draft` records and `save_draft`, with explicit storage,
+  signing, and relay effects for publishing workflows.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
