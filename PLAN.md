@@ -337,7 +337,9 @@ containers declare capability imports and carry the checked IR and capability
 manifest in custom sections. `nscript compile --emit wasm` now emits the
 artifact. The artifact now exports `nscript_main` and deterministically invokes
 declared capability imports; typed argument lowering and host dispatch remain
-the next WASM increment.
+declared capability imports. A `nscript.dispatch` custom section now carries
+the serialized typed operation trace for host dispatch; direct argument ABI
+lowering remains the next WASM increment.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by

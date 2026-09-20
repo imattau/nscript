@@ -85,6 +85,8 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
         .collect::<Vec<_>>();
     let capability_json = serde_json::to_vec(&capabilities).expect("capabilities are serializable");
     push_custom_section(&mut module, "nscript.capabilities", &capability_json);
+    let dispatch_json = serde_json::to_vec(&ir.operations).expect("operations are serializable");
+    push_custom_section(&mut module, "nscript.dispatch", &dispatch_json);
     module
 }
 
@@ -331,6 +333,11 @@ mod tests {
             bytes
                 .windows(b"relayset:public".len())
                 .any(|window| window == b"relayset:public")
+        );
+        assert!(
+            bytes
+                .windows(b"nscript.dispatch".len())
+                .any(|window| window == b"nscript.dispatch")
         );
     }
 }
