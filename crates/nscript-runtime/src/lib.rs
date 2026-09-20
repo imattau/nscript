@@ -1080,6 +1080,43 @@ where
         true
     }
 
+    /// Dispatch one matched event through an idempotent handler callback.
+    ///
+    /// Returns `Ok(false)` when the filter does not match or the event was
+    /// already claimed. The callback runs only for a newly claimed event.
+    ///
+    /// # Errors
+    ///
+    /// Returns idempotency or handler-body failures.
+    pub fn dispatch_event<I, F>(
+        &mut self,
+        request: &SubscriptionRequest,
+        event: &SignedEvent,
+        idempotency_host: &mut I,
+        key: &str,
+        body: F,
+    ) -> Result<bool, RuntimeError>
+    where
+        I: IdempotencyHost,
+        F: FnOnce(&SignedEvent) -> Result<(), RuntimeError>,
+    {
+        if !Self::matches_subscription(request, event) {
+            return Ok(false);
+        }
+        if !self.claim_once(idempotency_host, key)? {
+            return Ok(false);
+        }
+        let result = body(event);
+        self.audit.record(AuditEntry {
+            invocation: self.next_invocation,
+            operation: "handler".to_owned(),
+            target: event.id.clone(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        self.next_invocation += 1;
+        result.map(|()| true)
+    }
+
     /// Run a staged storage transaction and commit it only when the closure succeeds.
     ///
     /// # Errors
@@ -3168,6 +3205,54 @@ mod tests {
             FakeClock,
             RecordingAudit,
         >::matches_subscription(&request, &wrong_author));
+    }
+
+    #[test]
+    fn dispatch_event_claims_before_running_handler_body() {
+        let request = SubscriptionRequest {
+            event_type: "Note".to_owned(),
+            relayset: None,
+            kinds: vec![1],
+            tag_equals: Vec::new(),
+            cursor: None,
+            author: Some("alice".to_owned()),
+            since: None,
+            limit: None,
+        };
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "hello".to_owned(),
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "event-dispatch".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut storage = InMemoryStorage::default();
+        let mut calls = 0;
+        assert_eq!(
+            runtime.dispatch_event(&request, &event, &mut storage, "event-dispatch", |_| {
+                calls += 1;
+                Ok(())
+            },),
+            Ok(true)
+        );
+        assert_eq!(
+            runtime.dispatch_event(&request, &event, &mut storage, "event-dispatch", |_| {
+                calls += 1;
+                Ok(())
+            },),
+            Ok(false)
+        );
+        assert_eq!(calls, 1);
     }
 
     #[test]
