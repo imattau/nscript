@@ -120,6 +120,7 @@ version = "0.1.0"
 dependencies = [
  "nscript-modules",
  "nscript-syntax",
+ "semver",
 ]
 
 [[package]]

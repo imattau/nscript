@@ -51,6 +51,8 @@ performing relay, signer, storage, or other host effects.
   effects; NIP-17 resolves its NIP-44 and NIP-59 dependency graph.
 - Added typed runtime operation dispatch with an explicit `OperationPolicy`, so
   undeclared module operations are denied before reaching a host capability.
+- Added module-call validation: qualified and unqualified imported exports are
+  checked for ambiguity, argument arity, and declared operation permissions.
 
 ## Deferred
 

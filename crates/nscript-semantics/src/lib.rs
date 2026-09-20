@@ -97,7 +97,6 @@ pub fn analyze(program: &Program) -> Vec<Diagnostic> {
             });
         }
     }
-
     let (_, typed_diagnostics) = check(program);
     diagnostics.extend(typed_diagnostics);
 
@@ -158,7 +157,315 @@ fn validate_module_symbols(program: &Program, graph: &ResolvedModuleGraph) -> Ve
     for item in &program.ast.items {
         validate_item_types(item, &known, &mut diagnostics);
     }
+    validate_module_calls(program, graph, &mut diagnostics);
     diagnostics
+}
+
+#[derive(Clone)]
+struct ModuleCall {
+    module: String,
+    operation: String,
+    arity: usize,
+    permission: Option<String>,
+}
+
+fn validate_module_calls(
+    program: &Program,
+    graph: &ResolvedModuleGraph,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let imported = program
+        .imports
+        .iter()
+        .map(|item| item.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut calls = BTreeMap::<String, Vec<ModuleCall>>::new();
+    for module_name in imported {
+        let Some(module) = graph.modules.get(module_name) else {
+            continue;
+        };
+        for operation in &module.descriptor.operations {
+            let call = ModuleCall {
+                module: module_name.to_owned(),
+                operation: operation.name.clone(),
+                arity: operation.parameters.len(),
+                permission: Some(operation.permission.clone()),
+            };
+            calls
+                .entry(operation.name.clone())
+                .or_default()
+                .push(call.clone());
+            calls
+                .entry(format!("{module_name}.{}", operation.name))
+                .or_default()
+                .push(call);
+        }
+        for function in &module.descriptor.functions {
+            let call = ModuleCall {
+                module: module_name.to_owned(),
+                operation: function.name.clone(),
+                arity: function.parameters.len(),
+                permission: None,
+            };
+            calls
+                .entry(function.name.clone())
+                .or_default()
+                .push(call.clone());
+            calls
+                .entry(format!("{module_name}.{}", function.name))
+                .or_default()
+                .push(call);
+        }
+    }
+    let permissions = program_permissions(program);
+    for item in &program.ast.items {
+        validate_item_calls(item, &calls, &permissions, diagnostics);
+    }
+}
+
+fn program_permissions(program: &Program) -> BTreeSet<String> {
+    let mut permissions = BTreeSet::new();
+    for item in &program.ast.items {
+        if let Item::Permissions(block) = item {
+            for permission in &block.value {
+                match permission {
+                    Permission::Typed { operation, .. } | Permission::Named { operation, .. } => {
+                        permissions.insert(operation.value.clone());
+                    }
+                    Permission::Http(_) => {
+                        permissions.insert("http".to_owned());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    permissions
+}
+
+fn validate_item_calls(
+    item: &Item,
+    calls: &BTreeMap<String, Vec<ModuleCall>>,
+    permissions: &BTreeSet<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    match item {
+        Item::Let(declaration) => {
+            validate_expr_calls(&declaration.value, calls, permissions, diagnostics);
+        }
+        Item::Function(function) => {
+            for nested in &function.body {
+                validate_item_calls(nested, calls, permissions, diagnostics);
+            }
+        }
+        Item::Stream { value, .. } => validate_expr_calls(value, calls, permissions, diagnostics),
+        Item::Statement(statement) => {
+            validate_statement_calls(&statement.value, calls, permissions, diagnostics);
+        }
+        _ => {}
+    }
+}
+
+fn validate_statement_calls(
+    statement: &StatementKind,
+    calls: &BTreeMap<String, Vec<ModuleCall>>,
+    permissions: &BTreeSet<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    match statement {
+        StatementKind::Expression(value) | StatementKind::Return(Some(value)) => {
+            validate_expr_calls(value, calls, permissions, diagnostics);
+        }
+        StatementKind::For { value, body, .. } => {
+            validate_expr_calls(value, calls, permissions, diagnostics);
+            for nested in body {
+                validate_item_calls(nested, calls, permissions, diagnostics);
+            }
+        }
+        StatementKind::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            validate_expr_calls(condition, calls, permissions, diagnostics);
+            for nested in then_body {
+                validate_item_calls(nested, calls, permissions, diagnostics);
+            }
+            for nested in else_body {
+                validate_item_calls(nested, calls, permissions, diagnostics);
+            }
+        }
+        StatementKind::On {
+            source,
+            predicate,
+            body,
+        } => {
+            validate_expr_calls(source, calls, permissions, diagnostics);
+            if let Some(predicate) = predicate {
+                validate_expr_calls(predicate, calls, permissions, diagnostics);
+            }
+            for nested in body {
+                validate_item_calls(nested, calls, permissions, diagnostics);
+            }
+        }
+        StatementKind::Once { key, body } => {
+            validate_expr_calls(key, calls, permissions, diagnostics);
+            for nested in body {
+                validate_item_calls(nested, calls, permissions, diagnostics);
+            }
+        }
+        StatementKind::Every { duration, body }
+        | StatementKind::At {
+            schedule: duration,
+            body,
+        } => {
+            validate_expr_calls(duration, calls, permissions, diagnostics);
+            for nested in body {
+                validate_item_calls(nested, calls, permissions, diagnostics);
+            }
+        }
+        StatementKind::Send { value, signer } => {
+            validate_expr_calls(value, calls, permissions, diagnostics);
+            if let Some(signer) = signer {
+                validate_expr_calls(signer, calls, permissions, diagnostics);
+            }
+        }
+        StatementKind::Return(None) => {}
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn validate_expr_calls(
+    expression: &Expr,
+    calls: &BTreeMap<String, Vec<ModuleCall>>,
+    permissions: &BTreeSet<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if let ExprKind::Call { callee, arguments } = &expression.value
+        && let Some(name) = expression_path(callee)
+        && let Some(candidates) = calls.get(&name)
+    {
+        if candidates.len() > 1 {
+            diagnostics.push(Diagnostic {
+                code: "E4003",
+                message: format!("ambiguous module call `{name}`"),
+                span: callee.span,
+            });
+        } else if let Some(call) = candidates.first() {
+            if arguments.len() != call.arity {
+                diagnostics.push(Diagnostic {
+                    code: "E1102",
+                    message: format!(
+                        "{}.{}` expects {} arguments, found {}",
+                        call.module,
+                        call.operation,
+                        call.arity,
+                        arguments.len()
+                    ),
+                    span: expression.span,
+                });
+            }
+            if let Some(permission) = &call.permission
+                && !permissions.contains(permission)
+            {
+                diagnostics.push(Diagnostic {
+                    code: "E3001",
+                    message: format!("operation requires `{permission}` permission"),
+                    span: expression.span,
+                });
+            }
+        }
+    }
+    match &expression.value {
+        ExprKind::Call { callee, arguments } => {
+            validate_expr_calls(callee, calls, permissions, diagnostics);
+            for argument in arguments {
+                validate_expr_calls(argument, calls, permissions, diagnostics);
+            }
+        }
+        ExprKind::Member { value, .. }
+        | ExprKind::Propagate(value)
+        | ExprKind::Unary { value, .. }
+        | ExprKind::Sign { value, .. } => {
+            validate_expr_calls(value, calls, permissions, diagnostics);
+        }
+        ExprKind::Publish {
+            value,
+            relays,
+            signer,
+        } => {
+            validate_expr_calls(value, calls, permissions, diagnostics);
+            if let Some(relays) = relays {
+                validate_expr_calls(relays, calls, permissions, diagnostics);
+            }
+            if let Some(signer) = signer {
+                validate_expr_calls(signer, calls, permissions, diagnostics);
+            }
+        }
+        ExprKind::Binary { left, right, .. }
+        | ExprKind::Assign {
+            target: left,
+            value: right,
+        }
+        | ExprKind::Index {
+            value: left,
+            index: right,
+        } => {
+            validate_expr_calls(left, calls, permissions, diagnostics);
+            validate_expr_calls(right, calls, permissions, diagnostics);
+        }
+        ExprKind::List(values) => {
+            for value in values {
+                validate_expr_calls(value, calls, permissions, diagnostics);
+            }
+        }
+        ExprKind::Record(values) | ExprKind::Construct { fields: values, .. } => {
+            for (_, value) in values {
+                validate_expr_calls(value, calls, permissions, diagnostics);
+            }
+        }
+        ExprKind::Select(select) => {
+            if let Some(predicate) = &select.predicate {
+                validate_expr_calls(predicate, calls, permissions, diagnostics);
+            }
+            if let Some(since) = &select.since {
+                validate_expr_calls(since, calls, permissions, diagnostics);
+            }
+            if let Some(until) = &select.until {
+                validate_expr_calls(until, calls, permissions, diagnostics);
+            }
+            if let Some(relays) = &select.relays {
+                validate_expr_calls(relays, calls, permissions, diagnostics);
+            }
+        }
+        ExprKind::Fetch { url, .. } => {
+            validate_expr_calls(url, calls, permissions, diagnostics);
+        }
+        ExprKind::Latest {
+            relays: Some(relays),
+            ..
+        } => validate_expr_calls(relays, calls, permissions, diagnostics),
+        ExprKind::Match { value, arms } => {
+            validate_expr_calls(value, calls, permissions, diagnostics);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    validate_expr_calls(guard, calls, permissions, diagnostics);
+                }
+                validate_expr_calls(&arm.value, calls, permissions, diagnostics);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn expression_path(expression: &Expr) -> Option<String> {
+    match &expression.value {
+        ExprKind::Identifier(name) => Some(name.clone()),
+        ExprKind::Member { value, name } => {
+            Some(format!("{}.{}", expression_path(value)?, name.value))
+        }
+        _ => None,
+    }
 }
 
 fn core_types() -> BTreeSet<String> {
@@ -769,9 +1076,11 @@ fn path(expression: &Expr) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use nscript_modules::{ModuleDependency, ModuleRegistry};
     use nscript_syntax::parse_program;
+    use semver::VersionReq;
 
-    use super::analyze;
+    use super::{analyze, analyze_with_modules};
 
     fn codes(source: &str) -> Vec<&'static str> {
         let (program, mut diagnostics) = parse_program(source);
@@ -817,5 +1126,45 @@ mod tests {
         let relays = include_str!("../../../conformance/invalid/missing-default-relays.ns");
         assert_eq!(codes(signer), ["E2203"]);
         assert_eq!(codes(relays), ["E2204"]);
+    }
+
+    #[test]
+    fn checks_imported_module_operation_arity_and_permission() {
+        let source = "use nip44\nlet result = nip44.encrypt_text(\"hello\")\n";
+        let (program, mut diagnostics) = parse_program(source);
+        let registry = ModuleRegistry::with_builtins();
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "nip44".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .expect("builtin nip44 resolves");
+        diagnostics.extend(analyze_with_modules(&program, &graph));
+        let codes = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>();
+        assert!(codes.contains(&"E1102"));
+        assert!(codes.contains(&"E3001"));
+    }
+
+    #[test]
+    fn accepts_imported_module_operation_with_permission() {
+        let source = "use nip44\npermissions { encrypt Text }\nlet result = nip44.encrypt_text(\"hello\", alice)\n";
+        let (program, mut diagnostics) = parse_program(source);
+        let registry = ModuleRegistry::with_builtins();
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "nip44".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .expect("builtin nip44 resolves");
+        diagnostics.extend(analyze_with_modules(&program, &graph));
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "E1102" || diagnostic.code == "E3001"),
+            "unexpected diagnostics: {diagnostics:?}"
+        );
     }
 }

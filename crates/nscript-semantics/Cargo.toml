@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 nscript-modules = { path = "../nscript-modules" }
 nscript-syntax = { path = "../nscript-syntax" }
+semver.workspace = true
 
 [lints]
 workspace = true

@@ -13,6 +13,7 @@ language major version.
 | --- | --- | --- |
 | E1001 | nominal-type-mismatch | Distinct nominal Nostr types are combined without an explicit conversion |
 | E1101 | unknown-name | A name cannot be resolved in lexical or module scope |
+| E1102 | module-call-arity | A module function or operation receives the wrong number of arguments |
 | E1201 | invalid-event-declaration | Event kind, fields, or replacement mode violate its NIP module |
 | E1301 | non-exhaustive-match | A closed type is not covered by a match |
 | E1302 | unreachable-pattern | A prior pattern covers the arm completely |
