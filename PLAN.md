@@ -313,12 +313,13 @@ returning, preventing leaked relay subscriptions on error paths.
 Added `RealRelayHost`, a NIP-01 WebSocket adapter for `ws://` relays with
 typed filter lowering, `REQ`/`EVENT`/`EOSE`/`CLOSE` handling, signed-event
 decoding, and publication `OK` outcomes. The deterministic fake host remains
-the conformance backend; TLS transport and relay reconnect policy remain
+the conformance backend. `RealRelayHost::reconnect` provides an explicit
+session reset boundary; automatic retry/backoff and TLS transport remain
 follow-up hardening.
 
 ## Deferred
 
 Module operation dispatch, full handler/stream evaluation, TLS relay transport,
-relay reconnect policy,
+automatic relay retry/backoff,
 cryptographic signing, NIP-44/NIP-59/NIP-46 host implementations, WASM,
 package distribution, and a stable IR interchange format remain later phases.

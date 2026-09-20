@@ -1893,6 +1893,24 @@ impl RealRelayHost {
         })
     }
 
+    /// Reconnect the relay socket and discard stale subscription handles.
+    ///
+    /// Callers should rebuild subscriptions after reconnecting because relay
+    /// servers do not retain a previous WebSocket session's `REQ` state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RelayUnavailable` when the socket cannot be re-established.
+    pub fn reconnect(&mut self) -> Result<(), RuntimeError> {
+        let (socket, _) =
+            connect(self.relay.as_str()).map_err(|_| RuntimeError::RelayUnavailable {
+                relayset: self.relay.clone(),
+            })?;
+        self.socket = socket;
+        self.subscriptions.clear();
+        Ok(())
+    }
+
     fn send_json(&mut self, value: &Value) -> Result<(), RuntimeError> {
         self.socket
             .send(Message::Text(value.to_string().into()))
@@ -4074,6 +4092,15 @@ mod tests {
             event.unsigned.tags,
             vec![("t".to_owned(), "nostr".to_owned())]
         );
+    }
+
+    #[test]
+    fn real_relay_adapter_reports_connection_failures() {
+        assert!(matches!(
+            RealRelayHost::connect("ws://127.0.0.1:1"),
+            Err(RuntimeError::RelayUnavailable { relayset })
+                if relayset == "ws://127.0.0.1:1"
+        ));
     }
 
     #[test]
