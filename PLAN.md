@@ -264,6 +264,9 @@ are execution quality rather than protocol breadth:
 The `nscript inspect [--json]` command is the first security-UX slice: it
 reports the checked profile, inferred effects, operation capabilities,
 publication count, and schedule count without executing external effects.
+The first handler-execution slice now records checked `on` handlers and lowers
+them into typed subscription requests; handler body interpretation remains the
+next step.
 
 ## Deferred
 

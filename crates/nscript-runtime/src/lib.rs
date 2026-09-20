@@ -1039,6 +1039,28 @@ where
             .collect()
     }
 
+    /// Lower checked `on` handlers into typed subscription requests.
+    #[must_use]
+    pub fn handler_subscriptions(
+        checked: &CheckedProgram,
+        relayset: Option<&str>,
+    ) -> Vec<SubscriptionRequest> {
+        checked
+            .handlers
+            .iter()
+            .map(|handler| SubscriptionRequest {
+                event_type: handler.event_type.clone(),
+                relayset: relayset.map(str::to_owned),
+                kinds: Vec::new(),
+                tag_equals: Vec::new(),
+                cursor: None,
+                author: None,
+                since: None,
+                limit: None,
+            })
+            .collect()
+    }
+
     /// Run a staged storage transaction and commit it only when the closure succeeds.
     ///
     /// # Errors
@@ -3066,6 +3088,24 @@ mod tests {
         assert_eq!(timers.schedules[0].next_at, 400);
         assert_eq!(timers.schedules[0].interval, Some(300));
         assert_eq!(timers.schedules[1].next_at, 200);
+    }
+
+    #[test]
+    fn checked_handlers_lower_to_typed_subscriptions() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note where tags.t contains \"nostrhost\" {\n    print(\"seen\")\n}";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        assert_eq!(checked.handlers.len(), 1);
+        assert!(checked.handlers[0].has_predicate);
+        let subscriptions = Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::handler_subscriptions(
+            &checked,
+            Some("public"),
+        );
+        assert_eq!(subscriptions.len(), 1);
+        assert_eq!(subscriptions[0].event_type, "Note");
+        assert_eq!(subscriptions[0].relayset.as_deref(), Some("public"));
     }
 
     #[test]

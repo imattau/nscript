@@ -60,12 +60,21 @@ pub struct CheckedSchedule {
     pub span: Span,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedHandler {
+    pub event_type: String,
+    pub has_predicate: bool,
+    pub body_items: usize,
+    pub span: Span,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CheckedProgram {
     pub effects: BTreeSet<Effect>,
     pub publications: Vec<CheckedPublication>,
     pub operation_calls: Vec<CheckedOperationCall>,
     pub schedules: Vec<CheckedSchedule>,
+    pub handlers: Vec<CheckedHandler>,
 }
 
 const HARDENED_FORBIDDEN: &[&str] = &[
@@ -613,6 +622,14 @@ fn schedule_value(expression: &Expr, every: bool) -> Option<u64> {
     }
 }
 
+fn handler_event_type(expression: &Expr) -> Option<String> {
+    match &expression.value {
+        ExprKind::Identifier(name) => Some(name.clone()),
+        ExprKind::Construct { name, .. } => Some(name.value.clone()),
+        _ => None,
+    }
+}
+
 #[must_use]
 pub fn check(program: &Program) -> (Option<CheckedProgram>, Vec<Diagnostic>) {
     let mut checker = Checker::new(program);
@@ -622,6 +639,7 @@ pub fn check(program: &Program) -> (Option<CheckedProgram>, Vec<Diagnostic>) {
         publications: checker.publications,
         operation_calls: checker.operation_calls,
         schedules: checker.schedules,
+        handlers: checker.handlers,
     });
     (result, checker.diagnostics)
 }
@@ -643,6 +661,7 @@ struct Checker<'a> {
     publications: Vec<CheckedPublication>,
     operation_calls: Vec<CheckedOperationCall>,
     schedules: Vec<CheckedSchedule>,
+    handlers: Vec<CheckedHandler>,
     diagnostics: Vec<Diagnostic>,
     event_bindings: BTreeSet<String>,
 }
@@ -658,6 +677,7 @@ impl<'a> Checker<'a> {
             publications: Vec::new(),
             operation_calls: Vec::new(),
             schedules: Vec::new(),
+            handlers: Vec::new(),
             diagnostics: Vec::new(),
             event_bindings: BTreeSet::new(),
         };
@@ -817,6 +837,20 @@ impl<'a> Checker<'a> {
                 self.check_expr(source, locals);
                 if let Some(predicate) = predicate {
                     self.check_expr(predicate, locals);
+                }
+                if let Some(event_type) = handler_event_type(source) {
+                    self.handlers.push(CheckedHandler {
+                        event_type,
+                        has_predicate: predicate.is_some(),
+                        body_items: body.len(),
+                        span,
+                    });
+                } else {
+                    self.diagnostics.push(Diagnostic {
+                        code: "E1302",
+                        message: "handler source must name an event type".to_owned(),
+                        span: source.span,
+                    });
                 }
                 let mut handler = locals.clone();
                 handler.insert(
