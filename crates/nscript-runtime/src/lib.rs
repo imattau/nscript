@@ -100,6 +100,32 @@ pub enum RuntimeError {
     OperationUnavailable { module: String, operation: String },
     InvalidOperationArguments { operation: String },
     PaymentLimitExceeded { amount: i64, limit: i64 },
+    InvalidWasmPayload,
+}
+
+/// Decodes a dispatch payload supplied by a WASM operation import.
+///
+/// The host owns the memory slice and remains responsible for mapping the
+/// returned JSON records to typed capability calls.
+///
+/// # Errors
+///
+/// Returns [`RuntimeError::InvalidWasmPayload`] when the slice is out of
+/// bounds, invalid UTF-8/JSON, or does not contain an array.
+pub fn decode_wasm_dispatch(
+    memory: &[u8],
+    pointer: u32,
+    length: u32,
+) -> Result<Vec<Value>, RuntimeError> {
+    let start = usize::try_from(pointer).map_err(|_| RuntimeError::InvalidWasmPayload)?;
+    let size = usize::try_from(length).map_err(|_| RuntimeError::InvalidWasmPayload)?;
+    let end = start
+        .checked_add(size)
+        .ok_or(RuntimeError::InvalidWasmPayload)?;
+    let payload = memory
+        .get(start..end)
+        .ok_or(RuntimeError::InvalidWasmPayload)?;
+    serde_json::from_slice(payload).map_err(|_| RuntimeError::InvalidWasmPayload)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3970,6 +3996,15 @@ mod tests {
             select_replaceable_event([&tie_high, &tie_low]),
             Some(&tie_low)
         );
+    }
+
+    #[test]
+    fn wasm_dispatch_decoder_bounds_and_parses_payload() {
+        let memory = br#"[{"op":"create_event","kind":1}]"#;
+        let length = u32::try_from(memory.len()).expect("test payload fits");
+        let records = decode_wasm_dispatch(memory, 0, length).expect("decodes payload");
+        assert_eq!(records[0]["op"], "create_event");
+        assert!(decode_wasm_dispatch(memory, 1, length).is_err());
     }
 
     #[test]

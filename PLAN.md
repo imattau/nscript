@@ -344,6 +344,8 @@ dispatch metadata remaining the authoritative payload until linear-memory
 encoding is added. The dispatch JSON is now embedded in a one-page linear
 memory data segment at offset zero, and `nscript_main` passes its actual length
 to operation imports.
+The runtime now provides bounded `decode_wasm_dispatch`, validating pointer/
+length slices and JSON array shape before host-side operation mapping.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
