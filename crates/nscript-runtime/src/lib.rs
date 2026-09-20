@@ -135,6 +135,13 @@ pub struct LiveEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Report {
+    pub target: String,
+    pub category: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -228,6 +235,7 @@ pub enum OperationValue {
     SearchRequest(SearchRequest),
     SearchResults(SearchResults),
     LiveEvent(LiveEvent),
+    Report(Report),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1153,6 +1161,28 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip56", "publish_report") => {
+                let [OperationValue::Report(report)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if report.target.is_empty()
+                    || report.category.is_empty()
+                    || report.content.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://reports".to_owned(),
+                        accepted: true,
+                        detail: "moderation report lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1397,6 +1427,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                     summary,
                 })
             }
+            _ => value.clone(),
+        },
+        "Report" => match (text("target"), text("category"), text("content")) {
+            (Some(target), Some(category), Some(content)) => OperationValue::Report(Report {
+                target,
+                category,
+                content,
+            }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2158,6 +2196,43 @@ mod tests {
                 }],
             )
             .expect("live event host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip56_lowers_structured_reports() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip56", "publish_report"),
+                &mut host,
+                "nip56",
+                "publish_report",
+                &[OperationValue::Record {
+                    name: "Report".to_owned(),
+                    fields: vec![
+                        (
+                            "target".to_owned(),
+                            OperationValue::Text("event-to-report".to_owned()),
+                        ),
+                        (
+                            "category".to_owned(),
+                            OperationValue::Text("spam".to_owned()),
+                        ),
+                        (
+                            "content".to_owned(),
+                            OperationValue::Text("Promotional flood".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("report host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

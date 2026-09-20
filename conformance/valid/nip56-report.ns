@@ -1,0 +1,12 @@
+// NIP-56 reports provide structured moderation signals.
+use nip56
+
+permissions {
+    report
+}
+
+let result = nip56.publish_report(Report {
+    target: "event-to-report";
+    category: "spam";
+    content: "Promotional flood";
+})

@@ -114,6 +114,8 @@ performing relay, signer, storage, or other host effects.
   explicit relay capability and query validation.
 - Added NIP-53 typed `LiveEvent` records and `publish_live_event`, with
   addressable event validation and source/runtime conformance coverage.
+- Added NIP-56 typed `Report` records and `publish_report`, with explicit
+  moderation categories, rationale, and target validation.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

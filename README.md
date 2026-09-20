@@ -143,6 +143,10 @@ NIP-53 live events use typed addressable `LiveEvent` records.
 `nip53.publish_live_event` validates the identifier and descriptive fields
 before publication through an explicit signing/relay capability.
 
+NIP-56 reports use typed `Report` records with explicit target, category, and
+rationale fields. `nip56.publish_report` validates moderation signals before
+publication through an explicit signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.
