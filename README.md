@@ -202,6 +202,9 @@ operation host. Scripts receive a remote signer handle rather than private key
 material.
 Real hosts can implement the dedicated `SignerProvisionHost` adapter, whose
 runtime entry point records provisioning in the audit stream.
+Authenticated relay hosts can similarly implement `RelaySessionHost`; its
+runtime entry point validates the session through the adapter and records the
+authentication attempt in the audit stream.
 
 ## Repository map
 

@@ -461,6 +461,19 @@ pub trait RelayHost {
     ) -> Result<PublishReport, RuntimeError>;
 }
 
+pub trait RelaySessionHost {
+    /// Authenticate a relay session without exposing signer secrets.
+    ///
+    /// # Errors
+    ///
+    /// Returns a relay availability or authentication failure.
+    fn authenticate(
+        &mut self,
+        invocation: InvocationId,
+        relay: &str,
+    ) -> Result<AuthenticatedRelay, RuntimeError>;
+}
+
 pub trait SignerHost {
     /// Sign an unsigned event using a named signer capability.
     ///
@@ -636,6 +649,28 @@ where
             invocation,
             operation: "provision_signer".to_owned(),
             target: provider.to_owned(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
+    }
+
+    /// Authenticate a relay through a dedicated session host adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's relay authentication failure.
+    pub fn authenticate_relay<H: RelaySessionHost>(
+        &mut self,
+        host: &mut H,
+        relay: &str,
+    ) -> Result<AuthenticatedRelay, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.authenticate(invocation, relay);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "authenticate_relay".to_owned(),
+            target: relay.to_owned(),
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
         });
         result
@@ -836,6 +871,23 @@ impl RelayHost for FakeRelayHost {
             self.published.push(event.clone());
         }
         Ok(PublishReport { outcomes })
+    }
+}
+
+impl RelaySessionHost for FakeRelayHost {
+    fn authenticate(
+        &mut self,
+        _invocation: InvocationId,
+        relay: &str,
+    ) -> Result<AuthenticatedRelay, RuntimeError> {
+        if !relay.starts_with("wss://") || relay.len() <= 7 {
+            return Err(RuntimeError::RelayUnavailable {
+                relayset: relay.to_owned(),
+            });
+        }
+        Ok(AuthenticatedRelay {
+            relay: relay.to_owned(),
+        })
     }
 }
 
@@ -3245,6 +3297,22 @@ mod tests {
             }
         );
         assert_eq!(runtime.audit.entries[0].operation, "provision_signer");
+    }
+
+    #[test]
+    fn dedicated_relay_session_host_is_audited() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut relay = FakeRelayHost::default();
+        let session = runtime
+            .authenticate_relay(&mut relay, "wss://relay.example")
+            .expect("relay authentication should succeed");
+        assert_eq!(session.relay, "wss://relay.example");
+        assert_eq!(runtime.audit.entries[0].operation, "authenticate_relay");
     }
 
     #[test]

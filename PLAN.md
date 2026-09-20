@@ -147,6 +147,8 @@ performing relay, signer, storage, or other host effects.
   preserving remote signer isolation and avoiding secret-key exposure.
 - Added a dedicated `SignerProvisionHost` adapter and audited
   `Runtime::provision_signer` entry point for real remote-signer integrations.
+- Added a dedicated `RelaySessionHost` adapter and audited
+  `Runtime::authenticate_relay` entry point for authenticated relay sessions.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
