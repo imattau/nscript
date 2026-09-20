@@ -208,6 +208,19 @@ pub struct FileMetadata {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlobUpload {
+    pub url: String,
+    pub hash: String,
+    pub size: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BlobStored {
+    pub url: String,
+    pub hash: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -312,6 +325,8 @@ pub enum OperationValue {
     RelayAdminRequest(RelayAdminRequest),
     AppHandler(AppHandler),
     FileMetadata(FileMetadata),
+    BlobUpload(BlobUpload),
+    BlobStored(BlobStored),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1438,6 +1453,22 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nipb7", "upload_blob") => {
+                let [OperationValue::BlobUpload(upload)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if upload.url.is_empty() || upload.hash.is_empty() || upload.size < 0 {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::BlobStored(BlobStored {
+                    url: upload.url.clone(),
+                    hash: upload.hash.clone(),
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1749,6 +1780,12 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         "FileMetadata" => match (text("url"), text("mime"), text("hash")) {
             (Some(url), Some(mime), Some(hash)) => {
                 OperationValue::FileMetadata(FileMetadata { url, mime, hash })
+            }
+            _ => value.clone(),
+        },
+        "BlobUpload" => match (text("url"), text("hash"), integer("size")) {
+            (Some(url), Some(hash), Some(size)) => {
+                OperationValue::BlobUpload(BlobUpload { url, hash, size })
             }
             _ => value.clone(),
         },
@@ -2870,6 +2907,46 @@ mod tests {
             )
             .expect("file metadata host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nipb7_lowers_content_addressed_blob_uploads() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nipb7", "upload_blob"),
+                &mut host,
+                "nipb7",
+                "upload_blob",
+                &[OperationValue::Record {
+                    name: "BlobUpload".to_owned(),
+                    fields: vec![
+                        (
+                            "url".to_owned(),
+                            OperationValue::Text("https://blossom.example/upload".to_owned()),
+                        ),
+                        (
+                            "hash".to_owned(),
+                            OperationValue::Text("sha256:abc123".to_owned()),
+                        ),
+                        ("size".to_owned(), OperationValue::Integer(1024)),
+                    ],
+                }],
+            )
+            .expect("blob host available");
+        assert_eq!(
+            result,
+            OperationValue::BlobStored(BlobStored {
+                url: "https://blossom.example/upload".to_owned(),
+                hash: "sha256:abc123".to_owned(),
+            })
+        );
     }
 
     #[test]

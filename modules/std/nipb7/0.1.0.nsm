@@ -1,0 +1,20 @@
+module nipb7 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/b7.md"
+
+record BlobUpload {
+    field url: Text
+    field hash: Text
+    field size: Int
+}
+
+record BlobStored {
+    field url: Text
+    field hash: Text
+}
+
+error BlobError {
+    field message: Text
+}
+
+operation upload_blob(upload: BlobUpload) -> Result<BlobStored,BlobError> effect Storage,HTTP permission blossom

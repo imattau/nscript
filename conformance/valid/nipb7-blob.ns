@@ -1,0 +1,12 @@
+// NIP-B7 Blossom storage provides content-addressed blob transport.
+use nipb7
+
+permissions {
+    blossom
+}
+
+let result = nipb7.upload_blob(BlobUpload {
+    url: "https://blossom.example/upload";
+    hash: "sha256:abc123";
+    size: 1024;
+})

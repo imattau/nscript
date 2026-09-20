@@ -135,6 +135,8 @@ performing relay, signer, storage, or other host effects.
   event-kind/application/endpoint routing validation.
 - Added NIP-94 typed `FileMetadata` records and `publish_file_metadata`, with
   URL, MIME, and content-hash validation for media/file workflows.
+- Added NIP-B7 typed `BlobUpload`/`BlobStored` values and `upload_blob`, with
+  explicit storage/HTTP effects and content-addressed upload validation.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
