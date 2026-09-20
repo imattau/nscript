@@ -120,6 +120,7 @@ pub struct AuthenticatedRelay {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SubscriptionRequest {
     pub event_type: String,
+    pub relayset: Option<String>,
     pub author: Option<String>,
     pub since: Option<u64>,
     pub limit: Option<u32>,
@@ -1244,7 +1245,10 @@ impl SubscriptionHost for FakeRelayHost {
         _invocation: InvocationId,
         request: &SubscriptionRequest,
     ) -> Result<SubscriptionHandle, RuntimeError> {
-        if request.event_type.is_empty() || request.limit == Some(0) {
+        if request.event_type.is_empty()
+            || request.relayset.as_deref() == Some("")
+            || request.limit == Some(0)
+        {
             return Err(RuntimeError::InvalidOperationArguments {
                 operation: "subscribe".to_owned(),
             });
@@ -2765,6 +2769,7 @@ mod tests {
         let mut relay = FakeRelayHost::default();
         let request = SubscriptionRequest {
             event_type: "Note".to_owned(),
+            relayset: Some("public".to_owned()),
             author: Some("alice".to_owned()),
             since: Some(100),
             limit: Some(20),
@@ -2801,6 +2806,7 @@ mod tests {
 
         let invalid = SubscriptionRequest {
             event_type: "Note".to_owned(),
+            relayset: None,
             author: None,
             since: None,
             limit: Some(0),

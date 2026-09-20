@@ -169,6 +169,8 @@ performing relay, signer, storage, or other host effects.
   `Runtime::poll_subscription`, covering the relay stream delivery boundary.
 - Added runtime event-ID deduplication during subscription polling, preventing
   relay retries from invoking handlers twice for the same signed event.
+- Added explicit optional relay-set targeting to `SubscriptionRequest`, with
+  host validation before stream creation.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

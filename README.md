@@ -227,6 +227,8 @@ audited capability boundary.
 EOSE-like completeness metadata for stream consumers.
 The runtime also suppresses repeated signed-event IDs across relay retries
 before batches reach script handlers.
+Subscription filters may include an explicit relay set, keeping relay routing
+policy visible to the host and auditable at stream creation.
 
 ## Repository map
 
