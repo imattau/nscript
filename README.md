@@ -229,6 +229,8 @@ The runtime also suppresses repeated signed-event IDs across relay retries
 before batches reach script handlers.
 Subscription filters may include an explicit relay set, keeping relay routing
 policy visible to the host and auditable at stream creation.
+They also carry typed event kinds and tag-equality predicates, avoiding raw
+JSON filter construction.
 
 ## Repository map
 

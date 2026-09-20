@@ -171,6 +171,8 @@ performing relay, signer, storage, or other host effects.
   relay retries from invoking handlers twice for the same signed event.
 - Added explicit optional relay-set targeting to `SubscriptionRequest`, with
   host validation before stream creation.
+- Added typed kind and tag-equality predicates to subscription filters, with
+  validation before relay dispatch.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

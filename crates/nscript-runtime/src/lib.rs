@@ -121,6 +121,8 @@ pub struct AuthenticatedRelay {
 pub struct SubscriptionRequest {
     pub event_type: String,
     pub relayset: Option<String>,
+    pub kinds: Vec<u16>,
+    pub tag_equals: Vec<(String, String)>,
     pub author: Option<String>,
     pub since: Option<u64>,
     pub limit: Option<u32>,
@@ -1247,6 +1249,11 @@ impl SubscriptionHost for FakeRelayHost {
     ) -> Result<SubscriptionHandle, RuntimeError> {
         if request.event_type.is_empty()
             || request.relayset.as_deref() == Some("")
+            || request.tag_equals.iter().any(|(name, value)| {
+                name.is_empty()
+                    || value.is_empty()
+                    || !name.starts_with(|c: char| c.is_ascii_alphabetic())
+            })
             || request.limit == Some(0)
         {
             return Err(RuntimeError::InvalidOperationArguments {
@@ -2770,6 +2777,8 @@ mod tests {
         let request = SubscriptionRequest {
             event_type: "Note".to_owned(),
             relayset: Some("public".to_owned()),
+            kinds: vec![1],
+            tag_equals: vec![("p".to_owned(), "alice".to_owned())],
             author: Some("alice".to_owned()),
             since: Some(100),
             limit: Some(20),
@@ -2807,6 +2816,8 @@ mod tests {
         let invalid = SubscriptionRequest {
             event_type: "Note".to_owned(),
             relayset: None,
+            kinds: Vec::new(),
+            tag_equals: Vec::new(),
             author: None,
             since: None,
             limit: Some(0),
