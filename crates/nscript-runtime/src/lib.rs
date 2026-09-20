@@ -1225,18 +1225,30 @@ where
         let mut dispatched = 0;
         for (handler, request) in checked.handlers.iter().zip(subscriptions.iter()) {
             let handle = self.subscribe(subscription_host, request)?;
-            let batch = self.poll_subscription(subscription_host, &handle)?;
+            let batch = match self.poll_subscription(subscription_host, &handle) {
+                Ok(batch) => batch,
+                Err(error) => {
+                    let _ = self.unsubscribe(subscription_host, &handle);
+                    return Err(error);
+                }
+            };
             for event in batch.events {
                 let key = event.id.clone();
-                if self.dispatch_event_transactional(
+                let result = self.dispatch_event_transactional(
                     request,
                     &event,
                     idempotency_host,
                     storage_host,
                     &key,
                     |event, transaction| body(handler, event, transaction),
-                )? {
-                    dispatched += 1;
+                );
+                match result {
+                    Ok(true) => dispatched += 1,
+                    Ok(false) => {}
+                    Err(error) => {
+                        let _ = self.unsubscribe(subscription_host, &handle);
+                        return Err(error);
+                    }
                 }
             }
             self.unsubscribe(subscription_host, &handle)?;
@@ -3514,7 +3526,10 @@ mod tests {
             )
             .expect("empty cycle succeeds");
         assert_eq!(dispatched, 1);
-        assert_eq!(storage.values.get("last").map(String::as_str), Some("event-cycle"));
+        assert_eq!(
+            storage.values.get("last").map(String::as_str),
+            Some("event-cycle")
+        );
         assert_eq!(relay.subscriptions.len(), 1);
         assert_eq!(relay.closed_subscriptions.len(), 1);
     }

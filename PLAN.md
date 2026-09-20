@@ -287,6 +287,8 @@ storage, committing handler state only on successful body completion.
 handler lowering, subscribe, poll, dispatch, transaction, and unsubscribe.
 The conformance test exercises a queued signed event through that full path and
 verifies committed handler state.
+Handler-cycle polling and body failures now explicitly unsubscribe before
+returning, preventing leaked relay subscriptions on error paths.
 
 ## Deferred
 
