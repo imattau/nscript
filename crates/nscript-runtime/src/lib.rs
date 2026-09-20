@@ -93,6 +93,13 @@ pub struct GroupMessage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Label {
+    pub target: String,
+    pub namespace: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -179,6 +186,7 @@ pub enum OperationValue {
     Comment(Comment),
     Article(Article),
     GroupMessage(GroupMessage),
+    Label(Label),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -983,6 +991,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip32", "publish_label") => {
+                let [OperationValue::Label(label)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if label.target.is_empty() || label.namespace.is_empty() || label.value.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://labels".to_owned(),
+                        accepted: true,
+                        detail: "label namespace/value lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1192,6 +1219,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             (Some(group), Some(content)) => {
                 OperationValue::GroupMessage(GroupMessage { group, content })
             }
+            _ => value.clone(),
+        },
+        "Label" => match (text("target"), text("namespace"), text("value")) {
+            (Some(target), Some(namespace), Some(value)) => OperationValue::Label(Label {
+                target,
+                namespace,
+                value,
+            }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -1737,6 +1772,40 @@ mod tests {
                 }],
             )
             .expect("group message host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip32_lowers_namespaced_labels() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip32", "publish_label"),
+                &mut host,
+                "nip32",
+                "publish_label",
+                &[OperationValue::Record {
+                    name: "Label".to_owned(),
+                    fields: vec![
+                        (
+                            "target".to_owned(),
+                            OperationValue::Text("event-to-label".to_owned()),
+                        ),
+                        (
+                            "namespace".to_owned(),
+                            OperationValue::Text("moderation".to_owned()),
+                        ),
+                        ("value".to_owned(), OperationValue::Text("spam".to_owned())),
+                    ],
+                }],
+            )
+            .expect("label host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

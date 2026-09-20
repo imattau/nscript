@@ -100,6 +100,8 @@ performing relay, signer, storage, or other host effects.
   coverage.
 - Added NIP-29 typed `GroupMessage` records and `publish_group_message`, with
   explicit group scope, validation, and source/runtime conformance coverage.
+- Added NIP-32 typed `Label` records and `publish_label`, with explicit
+  namespace/value semantics for moderation and classification workflows.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

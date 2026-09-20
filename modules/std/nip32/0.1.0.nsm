@@ -1,0 +1,16 @@
+module nip32 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/32.md"
+use nip01 @ "^0.1"
+
+record Label {
+    field target: Text
+    field namespace: Text
+    field value: Text
+}
+
+error LabelError {
+    field message: Text
+}
+
+operation publish_label(label: Label) -> Result<PublishReport,LabelError> effect Sign,Relay permission label

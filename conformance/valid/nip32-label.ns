@@ -1,0 +1,12 @@
+// NIP-32 labels carry a namespace and value for a target event.
+use nip32
+
+permissions {
+    label
+}
+
+let result = nip32.publish_label(Label {
+    target: "event-to-label";
+    namespace: "moderation";
+    value: "spam";
+})
