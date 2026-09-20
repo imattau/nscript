@@ -1605,6 +1605,7 @@ impl SubscriptionHost for FakeRelayHost {
 pub struct FakeHttpHost {
     pub allowlisted_hosts: BTreeSet<String>,
     pub requests: Vec<AuthenticatedRequest>,
+    pub redirects: BTreeMap<String, String>,
 }
 
 impl HttpHost for FakeHttpHost {
@@ -1623,6 +1624,14 @@ impl HttpHost for FakeHttpHost {
             return Err(RuntimeError::CapabilityDenied {
                 capability: format!("http:{host}"),
             });
+        }
+        if let Some(target) = self.redirects.get(&request.url) {
+            let target_host = target.split('/').nth(2).unwrap_or_default();
+            if !self.allowlisted_hosts.contains(target_host) {
+                return Err(RuntimeError::CapabilityDenied {
+                    capability: format!("http:{target_host}"),
+                });
+            }
         }
         self.requests.push(request.clone());
         Ok(HttpResponse {
@@ -4674,6 +4683,7 @@ mod tests {
         let mut http = FakeHttpHost {
             allowlisted_hosts: BTreeSet::from(["api.example".to_owned()]),
             requests: Vec::new(),
+            redirects: BTreeMap::new(),
         };
         let response = runtime
             .execute_http(
@@ -4687,6 +4697,22 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(http.requests.len(), 1);
         assert_eq!(runtime.audit.entries[0].operation, "http_request");
+
+        http.redirects.insert(
+            "https://api.example/redirect".to_owned(),
+            "https://other.example/resource".to_owned(),
+        );
+        assert!(matches!(
+            runtime.execute_http(
+                &mut http,
+                &AuthenticatedRequest {
+                    url: "https://api.example/redirect".to_owned(),
+                    method: "GET".to_owned(),
+                },
+            ),
+            Err(RuntimeError::CapabilityDenied { capability })
+                if capability == "http:other.example"
+        ));
     }
 
     #[test]

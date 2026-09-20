@@ -22,7 +22,7 @@ against deterministic host fakes.
 | Typed tags | `mentions.ns` | Runtime wire-tags test | Serialization |
 | Replaceable events | `replaceable.ns` | `invalid-event-mode.ns` | Tie-break vector planned |
 | Timers | `timer.ns` | Planned | Timer overlap |
-| HTTP origin policy | Example only | Planned | Redirect denial |
+| HTTP origin policy | Example only | Dedicated HTTP host test | Redirect denial |
 | Partial relay publication | `hello-note.ns` | Runtime partial-publication test | Partial publication |
 | Package resolution | Resolver transitive-version tests | Planned | Resolver vector planned |
 
