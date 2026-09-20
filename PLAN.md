@@ -145,6 +145,8 @@ performing relay, signer, storage, or other host effects.
   limit before a wallet host is invoked and returning a typed runtime error.
 - Added typed NIP-46 signer-session provisioning through the operation host,
   preserving remote signer isolation and avoiding secret-key exposure.
+- Added a dedicated `SignerProvisionHost` adapter and audited
+  `Runtime::provision_signer` entry point for real remote-signer integrations.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

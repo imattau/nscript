@@ -475,6 +475,19 @@ pub trait SignerHost {
     ) -> Result<SignedEvent, RuntimeError>;
 }
 
+pub trait SignerProvisionHost {
+    /// Provision a remote signer without exposing private key material.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SignerDenied` when the provider is unavailable or disallowed.
+    fn provision(
+        &mut self,
+        invocation: InvocationId,
+        provider: &str,
+    ) -> Result<SignerSession, RuntimeError>;
+}
+
 pub trait ClockHost {
     fn now(&self) -> u64;
 }
@@ -601,6 +614,28 @@ where
             invocation,
             operation: format!("{module}.{operation}"),
             target: module.to_owned(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
+    }
+
+    /// Provision a remote signer through a dedicated host adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's signer provisioning failure.
+    pub fn provision_signer<H: SignerProvisionHost>(
+        &mut self,
+        host: &mut H,
+        provider: &str,
+    ) -> Result<SignerSession, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.provision(invocation, provider);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "provision_signer".to_owned(),
+            target: provider.to_owned(),
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
         });
         result
@@ -831,6 +866,23 @@ impl SignerHost for FakeSignerHost {
         };
         self.signed.push(signed_event.clone());
         Ok(signed_event)
+    }
+}
+
+impl SignerProvisionHost for FakeSignerHost {
+    fn provision(
+        &mut self,
+        _invocation: InvocationId,
+        provider: &str,
+    ) -> Result<SignerSession, RuntimeError> {
+        if provider.is_empty() || self.denied.contains(provider) {
+            return Err(RuntimeError::SignerDenied {
+                signer: provider.to_owned(),
+            });
+        }
+        Ok(SignerSession {
+            provider: provider.to_owned(),
+        })
     }
 }
 
@@ -3172,6 +3224,27 @@ mod tests {
                 provider: "nip46://remote-signer".to_owned(),
             })
         );
+    }
+
+    #[test]
+    fn dedicated_signer_provision_host_is_audited() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut signer = FakeSignerHost::default();
+        let session = runtime
+            .provision_signer(&mut signer, "bunker://alice")
+            .expect("provisioning should succeed");
+        assert_eq!(
+            session,
+            SignerSession {
+                provider: "bunker://alice".to_owned()
+            }
+        );
+        assert_eq!(runtime.audit.entries[0].operation, "provision_signer");
     }
 
     #[test]

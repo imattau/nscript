@@ -200,6 +200,8 @@ Policies can additionally constrain payment authority with
 NIP-46 provisioning returns a typed `SignerSession` capability through the
 operation host. Scripts receive a remote signer handle rather than private key
 material.
+Real hosts can implement the dedicated `SignerProvisionHost` adapter, whose
+runtime entry point records provisioning in the audit stream.
 
 ## Repository map
 
