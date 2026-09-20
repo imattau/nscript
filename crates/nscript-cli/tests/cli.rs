@@ -44,6 +44,8 @@ fn inspects_program_permissions_as_json() {
             .iter()
             .any(|effect| effect == "log")
     );
+    assert_eq!(value["handlers"][0]["event"], "Note");
+    assert_eq!(value["handlers"][0]["tags"][0][0], "t");
 }
 
 #[test]

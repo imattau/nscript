@@ -266,6 +266,8 @@ reports the checked profile, inferred effects, operation capabilities,
 publication count, and schedule count without executing external effects.
 `nscript run --dry-run` now exposes the same checked execution plan while
 explicitly suppressing all external host effects.
+Inspect output also lists checked handler event types and lowered author/tag
+predicates for pre-execution review.
 The first handler-execution slice now records checked `on` handlers and lowers
 them into typed subscription requests; handler body interpretation remains the
 next step.

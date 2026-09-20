@@ -124,6 +124,11 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
             "operations": checked.operation_calls.iter().map(|call| format!("{}.{}", call.module, call.operation)).collect::<Vec<_>>(),
             "publications": checked.publications.len(),
             "schedules": checked.schedules.len(),
+            "handlers": checked.handlers.iter().map(|handler| serde_json::json!({
+                "event": handler.event_type,
+                "author": handler.author,
+                "tags": handler.tag_equals,
+            })).collect::<Vec<_>>(),
         });
         println!(
             "{}",
@@ -145,6 +150,15 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
         }
         println!("publications: {}", checked.publications.len());
         println!("schedules: {}", checked.schedules.len());
+        for handler in &checked.handlers {
+            println!("handler: {}", handler.event_type);
+            if let Some(author) = &handler.author {
+                println!("  author: {author}");
+            }
+            for (name, value) in &handler.tag_equals {
+                println!("  tag {name} == {value}");
+            }
+        }
     }
     ExitCode::SUCCESS
 }
