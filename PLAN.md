@@ -89,6 +89,69 @@ performing relay, signer, storage, or other host effects.
   normalize scalar NIP records into their validated typed values before
   dispatch, while preserving legacy typed host calls.
 
+## Next tranche: content, groups, relay tooling, payments, and extensibility
+
+The next NIP tranche broadens NScript from basic social/event scripting into a
+general Nostr application and automation language. Implementations MUST choose
+NIPs by use case and protocol maturity rather than attempting to support every
+published NIP.
+
+### Language-facing features
+
+These NIPs should become concise syntax where they express common intent:
+
+- NIP-10: typed replies, roots, mentions, and thread structure (`reply to`).
+- NIP-18: reposts (`repost note`).
+- NIP-23: long-form articles, editing, and querying (`publish Article`).
+- NIP-29: relay groups, membership, and group-scoped handlers.
+- NIP-45: event counts (`count ... where ...`).
+- NIP-50: search (`search Note for ...`).
+- NIP-53: live events and spaces.
+- NIP-68 and NIP-71: image-first and video events.
+
+### Typed modules
+
+These should expose structured records and operations without adding a keyword
+for every protocol detail:
+
+- NIP-22 comments and arbitrary comment targets.
+- NIP-32 labels for moderation, classification, and trust signals.
+- NIP-37 drafts and publishing workflows.
+- NIP-38 user status and presence.
+- NIP-47 Nostr Wallet Connect, with explicit payment effects and budgets.
+- NIP-56 reporting.
+- NIP-58 badges and credentials.
+- NIP-84 highlights.
+- NIP-85 trusted assertions.
+- NIP-89 application handlers and routing.
+- NIP-92, NIP-94, and NIP-B7 media metadata, files, and Blossom storage.
+- NIP-C7 broader chat models complementing NIP-17.
+
+### Runtime primitives
+
+These should normally remain behind relay, storage, or transport capabilities:
+
+- NIP-42 authenticated relay sessions.
+- NIP-67 EOSE/completeness handling.
+- NIP-77 Negentropy synchronization.
+- NIP-86 compatible relay administration.
+- Media upload/download transport and relay capability selection.
+- NIP-98 HTTP authentication for controlled web/API bridging.
+
+### Staged delivery
+
+1. Add typed schemas and conformance fixtures for threads, reposts, comments,
+   long-form content, search, counts, groups, and moderation labels.
+2. Add explicit payment and wallet capabilities, then media/file modules and
+   relay-management operations with auditable policy checks.
+3. Add runtime synchronization, authenticated relay sessions, trusted
+   assertions, application handlers, live-media support, and advanced wallet
+   flows.
+
+The acceptance bar for each addition is a typed module descriptor, capability
+and effect declarations, invalid-input fixtures, deterministic fake-host tests,
+and documented wire-level lowering to existing Nostr protocols.
+
 ## Deferred
 
 Module operation dispatch, full handler/stream evaluation, live relays,
