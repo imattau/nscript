@@ -159,6 +159,10 @@ NIP-71 video events use typed `VideoEvent` records. `nip71.publish_video`
 validates media URL and caption fields before publication through an explicit
 signing/relay capability.
 
+NIP-77 synchronization uses typed `SyncRequest` and `SyncResult` values.
+`nip77.synchronize` validates secure relay/cursor inputs and keeps Negentropy
+transport behind explicit relay/storage capabilities.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

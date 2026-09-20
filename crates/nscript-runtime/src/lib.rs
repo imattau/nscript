@@ -161,6 +161,19 @@ pub struct VideoEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncRequest {
+    pub relay: String,
+    pub cursor: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SyncResult {
+    pub relay: String,
+    pub added: i64,
+    pub removed: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -258,6 +271,8 @@ pub enum OperationValue {
     Badge(Badge),
     ImageEvent(ImageEvent),
     VideoEvent(VideoEvent),
+    SyncRequest(SyncRequest),
+    SyncResult(SyncResult),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1265,6 +1280,23 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip77", "synchronize") => {
+                let [OperationValue::SyncRequest(request)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if !request.relay.starts_with("wss://") || request.cursor.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::SyncResult(SyncResult {
+                    relay: request.relay.clone(),
+                    added: 0,
+                    removed: 0,
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1533,6 +1565,12 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         },
         "VideoEvent" => match (text("url"), text("caption")) {
             (Some(url), Some(caption)) => OperationValue::VideoEvent(VideoEvent { url, caption }),
+            _ => value.clone(),
+        },
+        "SyncRequest" => match (text("relay"), text("cursor")) {
+            (Some(relay), Some(cursor)) => {
+                OperationValue::SyncRequest(SyncRequest { relay, cursor })
+            }
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2435,6 +2473,46 @@ mod tests {
             )
             .expect("video host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip77_lowers_negentropy_sync_requests() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip77", "synchronize"),
+                &mut host,
+                "nip77",
+                "synchronize",
+                &[OperationValue::Record {
+                    name: "SyncRequest".to_owned(),
+                    fields: vec![
+                        (
+                            "relay".to_owned(),
+                            OperationValue::Text("wss://relay.example".to_owned()),
+                        ),
+                        (
+                            "cursor".to_owned(),
+                            OperationValue::Text("local-cursor-1".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("sync host available");
+        assert_eq!(
+            result,
+            OperationValue::SyncResult(SyncResult {
+                relay: "wss://relay.example".to_owned(),
+                added: 0,
+                removed: 0,
+            })
+        );
     }
 
     #[test]

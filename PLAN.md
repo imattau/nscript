@@ -122,6 +122,9 @@ performing relay, signer, storage, or other host effects.
   media URL/caption validation and source/runtime conformance coverage.
 - Added NIP-71 typed `VideoEvent` records and `publish_video`, with explicit
   media URL/caption validation and source/runtime conformance coverage.
+- Added NIP-77 Negentropy synchronization as a typed runtime primitive with
+  explicit relay/storage effects, secure relay validation, and deterministic
+  sync results.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

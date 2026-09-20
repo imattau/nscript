@@ -1,0 +1,11 @@
+// NIP-77 synchronization is a runtime-managed relay/storage capability.
+use nip77
+
+permissions {
+    sync
+}
+
+let result = nip77.synchronize(SyncRequest {
+    relay: "wss://relay.example";
+    cursor: "local-cursor-1";
+})
