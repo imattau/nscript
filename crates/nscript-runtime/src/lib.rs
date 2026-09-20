@@ -51,6 +51,39 @@ pub enum RuntimeError {
     StoreConflict,
     Cancelled,
     ResourceLimit { resource: String },
+    OperationUnavailable { module: String, operation: String },
+    InvalidOperationArguments { operation: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrivateMessage {
+    pub content: String,
+    pub recipient: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OperationValue {
+    Text(String),
+    PubKey(String),
+    EncryptedText(String),
+    GiftWrap(String),
+    PrivateMessage(PrivateMessage),
+    PublishReport(PublishReport),
+}
+
+pub trait OperationHost {
+    /// Invoke a declared NIP module operation with typed values.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability, operation availability, or argument validation error.
+    fn call(
+        &mut self,
+        invocation: InvocationId,
+        module: &str,
+        operation: &str,
+        arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError>;
 }
 
 pub trait RelayHost {
@@ -188,6 +221,30 @@ where
         Ok(reports)
     }
 
+    /// Invoke a module operation through an approved host capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's typed operation failure.
+    pub fn invoke_operation<H: OperationHost>(
+        &mut self,
+        host: &mut H,
+        module: &str,
+        operation: &str,
+        arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.call(invocation, module, operation, arguments);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: format!("{module}.{operation}"),
+            target: module.to_owned(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
+    }
+
     fn execute_publication(
         &mut self,
         invocation: InvocationId,
@@ -318,6 +375,110 @@ pub struct RecordingAudit {
     pub entries: Vec<AuditEntry>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct FakeOperationHost {
+    encrypted: BTreeMap<String, String>,
+    wrapped: BTreeMap<String, String>,
+    next_value: u64,
+}
+
+impl OperationHost for FakeOperationHost {
+    fn call(
+        &mut self,
+        _invocation: InvocationId,
+        module: &str,
+        operation: &str,
+        arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError> {
+        match (module, operation) {
+            ("nip44", "encrypt_text") => {
+                let [
+                    OperationValue::Text(text),
+                    OperationValue::PubKey(recipient),
+                ] = arguments
+                else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                self.next_value += 1;
+                let payload = format!("encrypted-{}", self.next_value);
+                self.encrypted
+                    .insert(payload.clone(), format!("{recipient}:{text}"));
+                Ok(OperationValue::EncryptedText(payload))
+            }
+            ("nip44", "decrypt_text") => {
+                let [
+                    OperationValue::EncryptedText(payload),
+                    OperationValue::PubKey(_sender),
+                ] = arguments
+                else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                let Some(value) = self.encrypted.get(payload) else {
+                    return Err(RuntimeError::OperationUnavailable {
+                        module: module.to_owned(),
+                        operation: operation.to_owned(),
+                    });
+                };
+                let (_, text) = value.split_once(':').unwrap_or(("", value));
+                Ok(OperationValue::Text(text.to_owned()))
+            }
+            ("nip59", "gift_wrap") => {
+                let [
+                    OperationValue::EncryptedText(payload),
+                    OperationValue::PubKey(recipient),
+                ] = arguments
+                else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                self.next_value += 1;
+                let wrapped = format!("gift-wrap-{}", self.next_value);
+                self.wrapped
+                    .insert(wrapped.clone(), format!("{recipient}:{payload}"));
+                Ok(OperationValue::GiftWrap(wrapped))
+            }
+            ("nip59", "open_gift_wrap") => {
+                let [OperationValue::GiftWrap(wrapped)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                let Some(value) = self.wrapped.get(wrapped) else {
+                    return Err(RuntimeError::OperationUnavailable {
+                        module: module.to_owned(),
+                        operation: operation.to_owned(),
+                    });
+                };
+                let (_, payload) = value.split_once(':').unwrap_or(("", value));
+                Ok(OperationValue::EncryptedText(payload.to_owned()))
+            }
+            ("nip17", "send_private") => {
+                let [OperationValue::PrivateMessage(_message)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://private".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
+            _ => Err(RuntimeError::OperationUnavailable {
+                module: module.to_owned(),
+                operation: operation.to_owned(),
+            }),
+        }
+    }
+}
+
 impl AuditHost for RecordingAudit {
     fn record(&mut self, entry: AuditEntry) {
         self.entries.push(entry);
@@ -411,5 +572,50 @@ mod tests {
             storage.values.get("seen").map(String::as_str),
             Some("event-1")
         );
+    }
+
+    #[test]
+    fn nip_operations_preserve_typed_boundaries() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let encrypted = runtime
+            .invoke_operation(
+                &mut host,
+                "nip44",
+                "encrypt_text",
+                &[
+                    OperationValue::Text("secret".to_owned()),
+                    OperationValue::PubKey("alice".to_owned()),
+                ],
+            )
+            .expect("encryption host available");
+        assert!(matches!(encrypted, OperationValue::EncryptedText(_)));
+        let wrapped = runtime
+            .invoke_operation(
+                &mut host,
+                "nip59",
+                "gift_wrap",
+                &[encrypted, OperationValue::PubKey("alice".to_owned())],
+            )
+            .expect("gift-wrap host available");
+        assert!(matches!(wrapped, OperationValue::GiftWrap(_)));
+        let message = runtime
+            .invoke_operation(
+                &mut host,
+                "nip17",
+                "send_private",
+                &[OperationValue::PrivateMessage(PrivateMessage {
+                    content: "hello".to_owned(),
+                    recipient: "alice".to_owned(),
+                })],
+            )
+            .expect("private-message host available");
+        assert!(matches!(message, OperationValue::PublishReport(report) if report.accepted()));
+        assert_eq!(runtime.audit.entries.len(), 3);
     }
 }
