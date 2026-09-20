@@ -1,0 +1,9 @@
+// error: E1201 invalid-event-declaration
+use nip01
+
+event BrokenSettings {
+    kind: 1
+    parameterised by identifier
+    identifier: Text
+    content: Text
+}

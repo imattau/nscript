@@ -1,0 +1,27 @@
+use nip01
+use nostrhost::status
+use nip46
+
+signer service = nip46()
+relayset admin = configured("admin")
+
+permissions {
+    read ServerStatus from admin
+    publish Alert to admin
+    sign Alert with service
+    relay admin
+    clock
+}
+
+every 1h {
+    let statuses = select ServerStatus since 1h from admin
+
+    for status in statuses? {
+        if status.disk > 90% {
+            publish Alert {
+                server: status.server,
+                message: "Disk space low",
+            } to admin with service
+        }
+    }
+}

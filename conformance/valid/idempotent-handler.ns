@@ -1,0 +1,17 @@
+use nip01
+
+store SeenEvents<Set<EventId>>
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    storage SeenEvents
+    log
+}
+
+on Note where tags.t contains "nostrhost" {
+    once(event.id) {
+        print(event.content)
+    }
+}

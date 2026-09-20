@@ -1,0 +1,26 @@
+use nip17
+use nip44
+use nip46
+
+signer account = nip46()
+relayset inboxes = nip65_inboxes()
+
+permissions {
+    read GiftWrap from inboxes
+    decrypt GiftWrap with account
+    encrypt PrivateMessage with account
+    publish GiftWrap to inboxes
+    sign GiftWrap with account
+    relay inboxes
+}
+
+on GiftWrap where addressed_to == me {
+    let message = decrypt(event, account)?
+
+    if message.content == "/status" {
+        send PrivateMessage {
+            to: message.author,
+            content: "NostrHost is online",
+        } with account
+    }
+}

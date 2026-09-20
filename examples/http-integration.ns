@@ -1,0 +1,20 @@
+use weather::api
+use app::weather_events
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    http "api.example.com"
+    publish WeatherUpdate to public
+    sign WeatherUpdate with account
+    relay public
+}
+
+let weather: Weather = fetch json from "https://api.example.com/weather"?
+
+publish WeatherUpdate {
+    summary: weather.summary,
+    temperature: weather.temperature,
+} to public with account

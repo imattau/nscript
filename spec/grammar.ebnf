@@ -1,0 +1,124 @@
+(* NScript draft grammar. UTF-8 input; identifiers are Unicode XID. *)
+
+program          = { use_decl | declaration | statement } ;
+
+use_decl         = "use", module_path, [ "@", version ], terminator ;
+module_path      = identifier, { "::", identifier } ;
+version          = string | integer, { ".", integer } ;
+
+declaration      = let_decl | fn_decl | event_decl | signer_decl
+                 | relay_decl | relayset_decl | store_decl
+                 | permissions_decl | stream_decl ;
+
+let_decl         = "let", identifier, [ ":", type ], "=", expression, terminator ;
+fn_decl          = "fn", identifier, "(", [ parameters ], ")",
+                   [ "->", type ], block ;
+parameters       = parameter, { ",", parameter } ;
+parameter        = identifier, ":", type ;
+
+event_decl       = "event", identifier, "{", { event_member }, "}" ;
+event_member     = "kind", ":", integer, terminator
+                 | identifier, ":", type, [ "=", expression ], terminator
+                 | "replaceable", terminator
+                 | "parameterised", "by", identifier, terminator
+                 | "ephemeral", terminator ;
+signer_decl      = "signer", identifier, "=", expression, terminator ;
+relay_decl       = "relay", identifier, "=", string, terminator ;
+relayset_decl    = "relayset", identifier, "=", expression, terminator ;
+stream_decl      = "stream", identifier, "=", select_expr, terminator ;
+
+store_decl       = "store", identifier, [ "<", type, [ ",", type ], ">" ],
+                   [ "{", "key", ":", type, terminator,
+                         "value", ":", type, terminator, "}" ] ;
+permissions_decl = "permissions", "{", { permission }, "}" ;
+permission       = "read", type, [ "from", identifier ], terminator
+                 | "publish", type, [ "to", identifier ], terminator
+                 | "sign", type, [ "with", identifier ], terminator
+                 | ( "encrypt" | "decrypt" ), type,
+                   [ "with", identifier ], terminator
+                 | "relay", identifier, terminator
+                 | "storage", identifier, terminator
+                 | "http", string, terminator
+                 | ( "clock" | "filesystem" | "payment" | "secret_key"
+                   | "raw_tags" | "log" ), terminator ;
+
+statement        = expression, terminator
+                 | send_stmt | return_stmt | for_stmt
+                 | if_stmt | on_stmt | once_stmt
+                 | every_stmt | at_stmt ;
+
+send_stmt        = "send", expression, [ "with", expression ], terminator ;
+return_stmt      = "return", [ expression ], terminator ;
+for_stmt         = "for", identifier, "in", expression, block ;
+if_stmt          = "if", expression, block, [ "else", ( block | if_stmt ) ] ;
+match_expr       = "match", expression, "{", { match_arm }, "}" ;
+match_arm        = pattern, [ "if", expression ], "=>", ( expression | block ),
+                   [ "," ] ;
+on_stmt          = "on", ( identifier | select_expr ), [ where_clause ], block ;
+once_stmt        = "once", "(", expression, ")", block ;
+every_stmt       = "every", duration, block ;
+at_stmt          = "at", string, block ;
+
+select_expr      = "select", type, [ where_clause ], { select_modifier } ;
+where_clause     = "where", expression ;
+select_modifier  = "since", expression | "until", expression
+                 | "limit", integer | "from", expression ;
+
+expression       = assignment ;
+assignment       = logic_or, [ "=", assignment ] ;
+logic_or         = logic_and, { "or", logic_and } ;
+logic_and        = equality, { "and", equality } ;
+equality         = comparison, { ( "==" | "!=" ), comparison } ;
+comparison       = additive, { ( "<" | "<=" | ">" | ">=" | "in" ), additive } ;
+additive         = multiplicative, { ( "+" | "-" ), multiplicative } ;
+multiplicative   = unary, { ( "*" | "/" | "%" ), unary } ;
+unary            = [ "not" | "-" | "?" ], postfix ;
+postfix          = primary, { call | member | index | propagate } ;
+call             = "(", [ arguments ], ")" ;
+arguments        = expression, { ",", expression } ;
+member           = ".", identifier ;
+index            = "[", expression, "]" ;
+propagate        = "?" ;
+
+primary          = literal | identifier | list | record | event_value
+                 | select_expr | sign_expr | publish_expr
+                 | fetch_expr | latest_expr | match_expr
+                 | "(", expression, ")" ;
+sign_expr        = "sign", expression, "with", expression ;
+publish_expr     = "publish", expression, [ "to", expression ],
+                   [ "with", expression ] ;
+fetch_expr       = "fetch", ( "text" | "bytes" | "json" ), "from", expression ;
+latest_expr      = "latest", type, "(", [ arguments ], ")",
+                   [ "from", expression ] ;
+list             = "[", [ arguments ], "]" ;
+record           = "{", [ fields ], "}" ;
+event_value      = identifier, "{", [ fields ], "}" ;
+fields           = field, { ",", field }, [ "," ] ;
+field            = identifier, ":", expression ;
+
+pattern          = "_" | literal | identifier
+                 | identifier, "(", [ pattern, { ",", pattern } ], ")"
+                 | identifier, "{", [ pattern_fields ], "}" ;
+pattern_fields   = pattern_field, { ",", pattern_field }, [ "," ] ;
+pattern_field    = identifier, [ ":", pattern ] ;
+
+type             = identifier, [ "<", type, { ",", type }, ">" ]
+                 | "[", type, "]" | "(", [ type, { ",", type } ], ")" ;
+block            = "{", { declaration | statement }, "}" ;
+
+literal          = string | integer | decimal | duration | percentage
+                 | "true" | "false" | "none" ;
+duration         = integer, ( "ms" | "s" | "m" | "h" | "d" | "w" ) ;
+percentage       = integer, "%" ;
+terminator       = ";" | line_end ;
+
+identifier       = XID_START, { XID_CONTINUE } ;
+integer          = DIGIT, { DIGIT | "_" } ;
+decimal          = integer, ".", integer ;
+string           = '"', { string_character | escape }, '"' ;
+line_end         = NEWLINE ;
+
+(* The lexer suppresses NEWLINE inside (), [], and record literals. It also
+   suppresses NEWLINE after an incomplete construct and before query modifiers
+   such as where, since, until, limit, and from. Comments begin with // and end
+   at NEWLINE. Whitespace and comments are otherwise discarded. *)

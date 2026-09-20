@@ -1,0 +1,17 @@
+use nip01
+
+event AppSettings {
+    kind: 30078
+    parameterised by identifier
+    identifier: Text
+    content: Text
+}
+
+relayset public = configured
+
+permissions {
+    read AppSettings from public
+    relay public
+}
+
+let settings = latest AppSettings("nostrhost") from public

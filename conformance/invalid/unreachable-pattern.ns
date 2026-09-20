@@ -1,0 +1,8 @@
+// error: E1302 unreachable-pattern
+
+fn value(option: Option<Int>) -> Int {
+    return match option {
+        _ => 0,
+        Some(number) => number,
+    }
+}

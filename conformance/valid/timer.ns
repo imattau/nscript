@@ -1,0 +1,8 @@
+permissions {
+    clock
+    log
+}
+
+every 1h {
+    print("tick")
+}

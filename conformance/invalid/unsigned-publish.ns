@@ -1,0 +1,12 @@
+// error: E2201 unsigned-publication
+use nip01
+
+relayset public = configured
+
+permissions {
+    publish Note to public
+    relay public
+}
+
+let note = Note { content: "not signed" }
+publish note to public

@@ -1,0 +1,17 @@
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+stream mentions = select Note
+    where tags.p contains me
+    from public
+
+on mentions {
+    print(event.content)
+}

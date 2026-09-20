@@ -1,0 +1,15 @@
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Note to public
+    sign Note with account
+    relay public
+}
+
+publish Note {
+    content: "Hello, Nostr"
+} to public with account

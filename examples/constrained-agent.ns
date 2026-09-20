@@ -1,0 +1,18 @@
+use nostrhost::control
+use nip46
+
+signer agent = nip46()
+relayset control = configured("control")
+
+permissions {
+    read ServerStatus from control
+    publish PackageRequest to control
+    sign PackageRequest with agent
+    relay control
+}
+
+fn request_package(name: Text) -> Result<PublishReport, RelayError> {
+    return publish PackageRequest {
+        package: name,
+    } to control with agent
+}

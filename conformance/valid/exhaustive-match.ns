@@ -1,0 +1,6 @@
+fn value(result: Result<Int, Text>) -> Int {
+    return match result {
+        Ok(number) => number,
+        Err(_) => 0,
+    }
+}

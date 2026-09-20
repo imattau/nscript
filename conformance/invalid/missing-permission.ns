@@ -1,0 +1,6 @@
+// error: E3001 missing-permission
+use nip01
+
+relayset public = configured
+
+let notes = select Note since 1h from public

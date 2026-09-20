@@ -1,0 +1,22 @@
+use nip01
+use community::moderation
+use nip46
+
+signer service = nip46()
+relayset public = configured
+
+permissions {
+    read Note from public
+    publish ModerationEvent to public
+    sign ModerationEvent with service
+    relay public
+}
+
+on Note where tags.t contains "nostrhost" {
+    if content.looks_like_spam() {
+        publish ModerationEvent {
+            target: event.id,
+            reason: "spam",
+        } to public with service
+    }
+}

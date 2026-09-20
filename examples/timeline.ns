@@ -1,0 +1,19 @@
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+let timeline = select Note
+    where author in follows(me)
+    since 24h
+    limit 100
+    from public
+
+for note in timeline? {
+    print(note.content)
+}

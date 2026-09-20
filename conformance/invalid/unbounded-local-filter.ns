@@ -1,0 +1,13 @@
+// error: E2401 unbounded-local-filter
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+}
+
+let notes = select Note
+    where content.words().count() > 20
+    from public

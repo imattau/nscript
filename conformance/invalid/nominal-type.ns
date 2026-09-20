@@ -1,0 +1,6 @@
+// error: E1001 nominal-type-mismatch
+use nip01
+
+fn author(id: EventId) -> PubKey {
+    return id
+}
