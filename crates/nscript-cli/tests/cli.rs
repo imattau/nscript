@@ -203,6 +203,20 @@ fn compiles_wasm_artifact_with_magic_header() {
         .unwrap();
     assert!(output.status.success());
     assert_eq!(&output.stdout[..8], b"\0asm\x01\0\0\0");
+    for marker in [
+        "nscript.dispatch",
+        "create_event",
+        "sign_event",
+        "publish_event",
+    ] {
+        assert!(
+            output
+                .stdout
+                .windows(marker.len())
+                .any(|window| window == marker.as_bytes()),
+            "missing WASM marker {marker}"
+        );
+    }
 }
 
 #[test]

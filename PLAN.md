@@ -351,6 +351,8 @@ tracked host execution boundary for those decoded records.
 `execute_wasm_publications` maps the create/sign/publish operation sequence to
 the existing relay and signer hosts, preserving result handles and typed event
 boundaries.
+The CLI conformance suite now compiles a real `hello-note.ns` source artifact
+and verifies the embedded dispatch markers for create, sign, and publish.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
