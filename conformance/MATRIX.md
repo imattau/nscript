@@ -19,7 +19,7 @@ against deterministic host fakes.
 | Store transactions | `idempotent-handler.ns` | `dispatch_event_transactional` runtime test | Transaction rollback |
 | NIP-19 round trips | `nip19.ns` | Planned | `vectors/nip19.json` |
 | NIP-46 validation | `hello-note.ns` | Dedicated signer-provision host test | Signer denial |
-| Typed tags | `mentions.ns` | Planned | Serialization planned |
+| Typed tags | `mentions.ns` | Runtime wire-tags test | Serialization |
 | Replaceable events | `replaceable.ns` | `invalid-event-mode.ns` | Tie-break vector planned |
 | Timers | `timer.ns` | Planned | Timer overlap |
 | HTTP origin policy | Example only | Planned | Redirect denial |

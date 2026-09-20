@@ -275,6 +275,8 @@ Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
 Signed-event values now carry typed `(tag, value)` pairs, allowing lowered tag
 predicates to participate in local dispatch matching.
+`UnsignedEvent::wire_tags` provides deterministic lowering back to ordinary
+Nostr tag arrays for protocol serialization.
 Subscription dispatch also enforces `since` timestamps locally before a
 handler body is invoked.
 `Runtime::dispatch_event` now claims a matching event atomically and invokes a

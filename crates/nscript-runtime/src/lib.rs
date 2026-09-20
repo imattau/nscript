@@ -18,6 +18,17 @@ pub struct UnsignedEvent {
     pub created_at: u64,
 }
 
+impl UnsignedEvent {
+    /// Serialize typed two-column tags into ordinary Nostr tag arrays.
+    #[must_use]
+    pub fn wire_tags(&self) -> Vec<Vec<String>> {
+        self.tags
+            .iter()
+            .map(|(name, value)| vec![name.clone(), value.clone()])
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignedEvent {
     pub unsigned: UnsignedEvent,
@@ -3318,6 +3329,10 @@ mod tests {
             FakeClock,
             RecordingAudit,
         >::matches_subscription(&request, &event));
+        assert_eq!(
+            event.unsigned.wire_tags(),
+            vec![vec!["p".to_owned(), "alice".to_owned()]]
+        );
         let mut wrong_author = event.clone();
         wrong_author.signer = "bob".to_owned();
         assert!(!Runtime::<
