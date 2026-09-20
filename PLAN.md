@@ -270,6 +270,8 @@ The `--json` variant provides the same dry-run manifest for CI and agent
 review tooling.
 Normal `run` now registers checked timers through the same runtime scheduler
 and reports their assigned handles before executing operations/publications.
+It also lowers checked handlers into and reports typed subscriptions before
+executing external operations.
 Inspect output also lists checked handler event types and lowered author/tag
 predicates for pre-execution review.
 The first handler-execution slice now records checked `on` handlers and lowers

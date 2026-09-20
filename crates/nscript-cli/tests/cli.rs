@@ -85,6 +85,17 @@ fn run_registers_checked_timers() {
 }
 
 #[test]
+fn run_reports_checked_handler_subscriptions() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("conformance/valid/idempotent-handler.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("subscription Note"));
+}
+
+#[test]
 fn reports_missing_module() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("check")
