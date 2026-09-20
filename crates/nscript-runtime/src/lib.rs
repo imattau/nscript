@@ -155,6 +155,12 @@ pub struct ImageEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VideoEvent {
+    pub url: String,
+    pub caption: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -251,6 +257,7 @@ pub enum OperationValue {
     Report(Report),
     Badge(Badge),
     ImageEvent(ImageEvent),
+    VideoEvent(VideoEvent),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1239,6 +1246,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip71", "publish_video") => {
+                let [OperationValue::VideoEvent(event)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if event.url.is_empty() || event.caption.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://videos".to_owned(),
+                        accepted: true,
+                        detail: "video event lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1503,6 +1529,10 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         },
         "ImageEvent" => match (text("url"), text("caption")) {
             (Some(url), Some(caption)) => OperationValue::ImageEvent(ImageEvent { url, caption }),
+            _ => value.clone(),
+        },
+        "VideoEvent" => match (text("url"), text("caption")) {
+            (Some(url), Some(caption)) => OperationValue::VideoEvent(VideoEvent { url, caption }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2371,6 +2401,39 @@ mod tests {
                 }],
             )
             .expect("image host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip71_lowers_video_events() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip71", "publish_video"),
+                &mut host,
+                "nip71",
+                "publish_video",
+                &[OperationValue::Record {
+                    name: "VideoEvent".to_owned(),
+                    fields: vec![
+                        (
+                            "url".to_owned(),
+                            OperationValue::Text("https://cdn.example/video.mp4".to_owned()),
+                        ),
+                        (
+                            "caption".to_owned(),
+                            OperationValue::Text("A Nostr video".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("video host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

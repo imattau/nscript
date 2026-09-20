@@ -120,6 +120,8 @@ performing relay, signer, storage, or other host effects.
   credential identifiers and descriptive metadata.
 - Added NIP-68 typed `ImageEvent` records and `publish_image`, with explicit
   media URL/caption validation and source/runtime conformance coverage.
+- Added NIP-71 typed `VideoEvent` records and `publish_video`, with explicit
+  media URL/caption validation and source/runtime conformance coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

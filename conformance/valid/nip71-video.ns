@@ -1,0 +1,11 @@
+// NIP-71 video events provide a typed media boundary.
+use nip71
+
+permissions {
+    video
+}
+
+let result = nip71.publish_video(VideoEvent {
+    url: "https://cdn.example/video.mp4";
+    caption: "A Nostr video";
+})

@@ -155,6 +155,10 @@ NIP-68 image events use typed `ImageEvent` records. `nip68.publish_image`
 validates media URL and caption fields before publication through an explicit
 signing/relay capability.
 
+NIP-71 video events use typed `VideoEvent` records. `nip71.publish_video`
+validates media URL and caption fields before publication through an explicit
+signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.
