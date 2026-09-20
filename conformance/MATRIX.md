@@ -18,7 +18,7 @@ against deterministic host fakes.
 | At-least-once handlers | `idempotent-handler.ns` | `dispatch_event` runtime test | Duplicate delivery |
 | Store transactions | `idempotent-handler.ns` | `dispatch_event_transactional` runtime test | Transaction rollback |
 | NIP-19 round trips | `nip19.ns` | Planned | `vectors/nip19.json` |
-| NIP-46 validation | `hello-note.ns` | Planned | Signer denial |
+| NIP-46 validation | `hello-note.ns` | Dedicated signer-provision host test | Signer denial |
 | Typed tags | `mentions.ns` | Planned | Serialization planned |
 | Replaceable events | `replaceable.ns` | `invalid-event-mode.ns` | Tie-break vector planned |
 | Timers | `timer.ns` | Planned | Timer overlap |
