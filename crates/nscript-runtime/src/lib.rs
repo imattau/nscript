@@ -1052,9 +1052,9 @@ where
                 event_type: handler.event_type.clone(),
                 relayset: relayset.map(str::to_owned),
                 kinds: Vec::new(),
-                tag_equals: Vec::new(),
+                tag_equals: handler.tag_equals.clone(),
                 cursor: None,
-                author: None,
+                author: handler.author.clone(),
                 since: None,
                 limit: None,
             })
@@ -3106,6 +3106,10 @@ mod tests {
         assert_eq!(subscriptions.len(), 1);
         assert_eq!(subscriptions[0].event_type, "Note");
         assert_eq!(subscriptions[0].relayset.as_deref(), Some("public"));
+        assert_eq!(
+            subscriptions[0].tag_equals,
+            vec![("t".to_owned(), "nostrhost".to_owned())]
+        );
     }
 
     #[test]

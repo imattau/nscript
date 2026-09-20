@@ -64,6 +64,8 @@ pub struct CheckedSchedule {
 pub struct CheckedHandler {
     pub event_type: String,
     pub has_predicate: bool,
+    pub author: Option<String>,
+    pub tag_equals: Vec<(String, String)>,
     pub body_items: usize,
     pub span: Span,
 }
@@ -630,6 +632,29 @@ fn handler_event_type(expression: &Expr) -> Option<String> {
     }
 }
 
+fn handler_predicate_filters(expression: Option<&Expr>) -> (Option<String>, Vec<(String, String)>) {
+    let Some(expression) = expression else {
+        return (None, Vec::new());
+    };
+    let ExprKind::Binary {
+        operator,
+        left,
+        right,
+    } = &expression.value
+    else {
+        return (None, Vec::new());
+    };
+    match (operator.as_str(), &left.value, &right.value) {
+        ("==", ExprKind::Identifier(name), ExprKind::Identifier(value)) if name == "author" => {
+            (Some(value.clone()), Vec::new())
+        }
+        ("contains", ExprKind::Member { value, name }, ExprKind::Text(text)) if matches!(&value.value, ExprKind::Identifier(base) if base == "tags") => {
+            (None, vec![(name.value.clone(), text.clone())])
+        }
+        _ => (None, Vec::new()),
+    }
+}
+
 #[must_use]
 pub fn check(program: &Program) -> (Option<CheckedProgram>, Vec<Diagnostic>) {
     let mut checker = Checker::new(program);
@@ -805,6 +830,7 @@ impl<'a> Checker<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn check_statement(
         &mut self,
         statement: &StatementKind,
@@ -839,9 +865,12 @@ impl<'a> Checker<'a> {
                     self.check_expr(predicate, locals);
                 }
                 if let Some(event_type) = handler_event_type(source) {
+                    let (author, tag_equals) = handler_predicate_filters(predicate.as_ref());
                     self.handlers.push(CheckedHandler {
                         event_type,
                         has_predicate: predicate.is_some(),
+                        author,
+                        tag_equals,
                         body_items: body.len(),
                         span,
                     });
