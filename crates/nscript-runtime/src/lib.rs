@@ -142,6 +142,12 @@ pub struct SubscriptionBatch {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LogRecord {
+    pub level: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScheduleRequest {
     pub name: String,
     pub next_at: u64,
@@ -552,6 +558,15 @@ pub trait SubscriptionHost {
     ) -> Result<SubscriptionBatch, RuntimeError>;
 }
 
+pub trait LogHost {
+    /// Emit a bounded structured log record.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability or resource-limit error when logging is denied.
+    fn log(&mut self, invocation: InvocationId, record: &LogRecord) -> Result<(), RuntimeError>;
+}
+
 pub trait HttpHost {
     /// Execute an authenticated HTTP request through an allowlisted host.
     ///
@@ -916,6 +931,28 @@ where
     /// Set the maximum number of events accepted from one subscription batch.
     pub fn set_max_subscription_batch(&mut self, limit: usize) {
         self.max_subscription_batch = limit;
+    }
+
+    /// Emit a structured log record through the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's logging failure.
+    pub fn log<H: LogHost>(
+        &mut self,
+        host: &mut H,
+        record: &LogRecord,
+    ) -> Result<(), RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.log(invocation, record);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "log".to_owned(),
+            target: record.level.clone(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
     }
 
     /// Execute an authenticated request through a dedicated HTTP adapter.
@@ -1454,6 +1491,26 @@ impl TimerHost for FakeTimerHost {
         self.schedules.push(request.clone());
         self.next_id += 1;
         Ok(TimerHandle { id: self.next_id })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FakeLogHost {
+    pub records: Vec<LogRecord>,
+    pub max_message_bytes: usize,
+}
+
+impl LogHost for FakeLogHost {
+    fn log(&mut self, _invocation: InvocationId, record: &LogRecord) -> Result<(), RuntimeError> {
+        if record.level.is_empty()
+            || (self.max_message_bytes > 0 && record.message.len() > self.max_message_bytes)
+        {
+            return Err(RuntimeError::ResourceLimit {
+                resource: "log_message".to_owned(),
+            });
+        }
+        self.records.push(record.clone());
+        Ok(())
     }
 }
 
@@ -2940,6 +2997,42 @@ mod tests {
             .expect("claim batch");
         assert_eq!(batch.events.len(), 1);
         assert!(storage.claimed.contains("event-claim"));
+    }
+
+    #[test]
+    fn logging_is_bounded_and_audited() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut logs = FakeLogHost {
+            max_message_bytes: 8,
+            ..Default::default()
+        };
+        runtime
+            .log(
+                &mut logs,
+                &LogRecord {
+                    level: "info".to_owned(),
+                    message: "ready".to_owned(),
+                },
+            )
+            .expect("short log is accepted");
+        assert_eq!(logs.records.len(), 1);
+        assert!(matches!(
+            runtime.log(
+                &mut logs,
+                &LogRecord {
+                    level: "info".to_owned(),
+                    message: "too long!".to_owned(),
+                },
+            ),
+            Err(RuntimeError::ResourceLimit { resource }) if resource == "log_message"
+        ));
+        assert_eq!(runtime.audit.entries[0].operation, "log");
+        assert_eq!(runtime.audit.entries[1].result, "error");
     }
 
     #[test]

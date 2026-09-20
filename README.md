@@ -237,6 +237,8 @@ bound relay-driven memory and handler work.
 duplicate-safe stream handlers.
 Subscription requests and batches carry opaque typed cursors so hosts can
 resume relay streams after reconnects without exposing transport details.
+Structured output goes through the bounded `LogHost`/`Runtime::log` boundary,
+with oversized messages rejected and outcomes audited.
 
 ## Repository map
 

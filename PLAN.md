@@ -179,6 +179,8 @@ performing relay, signer, storage, or other host effects.
   idempotency claims before event handler delivery.
 - Added typed subscription cursors on requests and batches for resumable relay
   streams after reconnects.
+- Added bounded structured logging through `LogHost` and audited
+  `Runtime::log`, keeping console output capability-scoped.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 
