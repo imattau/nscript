@@ -55,6 +55,8 @@ performing relay, signer, storage, or other host effects.
   checked for ambiguity, argument arity, and declared operation permissions.
 - Carried checked module calls into `CheckedProgram` and added runtime execution
   through the authorized operation host boundary.
+- Wired `nscript run` to execute checked module calls and added a NIP-44 source
+  conformance fixture proving the CLI path.
 
 ## Deferred
 

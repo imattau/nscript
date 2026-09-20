@@ -34,6 +34,7 @@ against deterministic fake hosts without contacting real relays or keys:
 ```bash
 cargo run -p nscript-cli -- check conformance/valid/default-publish.ns
 cargo run -p nscript-cli -- run conformance/valid/hello-note.ns
+cargo run -p nscript-cli -- run conformance/valid/nip44-call.ns
 cargo run -p nscript-cli -- compile --emit ir conformance/valid/hello-note.ns
 cargo run -p nscript-cli -- module check conformance/modules/valid/nip10.nsm
 cargo run -p nscript-cli -- module hash conformance/modules/valid/nip10.nsm

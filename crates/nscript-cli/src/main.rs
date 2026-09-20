@@ -144,7 +144,24 @@ fn run_program(arguments: &[String]) -> ExitCode {
     let clock = nscript_runtime::FakeClock { now: 1_700_000_000 };
     let audit = nscript_runtime::RecordingAudit::default();
     let mut runtime = nscript_runtime::Runtime::new(relay, signer, clock, audit);
-    let reports = match runtime.run(&program, &checked.expect("checked program")) {
+    let checked = checked.expect("checked program");
+    let operation_policy = checked.operation_calls.iter().fold(
+        nscript_runtime::OperationPolicy::default(),
+        |policy, call| policy.allow(&call.module, &call.operation),
+    );
+    let mut operation_host = nscript_runtime::FakeOperationHost::default();
+    let operation_values =
+        match runtime.run_operations(&checked, &operation_policy, &mut operation_host) {
+            Ok(values) => values,
+            Err(error) => {
+                eprintln!("error[R1002]: {error:?}");
+                return ExitCode::from(1);
+            }
+        };
+    for (index, value) in operation_values.iter().enumerate() {
+        println!("operation {index}: {value:?}");
+    }
+    let reports = match runtime.run(&program, &checked) {
         Ok(reports) => reports,
         Err(error) => {
             eprintln!("error[R1001]: {error:?}");

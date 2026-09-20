@@ -1,0 +1,8 @@
+// A source-level module operation is checked and executable through the host boundary.
+use nip44
+
+permissions {
+    encrypt Text
+}
+
+let encrypted = nip44.encrypt_text("hello", alice)
