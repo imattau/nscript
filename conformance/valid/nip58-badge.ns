@@ -1,0 +1,12 @@
+// NIP-58 badges provide signed credentials and memberships.
+use nip58
+
+permissions {
+    badge
+}
+
+let result = nip58.publish_badge(Badge {
+    identifier: "contributor";
+    name: "Contributor";
+    description: "Participated in the project";
+})

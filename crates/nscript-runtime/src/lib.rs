@@ -142,6 +142,13 @@ pub struct Report {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Badge {
+    pub identifier: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -236,6 +243,7 @@ pub enum OperationValue {
     SearchResults(SearchResults),
     LiveEvent(LiveEvent),
     Report(Report),
+    Badge(Badge),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1183,6 +1191,28 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip58", "publish_badge") => {
+                let [OperationValue::Badge(badge)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if badge.identifier.is_empty()
+                    || badge.name.is_empty()
+                    || badge.description.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://badges".to_owned(),
+                        accepted: true,
+                        detail: "badge definition lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1434,6 +1464,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                 target,
                 category,
                 content,
+            }),
+            _ => value.clone(),
+        },
+        "Badge" => match (text("identifier"), text("name"), text("description")) {
+            (Some(identifier), Some(name), Some(description)) => OperationValue::Badge(Badge {
+                identifier,
+                name,
+                description,
             }),
             _ => value.clone(),
         },
@@ -2233,6 +2271,43 @@ mod tests {
                 }],
             )
             .expect("report host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip58_lowers_badge_definitions() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip58", "publish_badge"),
+                &mut host,
+                "nip58",
+                "publish_badge",
+                &[OperationValue::Record {
+                    name: "Badge".to_owned(),
+                    fields: vec![
+                        (
+                            "identifier".to_owned(),
+                            OperationValue::Text("contributor".to_owned()),
+                        ),
+                        (
+                            "name".to_owned(),
+                            OperationValue::Text("Contributor".to_owned()),
+                        ),
+                        (
+                            "description".to_owned(),
+                            OperationValue::Text("Participated in the project".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("badge host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

@@ -116,6 +116,8 @@ performing relay, signer, storage, or other host effects.
   addressable event validation and source/runtime conformance coverage.
 - Added NIP-56 typed `Report` records and `publish_report`, with explicit
   moderation categories, rationale, and target validation.
+- Added NIP-58 typed `Badge` records and `publish_badge`, with validated
+  credential identifiers and descriptive metadata.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

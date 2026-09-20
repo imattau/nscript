@@ -147,6 +147,10 @@ NIP-56 reports use typed `Report` records with explicit target, category, and
 rationale fields. `nip56.publish_report` validates moderation signals before
 publication through an explicit signing/relay capability.
 
+NIP-58 badges use typed `Badge` records for credentials and memberships.
+`nip58.publish_badge` validates the identifier and descriptive metadata before
+publication through an explicit signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.
