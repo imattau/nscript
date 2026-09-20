@@ -9,6 +9,7 @@ fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
     match arguments.as_slice() {
         [command, rest @ ..] if command == "check" => check_program(rest),
+        [command, rest @ ..] if command == "run" => run_program(rest),
         [command, emit, format, rest @ ..]
             if command == "compile" && emit == "--emit" && format == "ir" =>
         {
@@ -25,7 +26,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript run [-M <directory>]... <file>\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -120,6 +121,47 @@ fn compile_program(arguments: &[String]) -> ExitCode {
         "{}",
         serde_json::to_string_pretty(&ir).expect("IR contains only serializable values")
     );
+    ExitCode::SUCCESS
+}
+
+fn run_program(arguments: &[String]) -> ExitCode {
+    let Ok((path, program, graph, mut diagnostics)) = load_program(arguments) else {
+        return ExitCode::from(2);
+    };
+    diagnostics.extend(analyze_with_modules(&program, &graph));
+    if !diagnostics.is_empty() {
+        return finish(&path, diagnostics);
+    }
+    let (checked, typed_diagnostics) = check(&program);
+    if !typed_diagnostics.is_empty() {
+        return finish(&path, typed_diagnostics);
+    }
+    let relay = nscript_runtime::FakeRelayHost {
+        relays: [("fake://public".to_owned(), true)].into_iter().collect(),
+        published: Vec::new(),
+    };
+    let signer = nscript_runtime::FakeSignerHost::default();
+    let clock = nscript_runtime::FakeClock { now: 1_700_000_000 };
+    let audit = nscript_runtime::RecordingAudit::default();
+    let mut runtime = nscript_runtime::Runtime::new(relay, signer, clock, audit);
+    let reports = match runtime.run(&program, &checked.expect("checked program")) {
+        Ok(reports) => reports,
+        Err(error) => {
+            eprintln!("error[R1001]: {error:?}");
+            return ExitCode::from(1);
+        }
+    };
+    for (index, report) in reports.iter().enumerate() {
+        let accepted = report
+            .outcomes
+            .iter()
+            .filter(|outcome| outcome.accepted)
+            .count();
+        println!(
+            "publication {index}: {accepted}/{} relays accepted",
+            report.outcomes.len()
+        );
+    }
     ExitCode::SUCCESS
 }
 

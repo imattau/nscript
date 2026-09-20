@@ -5,6 +5,7 @@ members = [
     "crates/nscript-modules",
     "crates/nscript-semantics",
     "crates/nscript-syntax",
+    "crates/nscript-runtime",
 ]
 resolver = "3"
 

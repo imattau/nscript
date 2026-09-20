@@ -80,6 +80,7 @@ version = "0.1.0"
 dependencies = [
  "nscript-ir",
  "nscript-modules",
+ "nscript-runtime",
  "nscript-semantics",
  "nscript-syntax",
  "semver",
@@ -103,6 +104,14 @@ dependencies = [
  "nscript-syntax",
  "semver",
  "sha2",
+]
+
+[[package]]
+name = "nscript-runtime"
+version = "0.1.0"
+dependencies = [
+ "nscript-semantics",
+ "nscript-syntax",
 ]
 
 [[package]]

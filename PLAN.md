@@ -39,7 +39,16 @@ performing relay, signer, storage, or other host effects.
 - Module, resolver, parser, type, effect, permission, redaction, specification,
   Clippy, and workspace tests pass locally and in GitHub Actions.
 
+## Completed in this phase
+
+- Added the `nscript-runtime` crate with typed relay, signer, clock, audit, and
+  storage host contracts.
+- Added deterministic fake relay/signer/clock/audit/storage hosts and runtime
+  tests for signer denial, partial publication, audit ordering, and rollback.
+- Added `nscript run <file>` for checked publication execution against fake hosts.
+
 ## Deferred
 
-Live relays, cryptographic signing, host fakes, runtime execution, WASM, package
-distribution, and a stable IR interchange format remain later phases.
+Full handler/stream evaluation, live relays, cryptographic signing, NIP-46,
+WASM, package distribution, and a stable IR interchange format remain later
+phases.
