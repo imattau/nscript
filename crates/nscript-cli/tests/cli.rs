@@ -62,6 +62,18 @@ fn dry_run_reports_plan_without_external_effects() {
 }
 
 #[test]
+fn dry_run_json_is_machine_readable() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["run", "--dry-run", "--json"])
+        .arg(repository_path("conformance/valid/idempotent-handler.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["handlers"][0]["event"], "Note");
+}
+
+#[test]
 fn reports_missing_module() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("check")

@@ -189,13 +189,16 @@ fn compile_program(arguments: &[String]) -> ExitCode {
 
 fn run_program(arguments: &[String]) -> ExitCode {
     if arguments.iter().any(|argument| argument == "--dry-run") {
+        let json = arguments.iter().any(|argument| argument == "--json");
         let filtered = arguments
             .iter()
-            .filter(|argument| argument.as_str() != "--dry-run")
+            .filter(|argument| argument.as_str() != "--dry-run" && argument.as_str() != "--json")
             .cloned()
             .collect::<Vec<_>>();
-        println!("dry-run: no external effects will be executed");
-        return inspect_program(&filtered, false);
+        if !json {
+            println!("dry-run: no external effects will be executed");
+        }
+        return inspect_program(&filtered, json);
     }
     let Ok((path, program, graph, mut diagnostics)) = load_program(arguments) else {
         return ExitCode::from(2);
