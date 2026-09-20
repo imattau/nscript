@@ -653,6 +653,77 @@ pub trait SignerProvisionHost {
     ) -> Result<SignerSession, RuntimeError>;
 }
 
+/// Transport boundary for a NIP-46 remote signer. Implementations own the
+/// relay/encryption details; the runtime only ever receives signed events.
+pub trait Nip46Transport {
+    /// Establishes a remote signing session.
+    ///
+    /// # Errors
+    ///
+    /// Returns a signer error when the remote provider rejects the session.
+    fn provision(&mut self, provider: &str) -> Result<SignerSession, RuntimeError>;
+    /// Requests a signature without exposing key material to the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns a signer error when the remote provider rejects the request.
+    fn sign(
+        &mut self,
+        session: &SignerSession,
+        event: UnsignedEvent,
+    ) -> Result<SignedEvent, RuntimeError>;
+}
+
+/// NIP-46 signer host that enforces bunker URI validation and session binding.
+pub struct Nip46SignerHost<T> {
+    pub transport: T,
+    sessions: BTreeMap<String, SignerSession>,
+}
+
+impl<T> Nip46SignerHost<T> {
+    #[must_use]
+    pub fn new(transport: T) -> Self {
+        Self {
+            transport,
+            sessions: BTreeMap::new(),
+        }
+    }
+}
+
+impl<T: Nip46Transport> SignerProvisionHost for Nip46SignerHost<T> {
+    fn provision(
+        &mut self,
+        _invocation: InvocationId,
+        provider: &str,
+    ) -> Result<SignerSession, RuntimeError> {
+        if !(provider.starts_with("bunker://") || provider.starts_with("nostrconnect://")) {
+            return Err(RuntimeError::SignerDenied {
+                signer: provider.to_owned(),
+            });
+        }
+        let session = self.transport.provision(provider)?;
+        self.sessions
+            .insert(session.provider.clone(), session.clone());
+        Ok(session)
+    }
+}
+
+impl<T: Nip46Transport> SignerHost for Nip46SignerHost<T> {
+    fn sign(
+        &mut self,
+        _invocation: InvocationId,
+        event: UnsignedEvent,
+        signer: &str,
+    ) -> Result<SignedEvent, RuntimeError> {
+        let Some(session) = self.sessions.get(signer).cloned() else {
+            return Err(RuntimeError::SignerDenied {
+                signer: signer.to_owned(),
+            });
+        };
+        self.transport.sign(&session, event)
+    }
+}
+
 pub trait ClockHost {
     fn now(&self) -> u64;
 }
@@ -3898,6 +3969,50 @@ mod tests {
         assert_eq!(
             select_replaceable_event([&tie_high, &tie_low]),
             Some(&tie_low)
+        );
+    }
+
+    #[test]
+    fn nip46_host_binds_signing_to_provisioned_session() {
+        #[derive(Default)]
+        struct Transport;
+        impl Nip46Transport for Transport {
+            fn provision(&mut self, provider: &str) -> Result<SignerSession, RuntimeError> {
+                Ok(SignerSession {
+                    provider: provider.to_owned(),
+                })
+            }
+            fn sign(
+                &mut self,
+                session: &SignerSession,
+                event: UnsignedEvent,
+            ) -> Result<SignedEvent, RuntimeError> {
+                Ok(SignedEvent {
+                    unsigned: event,
+                    signer: session.provider.clone(),
+                    id: "remote-id".to_owned(),
+                    signature: "remote-sig".to_owned(),
+                })
+            }
+        }
+        let mut host = Nip46SignerHost::new(Transport);
+        assert!(host.provision(1, "https://not-a-bunker").is_err());
+        let session = host
+            .provision(2, "bunker://remote")
+            .expect("provisions session");
+        let event = UnsignedEvent {
+            event_type: "Note".to_owned(),
+            kind: 1,
+            content: "hello".to_owned(),
+            tags: Vec::new(),
+            created_at: 1,
+        };
+        assert!(host.sign(3, event.clone(), "other").is_err());
+        assert_eq!(
+            host.sign(4, event, &session.provider)
+                .expect("signs remotely")
+                .signer,
+            "bunker://remote"
         );
     }
 
