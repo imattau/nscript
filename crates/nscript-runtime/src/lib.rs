@@ -234,6 +234,12 @@ pub struct AuthenticatedRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HttpResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignerSession {
     pub provider: String,
 }
@@ -474,6 +480,19 @@ pub trait RelaySessionHost {
     ) -> Result<AuthenticatedRelay, RuntimeError>;
 }
 
+pub trait HttpHost {
+    /// Execute an authenticated HTTP request through an allowlisted host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an HTTP policy, transport, or response error.
+    fn request(
+        &mut self,
+        invocation: InvocationId,
+        request: &AuthenticatedRequest,
+    ) -> Result<HttpResponse, RuntimeError>;
+}
+
 pub trait SignerHost {
     /// Sign an unsigned event using a named signer capability.
     ///
@@ -671,6 +690,28 @@ where
             invocation,
             operation: "authenticate_relay".to_owned(),
             target: relay.to_owned(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
+    }
+
+    /// Execute an authenticated request through a dedicated HTTP adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's HTTP execution failure.
+    pub fn execute_http<H: HttpHost>(
+        &mut self,
+        host: &mut H,
+        request: &AuthenticatedRequest,
+    ) -> Result<HttpResponse, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.request(invocation, request);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "http_request".to_owned(),
+            target: request.url.clone(),
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
         });
         result
@@ -887,6 +928,37 @@ impl RelaySessionHost for FakeRelayHost {
         }
         Ok(AuthenticatedRelay {
             relay: relay.to_owned(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FakeHttpHost {
+    pub allowlisted_hosts: BTreeSet<String>,
+    pub requests: Vec<AuthenticatedRequest>,
+}
+
+impl HttpHost for FakeHttpHost {
+    fn request(
+        &mut self,
+        _invocation: InvocationId,
+        request: &AuthenticatedRequest,
+    ) -> Result<HttpResponse, RuntimeError> {
+        let Some(host) = request.url.split('/').nth(2) else {
+            return Err(RuntimeError::OperationUnavailable {
+                module: "http".to_owned(),
+                operation: "request".to_owned(),
+            });
+        };
+        if !self.allowlisted_hosts.is_empty() && !self.allowlisted_hosts.contains(host) {
+            return Err(RuntimeError::CapabilityDenied {
+                capability: format!("http:{host}"),
+            });
+        }
+        self.requests.push(request.clone());
+        Ok(HttpResponse {
+            status: 200,
+            body: "fake response".to_owned(),
         })
     }
 }
@@ -3313,6 +3385,32 @@ mod tests {
             .expect("relay authentication should succeed");
         assert_eq!(session.relay, "wss://relay.example");
         assert_eq!(runtime.audit.entries[0].operation, "authenticate_relay");
+    }
+
+    #[test]
+    fn dedicated_http_host_enforces_allowlist_and_audits_requests() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut http = FakeHttpHost {
+            allowlisted_hosts: BTreeSet::from(["api.example".to_owned()]),
+            requests: Vec::new(),
+        };
+        let response = runtime
+            .execute_http(
+                &mut http,
+                &AuthenticatedRequest {
+                    url: "https://api.example/resource".to_owned(),
+                    method: "GET".to_owned(),
+                },
+            )
+            .expect("allowlisted request should succeed");
+        assert_eq!(response.status, 200);
+        assert_eq!(http.requests.len(), 1);
+        assert_eq!(runtime.audit.entries[0].operation, "http_request");
     }
 
     #[test]

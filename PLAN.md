@@ -149,6 +149,8 @@ performing relay, signer, storage, or other host effects.
   `Runtime::provision_signer` entry point for real remote-signer integrations.
 - Added a dedicated `RelaySessionHost` adapter and audited
   `Runtime::authenticate_relay` entry point for authenticated relay sessions.
+- Added an allowlisted `HttpHost` adapter and audited `Runtime::execute_http`
+  entry point for controlled NIP-98 web bridging.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

@@ -205,6 +205,8 @@ runtime entry point records provisioning in the audit stream.
 Authenticated relay hosts can similarly implement `RelaySessionHost`; its
 runtime entry point validates the session through the adapter and records the
 authentication attempt in the audit stream.
+NIP-98 requests can then run through an allowlisted `HttpHost` adapter via
+`Runtime::execute_http`, with the request recorded in the audit stream.
 
 ## Repository map
 
