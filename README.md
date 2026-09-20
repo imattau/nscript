@@ -72,6 +72,9 @@ NIP-02 follow lists use a typed `FollowList` value and an explicit
 NIP-25 reactions use a typed `Reaction` value with a nominal target `EventId`
 and the same explicit publication boundary.
 
+NIP-09 deletion is modeled as a typed `DeletionRequest`, preserving the fact
+that relays may accept or ignore the request.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

@@ -85,6 +85,12 @@ pub struct Reaction {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeletionRequest {
+    pub target: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
@@ -95,6 +101,7 @@ pub enum OperationValue {
     AppData(AppData),
     FollowList(FollowList),
     Reaction(Reaction),
+    DeletionRequest(DeletionRequest),
     PublishReport(PublishReport),
 }
 
@@ -827,6 +834,20 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip09", "request_deletion") => {
+                let [OperationValue::DeletionRequest(_request)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://deletion-requests".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: operation.to_owned(),
@@ -1185,6 +1206,30 @@ mod tests {
                 })],
             )
             .expect("reaction operation is authorized");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip09_publishes_deletion_requests_not_guarantees() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip09", "request_deletion"),
+                &mut host,
+                "nip09",
+                "request_deletion",
+                &[OperationValue::DeletionRequest(DeletionRequest {
+                    target: "22".repeat(32),
+                    reason: "posted by mistake".to_owned(),
+                })],
+            )
+            .expect("deletion request operation is authorized");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 }

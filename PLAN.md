@@ -71,6 +71,8 @@ performing relay, signer, storage, or other host effects.
   capability effects and deterministic runtime coverage.
 - Added typed NIP-25 `Reaction` publication referencing nominal `EventId`
   values with deterministic runtime coverage.
+- Added typed NIP-09 `DeletionRequest` publication, explicitly modeling
+  deletion as a relay request rather than a guaranteed erase.
 
 ## Deferred
 
