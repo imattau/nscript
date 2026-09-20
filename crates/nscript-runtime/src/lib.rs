@@ -1061,6 +1061,25 @@ where
             .collect()
     }
 
+    /// Check the locally available event fields against a typed subscription.
+    /// Tag predicates remain host-side filter responsibilities until event tags
+    /// are represented in the signed-event value.
+    #[must_use]
+    pub fn matches_subscription(request: &SubscriptionRequest, event: &SignedEvent) -> bool {
+        if request.event_type != event.unsigned.event_type {
+            return false;
+        }
+        if !request.kinds.is_empty() && !request.kinds.contains(&event.unsigned.kind) {
+            return false;
+        }
+        if let Some(author) = &request.author
+            && author != &event.signer
+        {
+            return false;
+        }
+        true
+    }
+
     /// Run a staged storage transaction and commit it only when the closure succeeds.
     ///
     /// # Errors
@@ -3110,6 +3129,45 @@ mod tests {
             subscriptions[0].tag_equals,
             vec![("t".to_owned(), "nostrhost".to_owned())]
         );
+    }
+
+    #[test]
+    fn subscription_matching_checks_event_type_kind_and_author() {
+        let request = SubscriptionRequest {
+            event_type: "Note".to_owned(),
+            relayset: None,
+            kinds: vec![1],
+            tag_equals: Vec::new(),
+            cursor: None,
+            author: Some("alice".to_owned()),
+            since: None,
+            limit: None,
+        };
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "hello".to_owned(),
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "event-1".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        assert!(Runtime::<
+            FakeRelayHost,
+            FakeSignerHost,
+            FakeClock,
+            RecordingAudit,
+        >::matches_subscription(&request, &event));
+        let mut wrong_author = event.clone();
+        wrong_author.signer = "bob".to_owned();
+        assert!(!Runtime::<
+            FakeRelayHost,
+            FakeSignerHost,
+            FakeClock,
+            RecordingAudit,
+        >::matches_subscription(&request, &wrong_author));
     }
 
     #[test]

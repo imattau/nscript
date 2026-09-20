@@ -267,6 +267,8 @@ publication count, and schedule count without executing external effects.
 The first handler-execution slice now records checked `on` handlers and lowers
 them into typed subscription requests; handler body interpretation remains the
 next step.
+Runtime dispatch now also performs deterministic type/kind/author matching on
+delivered signed events before body execution.
 
 ## Deferred
 
