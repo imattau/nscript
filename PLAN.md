@@ -49,6 +49,8 @@ performing relay, signer, storage, or other host effects.
 - Added declarative NIP-44, NIP-59, and NIP-17 modules with typed encrypted
   payloads, gift wraps, private messages, and explicit encryption/signing/relay
   effects; NIP-17 resolves its NIP-44 and NIP-59 dependency graph.
+- Added typed runtime operation dispatch with an explicit `OperationPolicy`, so
+  undeclared module operations are denied before reaching a host capability.
 
 ## Deferred
 

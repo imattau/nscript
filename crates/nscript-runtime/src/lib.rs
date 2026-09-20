@@ -86,6 +86,25 @@ pub trait OperationHost {
     ) -> Result<OperationValue, RuntimeError>;
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct OperationPolicy {
+    allowed: BTreeSet<(String, String)>,
+}
+
+impl OperationPolicy {
+    #[must_use]
+    pub fn allow(mut self, module: impl Into<String>, operation: impl Into<String>) -> Self {
+        self.allowed.insert((module.into(), operation.into()));
+        self
+    }
+
+    #[must_use]
+    pub fn permits(&self, module: &str, operation: &str) -> bool {
+        self.allowed
+            .contains(&(module.to_owned(), operation.to_owned()))
+    }
+}
+
 pub trait RelayHost {
     /// Publish a signed event through a named relay set.
     ///
@@ -243,6 +262,28 @@ where
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
         });
         result
+    }
+
+    /// Invoke a module operation after checking the program capability policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CapabilityDenied` when the operation was not approved, or the
+    /// typed host failure for an approved operation.
+    pub fn invoke_authorized_operation<H: OperationHost>(
+        &mut self,
+        policy: &OperationPolicy,
+        host: &mut H,
+        module: &str,
+        operation: &str,
+        arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError> {
+        if !policy.permits(module, operation) {
+            return Err(RuntimeError::CapabilityDenied {
+                capability: format!("{module}.{operation}"),
+            });
+        }
+        self.invoke_operation(host, module, operation, arguments)
     }
 
     fn execute_publication(
@@ -617,5 +658,27 @@ mod tests {
             .expect("private-message host available");
         assert!(matches!(message, OperationValue::PublishReport(report) if report.accepted()));
         assert_eq!(runtime.audit.entries.len(), 3);
+    }
+
+    #[test]
+    fn undeclared_operation_is_denied_before_host_call() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let policy = OperationPolicy::default().allow("nip44", "encrypt_text");
+        let error = runtime
+            .invoke_authorized_operation(&policy, &mut host, "nip44", "decrypt_text", &[])
+            .expect_err("undeclared decrypt must be denied");
+        assert_eq!(
+            error,
+            RuntimeError::CapabilityDenied {
+                capability: "nip44.decrypt_text".to_owned()
+            }
+        );
+        assert!(runtime.audit.entries.is_empty());
     }
 }
