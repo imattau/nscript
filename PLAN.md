@@ -273,6 +273,8 @@ them into typed subscription requests; handler body interpretation remains the
 next step.
 Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
+Signed-event values now carry typed `(tag, value)` pairs, allowing lowered tag
+predicates to participate in local dispatch matching.
 `Runtime::dispatch_event` now claims a matching event atomically and invokes a
 host-controlled body callback exactly once, auditing handler success/failure.
 `Runtime::dispatch_event_transactional` composes that boundary with staged

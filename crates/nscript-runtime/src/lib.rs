@@ -14,6 +14,7 @@ pub struct UnsignedEvent {
     pub event_type: String,
     pub kind: u16,
     pub content: String,
+    pub tags: Vec<(String, String)>,
     pub created_at: u64,
 }
 
@@ -1079,6 +1080,15 @@ where
         {
             return false;
         }
+        if request.tag_equals.iter().any(|(name, value)| {
+            !event
+                .unsigned
+                .tags
+                .iter()
+                .any(|tag| tag == &(name.clone(), value.clone()))
+        }) {
+            return false;
+        }
         true
     }
 
@@ -1377,6 +1387,7 @@ where
                 _ => 0,
             },
             content: publication.content.clone().unwrap_or_default(),
+            tags: Vec::new(),
             created_at: self.clock.now(),
         };
         self.audit.record(AuditEntry {
@@ -3078,6 +3089,7 @@ mod tests {
                 event_type: "Note".to_owned(),
                 kind: 1,
                 content: "hello".to_owned(),
+                tags: Vec::new(),
                 created_at: 100,
             },
             signer: "alice".to_owned(),
@@ -3132,6 +3144,7 @@ mod tests {
                     event_type: "Note".to_owned(),
                     kind: 1,
                     content: "limited".to_owned(),
+                    tags: Vec::new(),
                     created_at: 101,
                 },
                 signer: "alice".to_owned(),
@@ -3172,6 +3185,7 @@ mod tests {
                     event_type: "Note".to_owned(),
                     kind: 1,
                     content: "hello".to_owned(),
+                    tags: Vec::new(),
                     created_at: 100,
                 },
                 signer: "alice".to_owned(),
@@ -3286,6 +3300,7 @@ mod tests {
                 event_type: "Note".to_owned(),
                 kind: 1,
                 content: "hello".to_owned(),
+                tags: Vec::new(),
                 created_at: 100,
             },
             signer: "alice".to_owned(),
@@ -3325,6 +3340,7 @@ mod tests {
                 event_type: "Note".to_owned(),
                 kind: 1,
                 content: "hello".to_owned(),
+                tags: Vec::new(),
                 created_at: 100,
             },
             signer: "alice".to_owned(),
@@ -3373,6 +3389,7 @@ mod tests {
                 event_type: "Note".to_owned(),
                 kind: 1,
                 content: "hello".to_owned(),
+                tags: Vec::new(),
                 created_at: 100,
             },
             signer: "alice".to_owned(),
