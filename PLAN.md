@@ -163,6 +163,8 @@ performing relay, signer, storage, or other host effects.
   `Runtime::claim_once`, with duplicate-delivery outcomes recorded in audit.
 - Added typed `SubscriptionHost` support and audited `Runtime::subscribe` for
   relay-backed stream filters with deterministic fake-host coverage.
+- Added audited subscription cancellation through `Runtime::unsubscribe`,
+  completing host-owned stream lifecycle management.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

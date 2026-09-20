@@ -221,7 +221,8 @@ atomically claim event IDs; duplicate deliveries return `false` and are
 audited without rerunning the handler.
 Stream and query lowering can use `SubscriptionHost` and `Runtime::subscribe`
 with typed event filters, keeping relay lifecycle and transport policy in the
-host runtime.
+host runtime. `Runtime::unsubscribe` closes those handles through the same
+audited capability boundary.
 
 ## Repository map
 

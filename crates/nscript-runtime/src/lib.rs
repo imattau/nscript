@@ -517,6 +517,17 @@ pub trait SubscriptionHost {
         invocation: InvocationId,
         request: &SubscriptionRequest,
     ) -> Result<SubscriptionHandle, RuntimeError>;
+
+    /// Close an existing event subscription.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable runtime error when the handle is unknown or cleanup fails.
+    fn unsubscribe(
+        &mut self,
+        invocation: InvocationId,
+        handle: &SubscriptionHandle,
+    ) -> Result<(), RuntimeError>;
 }
 
 pub trait HttpHost {
@@ -790,6 +801,28 @@ where
             invocation,
             operation: "subscribe".to_owned(),
             target: request.event_type.clone(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
+    }
+
+    /// Close an audited typed event subscription.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's cleanup failure.
+    pub fn unsubscribe<H: SubscriptionHost>(
+        &mut self,
+        host: &mut H,
+        handle: &SubscriptionHandle,
+    ) -> Result<(), RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.unsubscribe(invocation, handle);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "unsubscribe".to_owned(),
+            target: handle.id.to_string(),
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
         });
         result
@@ -1105,6 +1138,7 @@ pub struct FakeRelayHost {
     pub published: Vec<SignedEvent>,
     pub subscriptions: Vec<SubscriptionRequest>,
     pub next_subscription: u64,
+    pub closed_subscriptions: BTreeSet<u64>,
 }
 
 impl RelayHost for FakeRelayHost {
@@ -1168,6 +1202,20 @@ impl SubscriptionHost for FakeRelayHost {
         Ok(SubscriptionHandle {
             id: self.next_subscription,
         })
+    }
+
+    fn unsubscribe(
+        &mut self,
+        _invocation: InvocationId,
+        handle: &SubscriptionHandle,
+    ) -> Result<(), RuntimeError> {
+        if handle.id == 0 || handle.id > self.next_subscription {
+            return Err(RuntimeError::InvalidOperationArguments {
+                operation: "unsubscribe".to_owned(),
+            });
+        }
+        self.closed_subscriptions.insert(handle.id);
+        Ok(())
     }
 }
 
@@ -2656,6 +2704,11 @@ mod tests {
         assert_eq!(handle, SubscriptionHandle { id: 1 });
         assert_eq!(relay.subscriptions, vec![request]);
         assert_eq!(runtime.audit.entries[0].operation, "subscribe");
+        runtime
+            .unsubscribe(&mut relay, &handle)
+            .expect("subscription closes");
+        assert!(relay.closed_subscriptions.contains(&1));
+        assert_eq!(runtime.audit.entries[1].operation, "unsubscribe");
 
         let invalid = SubscriptionRequest {
             event_type: "Note".to_owned(),
@@ -2668,7 +2721,13 @@ mod tests {
             Err(RuntimeError::InvalidOperationArguments { operation })
                 if operation == "subscribe"
         ));
-        assert_eq!(runtime.audit.entries[1].result, "error");
+        assert_eq!(runtime.audit.entries[2].result, "error");
+        assert!(matches!(
+            runtime.unsubscribe(&mut relay, &SubscriptionHandle { id: 9 }),
+            Err(RuntimeError::InvalidOperationArguments { operation })
+                if operation == "unsubscribe"
+        ));
+        assert_eq!(runtime.audit.entries[3].result, "error");
     }
 
     #[test]
