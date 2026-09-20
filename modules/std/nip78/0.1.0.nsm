@@ -1,0 +1,14 @@
+module nip78 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/78.md"
+
+record AppData {
+    field identifier: Text
+    field content: Text
+}
+
+error AppDataError {
+    field message: Text
+}
+
+operation publish_app_data(data: AppData) -> Result<PublishReport,AppDataError> effect Sign,Relay permission app_data

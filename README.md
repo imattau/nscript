@@ -63,6 +63,9 @@ nominal identifier values; `npub` can then convert to a nominal `PubKey`.
 NIP-65 relay preferences are represented as a typed `RelayList` and published
 through an explicit `Sign`/`Relay` capability operation.
 
+NIP-78 application data is represented as typed addressable `AppData` and
+published through the same explicit capability boundary.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

@@ -68,6 +68,12 @@ pub struct RelayList {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppData {
+    pub identifier: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
@@ -75,6 +81,7 @@ pub enum OperationValue {
     GiftWrap(String),
     PrivateMessage(PrivateMessage),
     RelayList(RelayList),
+    AppData(AppData),
     PublishReport(PublishReport),
 }
 
@@ -662,6 +669,7 @@ fn convert_bits(data: &[u8], from: u8, to: u8, pad: bool) -> Option<Vec<u8>> {
 }
 
 impl OperationHost for FakeOperationHost {
+    #[allow(clippy::too_many_lines)]
     fn call(
         &mut self,
         _invocation: InvocationId,
@@ -759,6 +767,20 @@ impl OperationHost for FakeOperationHost {
                 Ok(OperationValue::PublishReport(PublishReport {
                     outcomes: vec![RelayOutcome {
                         relay: "fake://relay-list".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
+            ("nip78", "publish_app_data") => {
+                let [OperationValue::AppData(_data)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://app-data".to_owned(),
                         accepted: true,
                         detail: "ok".to_owned(),
                     }],
@@ -1051,6 +1073,30 @@ mod tests {
                 })],
             )
             .expect("relay-list operation is authorized");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip78_publishes_addressable_application_data() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip78", "publish_app_data"),
+                &mut host,
+                "nip78",
+                "publish_app_data",
+                &[OperationValue::AppData(AppData {
+                    identifier: "app/settings".to_owned(),
+                    content: "{\"theme\":\"dark\"}".to_owned(),
+                })],
+            )
+            .expect("application-data operation is authorized");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 }

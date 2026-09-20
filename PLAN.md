@@ -65,6 +65,8 @@ performing relay, signer, storage, or other host effects.
   checksum-validated constructors.
 - Added the typed NIP-65 `RelayList` schema and an authorized relay-list
   publication host operation with deterministic outcome coverage.
+- Added typed NIP-78 `AppData` with explicit addressable application-data
+  publication and deterministic runtime coverage.
 
 ## Deferred
 
