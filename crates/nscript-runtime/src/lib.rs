@@ -1117,6 +1117,53 @@ where
         result.map(|()| true)
     }
 
+    /// Dispatch a matched event with an atomic storage transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns idempotency, storage, or handler-body failures. Failed bodies
+    /// leave staged writes uncommitted.
+    pub fn dispatch_event_transactional<I, T, F>(
+        &mut self,
+        request: &SubscriptionRequest,
+        event: &SignedEvent,
+        idempotency_host: &mut I,
+        storage_host: &mut T,
+        key: &str,
+        body: F,
+    ) -> Result<bool, RuntimeError>
+    where
+        I: IdempotencyHost,
+        T: TransactionalStorageHost,
+        F: FnOnce(&SignedEvent, &mut StorageTransaction) -> Result<(), RuntimeError>,
+    {
+        if !Self::matches_subscription(request, event) {
+            return Ok(false);
+        }
+        if !self.claim_once(idempotency_host, key)? {
+            return Ok(false);
+        }
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let mut transaction = storage_host.begin(invocation);
+        let result = body(event, &mut transaction);
+        if result.is_ok() {
+            storage_host.commit(transaction);
+        }
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "handler_transaction".to_owned(),
+            target: event.id.clone(),
+            result: if result.is_ok() {
+                "committed"
+            } else {
+                "rolled_back"
+            }
+            .to_owned(),
+        });
+        result.map(|()| true)
+    }
+
     /// Run a staged storage transaction and commit it only when the closure succeeds.
     ///
     /// # Errors
@@ -3253,6 +3300,74 @@ mod tests {
             Ok(false)
         );
         assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn transactional_handler_dispatch_commits_or_rolls_back() {
+        let request = SubscriptionRequest {
+            event_type: "Note".to_owned(),
+            relayset: None,
+            kinds: vec![1],
+            tag_equals: Vec::new(),
+            cursor: None,
+            author: None,
+            since: None,
+            limit: None,
+        };
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "hello".to_owned(),
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "event-transaction".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut claims = InMemoryStorage::default();
+        let mut storage = InMemoryStorage::default();
+        assert_eq!(
+            runtime.dispatch_event_transactional(
+                &request,
+                &event,
+                &mut claims,
+                &mut storage,
+                "event-transaction",
+                |_, transaction| {
+                    transaction.put("seen", "yes");
+                    Ok(())
+                },
+            ),
+            Ok(true)
+        );
+        assert_eq!(storage.values.get("seen").map(String::as_str), Some("yes"));
+
+        let second = SignedEvent {
+            id: "event-transaction-2".to_owned(),
+            ..event
+        };
+        assert_eq!(
+            runtime.dispatch_event_transactional(
+                &request,
+                &second,
+                &mut claims,
+                &mut storage,
+                "event-transaction-2",
+                |_, transaction| {
+                    transaction.put("seen", "no");
+                    Err(RuntimeError::Cancelled)
+                },
+            ),
+            Err(RuntimeError::Cancelled)
+        );
+        assert_eq!(storage.values.get("seen").map(String::as_str), Some("yes"));
     }
 
     #[test]

@@ -271,6 +271,8 @@ Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
 `Runtime::dispatch_event` now claims a matching event atomically and invokes a
 host-controlled body callback exactly once, auditing handler success/failure.
+`Runtime::dispatch_event_transactional` composes that boundary with staged
+storage, committing handler state only on successful body completion.
 
 ## Deferred
 
