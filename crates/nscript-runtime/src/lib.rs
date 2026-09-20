@@ -123,6 +123,7 @@ pub struct SubscriptionRequest {
     pub relayset: Option<String>,
     pub kinds: Vec<u16>,
     pub tag_equals: Vec<(String, String)>,
+    pub cursor: Option<String>,
     pub author: Option<String>,
     pub since: Option<u64>,
     pub limit: Option<u32>,
@@ -137,6 +138,7 @@ pub struct SubscriptionHandle {
 pub struct SubscriptionBatch {
     pub events: Vec<SignedEvent>,
     pub complete: bool,
+    pub cursor: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1283,6 +1285,7 @@ impl SubscriptionHost for FakeRelayHost {
     ) -> Result<SubscriptionHandle, RuntimeError> {
         if request.event_type.is_empty()
             || request.relayset.as_deref() == Some("")
+            || request.cursor.as_deref() == Some("")
             || request.tag_equals.iter().any(|(name, value)| {
                 name.is_empty()
                     || value.is_empty()
@@ -1331,6 +1334,7 @@ impl SubscriptionHost for FakeRelayHost {
         Ok(SubscriptionBatch {
             events: self.queued_events.remove(&handle.id).unwrap_or_default(),
             complete: true,
+            cursor: Some(format!("cursor-{}", handle.id)),
         })
     }
 }
@@ -2813,6 +2817,7 @@ mod tests {
             relayset: Some("public".to_owned()),
             kinds: vec![1],
             tag_equals: vec![("p".to_owned(), "alice".to_owned())],
+            cursor: None,
             author: Some("alice".to_owned()),
             since: Some(100),
             limit: Some(20),
@@ -2840,6 +2845,7 @@ mod tests {
             .expect("subscription polls");
         assert_eq!(batch.events.len(), 1);
         assert!(batch.complete);
+        assert_eq!(batch.cursor.as_deref(), Some("cursor-1"));
         assert_eq!(runtime.audit.entries[1].result, "complete");
         runtime
             .unsubscribe(&mut relay, &handle)
@@ -2852,6 +2858,7 @@ mod tests {
             relayset: None,
             kinds: Vec::new(),
             tag_equals: Vec::new(),
+            cursor: None,
             author: None,
             since: None,
             limit: Some(0),
@@ -2907,6 +2914,7 @@ mod tests {
             relayset: None,
             kinds: vec![1],
             tag_equals: Vec::new(),
+            cursor: Some("resume-1".to_owned()),
             author: None,
             since: None,
             limit: Some(10),

@@ -177,6 +177,8 @@ performing relay, signer, storage, or other host effects.
   relay deliveries before they reach script handlers.
 - Added `Runtime::poll_and_claim`, composing bounded polling with atomic
   idempotency claims before event handler delivery.
+- Added typed subscription cursors on requests and batches for resumable relay
+  streams after reconnects.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

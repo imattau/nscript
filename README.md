@@ -235,6 +235,8 @@ The runtime enforces a configurable maximum batch size (1024 by default) to
 bound relay-driven memory and handler work.
 `Runtime::poll_and_claim` combines that bound with atomic event-ID claims for
 duplicate-safe stream handlers.
+Subscription requests and batches carry opaque typed cursors so hosts can
+resume relay streams after reconnects without exposing transport details.
 
 ## Repository map
 
