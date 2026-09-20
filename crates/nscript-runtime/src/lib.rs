@@ -119,6 +119,13 @@ pub struct CalendarEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RelayStatus {
+    pub relay: String,
+    pub uptime_percent: u8,
+    pub latency_ms: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
@@ -134,6 +141,7 @@ pub enum OperationValue {
     ZapRequest(ZapRequest),
     PaymentIntent(PaymentIntent),
     CalendarEvent(CalendarEvent),
+    RelayStatus(RelayStatus),
     PublishReport(PublishReport),
 }
 
@@ -930,6 +938,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip66", "publish_relay_status") => {
+                let [OperationValue::RelayStatus(status)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if status.uptime_percent > 100 || status.latency_ms < 0 {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://relay-monitor".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: operation.to_owned(),
@@ -1418,6 +1445,47 @@ mod tests {
                 start: 10,
                 end: 9,
                 location: String::new(),
+            })],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn nip66_publishes_valid_relay_status() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip66", "publish_relay_status"),
+                &mut host,
+                "nip66",
+                "publish_relay_status",
+                &[OperationValue::RelayStatus(RelayStatus {
+                    relay: "wss://relay.example".to_owned(),
+                    uptime_percent: 99,
+                    latency_ms: 120,
+                })],
+            )
+            .expect("relay-status operation is authorized");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip66_rejects_invalid_monitoring_values() {
+        let mut host = FakeOperationHost::default();
+        let result = host.call(
+            1,
+            "nip66",
+            "publish_relay_status",
+            &[OperationValue::RelayStatus(RelayStatus {
+                relay: "wss://relay.example".to_owned(),
+                uptime_percent: 101,
+                latency_ms: -1,
             })],
         );
         assert!(result.is_err());

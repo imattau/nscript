@@ -84,6 +84,9 @@ creating a request does not silently authorize a transfer.
 NIP-52 calendar events use typed timestamps and reject inverted start/end ranges
 before publication.
 
+NIP-66 relay monitoring uses typed `RelayStatus` values and validates uptime and
+latency bounds before publication.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

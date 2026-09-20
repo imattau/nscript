@@ -79,6 +79,8 @@ performing relay, signer, storage, or other host effects.
   amounts while keeping payment authorization outside request creation.
 - Added typed NIP-52 `CalendarEvent` publication with timestamp ordering
   validation and deterministic runtime coverage.
+- Added typed NIP-66 `RelayStatus` publication with uptime and latency bounds
+  for relay monitoring automation.
 
 ## Deferred
 
