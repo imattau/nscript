@@ -76,15 +76,17 @@ packaged, and canonicalizes descriptors by UTF-8 name ordering with comments and
 insignificant whitespace removed. The SHA-256 descriptor hash identifies the
 loaded interface.
 
-Canonical encoding version 1 begins with `NSM`, a zero byte, and version byte
-`1`. Counts and UTF-8 byte lengths are unsigned 32-bit big-endian integers;
+Canonical encoding version 2 begins with `NSM`, a zero byte, and version byte
+`2`. Counts and UTF-8 byte lengths are unsigned 32-bit big-endian integers;
 event kinds and tag positions are unsigned 16-bit big-endian integers. Header
 fields, events, tags, and validators are sorted by UTF-8 byte order. Tag slots
 are sorted by position. Optional values use a zero presence byte when absent and
 a one byte followed by the encoded string when present. Event modes are encoded
 as regular `0`, replaceable `1`, addressable `2`, and ephemeral `3`. Every
-collection includes its count, so concatenated values are unambiguous. The hash
-is SHA-256 over these bytes.
+collection includes its count, so concatenated values are unambiguous. Declared
+dependency names and normalized requirements are included before exports.
+The hash is SHA-256 over these bytes. Version 1 is retained only as a draft hash
+identifier and is not emitted for new descriptors.
 
 Two modules conflict when they export the same qualified identity, claim an
 exclusive event kind incompatibly, or provide different definitions for the

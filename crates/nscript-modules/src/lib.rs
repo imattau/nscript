@@ -6,6 +6,15 @@ use nscript_syntax::{Diagnostic, Span, Token, TokenKind, lex};
 use semver::{Version, VersionReq};
 use sha2::{Digest, Sha256};
 
+mod resolver;
+
+pub use resolver::{
+    DiscoveryError, ModuleOrigin, ModuleRegistry, RegisteredModule, ResolutionError,
+    ResolvedModuleGraph,
+};
+
+pub const CANONICAL_ENCODING_VERSION: u8 = 2;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModuleId {
     pub name: String,
@@ -17,9 +26,17 @@ pub struct ModuleDescriptor {
     pub id: ModuleId,
     pub language: VersionReq,
     pub reference: Option<String>,
+    pub dependencies: Vec<ModuleDependency>,
     pub events: Vec<EventDefinition>,
     pub tags: Vec<TagDefinition>,
+    pub canonical_encoding: u8,
     pub canonical_hash: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModuleDependency {
+    pub name: String,
+    pub requirement: VersionReq,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -144,9 +161,14 @@ impl Parser {
 
         let mut events = Vec::new();
         let mut tags = Vec::new();
+        let mut dependencies = Vec::new();
         self.skip_terminators();
         while !self.is_at_end() {
-            if self.at_keyword("event") {
+            if self.at_keyword("use") {
+                if let Some(dependency) = self.parse_dependency() {
+                    dependencies.push(dependency);
+                }
+            } else if self.at_keyword("event") {
                 if let Some(event) = self.parse_event() {
                     events.push(event);
                 }
@@ -163,17 +185,76 @@ impl Parser {
         }
 
         validate_unique_names(&events, &tags, &mut self.diagnostics);
+        dependencies.sort_by(|left, right| left.name.cmp(&right.name));
+        for pair in dependencies.windows(2) {
+            if pair[0].name == pair[1].name {
+                self.error(
+                    Span::default(),
+                    format!("duplicate dependency `{}`", pair[0].name),
+                );
+            }
+        }
         let id = ModuleId { name, version };
         let mut descriptor = ModuleDescriptor {
             id,
             language,
             reference,
+            dependencies,
             events,
             tags,
+            canonical_encoding: CANONICAL_ENCODING_VERSION,
             canonical_hash: [0; 32],
         };
         descriptor.canonical_hash = canonical_hash(&descriptor);
         Some(descriptor)
+    }
+
+    fn parse_dependency(&mut self) -> Option<ModuleDependency> {
+        self.expect_keyword("use")?;
+        let name = self.take_module_path()?;
+        self.expect_symbol('@')?;
+        let requirement = if let Some(Token {
+            kind: TokenKind::String(value),
+            span,
+        }) = self.tokens.get(self.index).cloned()
+        {
+            self.index += 1;
+            self.parse_version_requirement(&value, span)?
+        } else {
+            let version = self.take_version()?;
+            VersionReq::parse(&format!("={version}"))
+                .expect("an exact Version is a valid VersionReq")
+        };
+        self.skip_to_next_line();
+        Some(ModuleDependency { name, requirement })
+    }
+
+    fn take_module_path(&mut self) -> Option<String> {
+        let (first, _) = self.take_identifier()?;
+        let mut path = first;
+        while self.at_symbol(':')
+            && matches!(
+                self.tokens.get(self.index + 1).map(|token| &token.kind),
+                Some(TokenKind::Symbol(':'))
+            )
+        {
+            self.index += 2;
+            let (segment, _) = self.take_identifier()?;
+            path.push_str("::");
+            path.push_str(&segment);
+        }
+        Some(path)
+    }
+
+    fn parse_version_requirement(&mut self, value: &str, span: Span) -> Option<VersionReq> {
+        let normalized = value.split_whitespace().collect::<Vec<_>>().join(", ");
+        match VersionReq::parse(&normalized) {
+            Ok(requirement) => Some(requirement),
+            Err(error) => {
+                self.error(span, format!("invalid version requirement: {error}"));
+                None
+            }
+        }
     }
 
     fn parse_event(&mut self) -> Option<EventDefinition> {
@@ -555,11 +636,19 @@ fn canonical_hash(descriptor: &ModuleDescriptor) -> [u8; 32] {
         fields.insert("reference", reference.clone());
     }
 
-    let mut canonical = Vec::from(b"NSM\0\x01".as_slice());
+    let mut canonical = Vec::from(b"NSM\0".as_slice());
+    canonical.push(descriptor.canonical_encoding);
     encode_count(&mut canonical, fields.len());
     for (key, value) in fields {
         encode_string(&mut canonical, key);
         encode_string(&mut canonical, &value);
+    }
+    let mut dependencies = descriptor.dependencies.iter().collect::<Vec<_>>();
+    dependencies.sort_by(|left, right| left.name.cmp(&right.name));
+    encode_count(&mut canonical, dependencies.len());
+    for dependency in dependencies {
+        encode_string(&mut canonical, &dependency.name);
+        encode_string(&mut canonical, &dependency.requirement.to_string());
     }
     let mut events = descriptor.events.iter().collect::<Vec<_>>();
     events.sort_by_key(|event| &event.name);
@@ -650,7 +739,7 @@ mod tests {
         assert_eq!(descriptor.tags[0].wire_name, "e");
         assert_eq!(
             hash_hex(&descriptor.canonical_hash),
-            "61b91456a056048526f89026784d84699bfccf2bf6e06b331e6fa2c0594781a8"
+            "db363e34d76b43e879abda58eddb7debbec104fba643c755906e44647451895f"
         );
     }
 

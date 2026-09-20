@@ -1,87 +1,70 @@
-# Next Phase: Complete Compiler Front End
+# Next Step: Complete Module Schema and Local Resolution
 
 ## Summary
 
-Replace the current structural scanner with a real parser and static-analysis
-pipeline. This phase will parse complete `.ns` programs and declarative `.nsm`
-modules, resolve local and built-in modules deterministically, and enforce
-nominal types, event signing states, effects, permissions, queries, and
-hardened-agent restrictions. Runtime execution remains out of scope.
+Finish the declarative module subsystem before expanding source-language typing.
+The compiler will parse every `.nsm` construct, build complete descriptors,
+discover built-in and local modules, resolve version graphs deterministically,
+and attach resolved imports to checked programs. Runtime execution and general
+expression typing remain deferred.
 
-## Compiler and module interfaces
+## Module model and parsing
 
-- Introduce full, spanned ASTs for declarations, statements, expressions,
-  patterns, types, permissions, defaults, and module schemas.
-- Use a handwritten recursive-descent parser with error recovery. Add focused
-  dependencies only for Unicode identifiers, semantic versions, and SHA-256.
-- Define validated public structures including `ModuleId`, `ModuleDescriptor`,
-  `TypeDefinition`, `EventDefinition`, `TagDefinition`, `HostOperation`,
-  `EffectSet`, `Permission`, `TypedProgram`, and `FilterPlan`.
-- Parse `.nsm` validation expressions through the restricted pure-expression
-  grammar. Reject recursion, I/O, dynamic wire names, duplicate wire positions,
-  unbounded operations, and invalid event modes with `E4003`.
-- Add a versioned deterministic descriptor encoding and golden hash vectors.
-  Declaration order, whitespace, comments, and module-path ordering must not
-  affect hashes where semantics are unchanged.
-- Ship declarative built-ins for NIP-01, NIP-10, NIP-19, and NIP-46 through the
-  same parser and validator as third-party modules.
+- Expand `ModuleDescriptor` with dependencies, nominal types, records, enums,
+  validators, events, tags, host operations, errors, vectors, canonical encoding
+  version, source identity, and hash.
+- Add spanned AST nodes for restricted validation expressions, type references,
+  parameters, effects, and permission templates.
+- Parse every production in `module-schema.ebnf`, with recovery at declaration
+  boundaries.
+- Add named validators with an acyclic call graph. Reject recursion, unknown
+  fields/functions, effects, I/O, unbounded collection operations, and
+  unsupported calls with `E4003`.
+- Validate unique exports, event-kind compatibility, addressable-event
+  requirements, tag position continuity, optional-field placement, operation
+  effects, and permission templates.
+- Introduce `SourceId` and multi-source diagnostics with primary/secondary
+  labels so import and conflict errors can reference multiple files.
 
-## Resolution and static semantics
+## Canonical descriptors and resolution
 
-- Resolve imports from embedded built-ins plus repeatable `--module-path`
-  directories; checking never performs network access.
-- Select the highest version satisfying the complete dependency graph. Reject
-  cycles, unsatisfied ranges, and different descriptors claiming the same
-  name/version. Module-path order never resolves conflicts or shadows built-ins.
-- Implement lexical scopes, qualified imports, duplicate-name detection, and
-  separate namespaces for types and values.
-- Type-check primitives, containers, nominal Nostr types, records, enums,
-  functions, event constructors, typed tags, `Option`, and `Result`.
-- Model construction as `Unsigned<E>`, signing as `Signed<E>`, and publication
-  as accepting signed events or expanding a source-declared signer default.
-- Expand publication defaults into typed IR before effect and permission
-  checking; defaults never create authority.
-- Infer effects to a fixed point across calls, recursion, and imported host
-  operations, then compare reachable effects with structural permissions.
-- Apply hardened-agent restrictions transitively to source, imported types,
-  module initialization requirements, effects, permissions, and defaults.
-- Type-check matches for exhaustiveness and unreachable arms.
-- Lower supported queries into typed `FilterPlan` values, requiring bounded
-  relay supersets for local predicates.
+- Introduce canonical descriptor encoding version 2 containing every public
+  descriptor field and dependency. Update the golden vector; version 1 remains
+  identifiable but is not used for new descriptors.
+- Store built-ins as ordinary `.nsm` files for NIP-01, NIP-10, NIP-19, and
+  NIP-46 and load them through the public parser.
+- Discover local modules from repeatable `--module-path` roots using
+  `<root>/<module segments>/<version>.nsm`. Canonicalized files must remain
+  inside their configured root.
+- Add `ModuleRegistry` and `ResolvedModuleGraph` APIs. Identical
+  name/version/hash entries deduplicate; differing hashes for one identity
+  produce `E4003`.
+- Aggregate semantic-version constraints and select the highest compatible
+  version. Reject missing versions with `E4002` and dependency cycles with
+  `E4001`; module-path order never affects selection.
+- Parse program `use` declarations into imports and resolve them before existing
+  semantic checks. No network lookup or package installation occurs.
 
-## CLI and diagnostics
+## CLI and tests
 
-- Preserve `nscript check <file>` and add repeatable `--module-path <directory>`
-  plus `--format human|json`.
-- Add `nscript module check <file.nsm>` and `nscript module hash <file.nsm>`.
-- Retain exit codes `0` for success, `1` for diagnostics, and `2` for usage or
-  filesystem failure.
-- Emit stable codes, primary and secondary spans, notes, and normalized JSON.
-- Keep existing `E2203`, `E2204`, and `E5001` behavior while replacing lexical
-  policy scans with typed semantic checks.
-
-## Test and acceptance plan
-
-- Cover Unicode XID identifiers, escapes, comments, numeric forms, newline
-  suppression, and malformed input in lexer tests.
-- Add positive and recovery-oriented parser fixtures for every `.ns` and `.nsm`
-  production.
-- Test canonical hashes, equivalent descriptors, conflicts, cycles, version
-  selection, validators, tag positions, and built-in/third-party parity.
-- Run every conformance fixture through `nscript check`, verifying its declared
-  outcome and diagnostic span.
-- Cover nominal types, signing states, tags, matches, effects, permissions,
-  hardened transitive denial, defaults, and query bounds.
-- Require formatting, strict Clippy, unit tests, conformance tests, hash vectors,
-  and specification checks in CI.
+- Extend `nscript check` with repeatable `-M`/`--module-path` options.
+- Add `nscript module describe <file.nsm>` with deterministic human output;
+  retain `module check` and `module hash`.
+- Test every module declaration form, malformed-input recovery, restricted
+  validators, duplicate exports, tag errors, event constraints, and operations.
+- Add resolution tests for built-ins, local modules, transitive dependencies,
+  version selection, deduplication, conflicts, missing dependencies, cycles,
+  path-order independence, and root escapes.
+- Add golden version-2 hashes and prove comments, whitespace, and semantically
+  irrelevant declaration ordering do not change them.
+- Require all existing tests, strict Clippy, specification checks, module
+  fixtures, and CLI integration tests to pass in CI.
 
 ## Assumptions
 
-- Internal Rust APIs may break; the documented CLI and diagnostic codes remain
-  stable.
-- Module resolution is local and deterministic; Nostr/Blossom fetching remains
-  deferred.
-- No interpreter, relay connection, cryptography, signer or storage backend, or
-  WASM execution is included.
-- `semver` 1.x, `sha2` 0.10.x, and `unicode-ident` 1.x are approved; `Cargo.lock`
-  pins selected releases.
+- Internal descriptor and diagnostic APIs may change.
+- Existing diagnostic codes remain stable; multi-source labels are additive.
+- Canonical version-1 hashes are draft artifacts and need not resolve as
+  installable packages.
+- Source type inference, event-state propagation, effect inference, and query
+  lowering begin only after the resolved module graph is available.

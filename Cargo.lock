@@ -69,6 +69,7 @@ dependencies = [
  "nscript-modules",
  "nscript-semantics",
  "nscript-syntax",
+ "semver",
 ]
 
 [[package]]

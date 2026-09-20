@@ -48,6 +48,13 @@ pub struct PublishSite {
     pub requires_signer: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Import {
+    pub path: String,
+    pub requirement: Option<String>,
+    pub span: Span,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     pub profile: RuntimeProfile,
@@ -56,6 +63,7 @@ pub struct Program {
     pub signers: BTreeSet<String>,
     pub relaysets: BTreeSet<String>,
     pub identifiers: Vec<(String, Span)>,
+    pub imports: Vec<Import>,
     pub publishes: Vec<PublishSite>,
 }
 
@@ -213,6 +221,11 @@ pub fn parse_program(source: &str) -> (Program, Vec<Diagnostic>) {
             continue;
         };
         match keyword {
+            "use" => {
+                if let Some(import) = parse_import(&tokens, index) {
+                    program.imports.push(import);
+                }
+            }
             "runtime" => {
                 if let Some((name, token_index)) = next_identifier(&tokens, index + 1) {
                     program.profile_span = Some(tokens[token_index].span);
@@ -253,6 +266,46 @@ pub fn parse_program(source: &str) -> (Program, Vec<Diagnostic>) {
         index += 1;
     }
     (program, diagnostics)
+}
+
+fn parse_import(tokens: &[Token], start: usize) -> Option<Import> {
+    let span = tokens.get(start)?.span;
+    let (first, mut index) = next_identifier(tokens, start + 1)?;
+    let mut path = first.to_owned();
+    index += 1;
+    while symbol_at(tokens, index, ':') && symbol_at(tokens, index + 1, ':') {
+        let (segment, segment_index) = next_identifier(tokens, index + 2)?;
+        path.push_str("::");
+        path.push_str(segment);
+        index = segment_index + 1;
+    }
+    let requirement = if symbol_at(tokens, index, '@') {
+        index += 1;
+        if let Some(TokenKind::String(value)) = tokens.get(index).map(|token| &token.kind) {
+            Some(value.clone())
+        } else {
+            let mut value = String::new();
+            while let Some(token) = tokens.get(index) {
+                match &token.kind {
+                    TokenKind::Newline | TokenKind::Symbol(';') => break,
+                    TokenKind::Identifier(part) | TokenKind::Number(part) => {
+                        value.push_str(part);
+                    }
+                    TokenKind::Symbol(part) => value.push(*part),
+                    TokenKind::String(part) => value.push_str(part),
+                }
+                index += 1;
+            }
+            (!value.is_empty()).then_some(value)
+        }
+    } else {
+        None
+    };
+    Some(Import {
+        path,
+        requirement,
+        span,
+    })
 }
 
 fn parse_defaults(tokens: &[Token], start: usize, defaults: &mut Defaults) {
@@ -393,5 +446,13 @@ publish Note { content: "hello" }
         let (program, diagnostics) = parse_program(source);
         assert!(diagnostics.is_empty());
         assert!(program.publishes.is_empty());
+    }
+
+    #[test]
+    fn parses_qualified_versioned_imports() {
+        let (program, diagnostics) = parse_program("use community::moderation @ \"^2\"\n");
+        assert!(diagnostics.is_empty());
+        assert_eq!(program.imports[0].path, "community::moderation");
+        assert_eq!(program.imports[0].requirement.as_deref(), Some("^2"));
     }
 }

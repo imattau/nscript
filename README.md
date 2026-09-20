@@ -28,12 +28,21 @@ runtime contract, Nostr interoperability, and conformance expectations before a
 reference interpreter is built.
 
 The first Rust front-end slice is now under development. It can validate
-publication defaults and hardened-agent restrictions:
+publication defaults, hardened-agent restrictions, and built-in or local module
+imports:
 
 ```bash
 cargo run -p nscript-cli -- check conformance/valid/default-publish.ns
 cargo run -p nscript-cli -- module check conformance/modules/valid/nip10.nsm
 cargo run -p nscript-cli -- module hash conformance/modules/valid/nip10.nsm
+cargo run -p nscript-cli -- module describe conformance/modules/valid/nip10.nsm
+```
+
+Additional modules are resolved locally from deterministic
+`<root>/<module>/<version>.nsm` layouts:
+
+```bash
+cargo run -p nscript-cli -- check -M ./my-modules program.ns
 ```
 
 ## Repository map

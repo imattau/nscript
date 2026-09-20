@@ -1,0 +1,22 @@
+module nip01 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/01.md"
+
+event Metadata {
+    kind: 0
+    mode: replaceable
+    content: MetadataContent as json<MetadataContent>
+}
+
+tag Person {
+    wire: "p"
+    field pubkey: PubKey at 1
+    field relay: Option<RelayUrl> at 2
+}
+
+tag EventRef {
+    wire: "e"
+    field id: EventId at 1
+    field relay: Option<RelayUrl> at 2
+    field author: Option<PubKey> at 3
+}
