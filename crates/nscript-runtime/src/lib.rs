@@ -149,6 +149,12 @@ pub struct Badge {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImageEvent {
+    pub url: String,
+    pub caption: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -244,6 +250,7 @@ pub enum OperationValue {
     LiveEvent(LiveEvent),
     Report(Report),
     Badge(Badge),
+    ImageEvent(ImageEvent),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1213,6 +1220,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip68", "publish_image") => {
+                let [OperationValue::ImageEvent(event)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if event.url.is_empty() || event.caption.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://images".to_owned(),
+                        accepted: true,
+                        detail: "image event lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1473,6 +1499,10 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                 name,
                 description,
             }),
+            _ => value.clone(),
+        },
+        "ImageEvent" => match (text("url"), text("caption")) {
+            (Some(url), Some(caption)) => OperationValue::ImageEvent(ImageEvent { url, caption }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2308,6 +2338,39 @@ mod tests {
                 }],
             )
             .expect("badge host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip68_lowers_image_events() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip68", "publish_image"),
+                &mut host,
+                "nip68",
+                "publish_image",
+                &[OperationValue::Record {
+                    name: "ImageEvent".to_owned(),
+                    fields: vec![
+                        (
+                            "url".to_owned(),
+                            OperationValue::Text("https://cdn.example/image.jpg".to_owned()),
+                        ),
+                        (
+                            "caption".to_owned(),
+                            OperationValue::Text("A Nostr image".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("image host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 

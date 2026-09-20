@@ -118,6 +118,8 @@ performing relay, signer, storage, or other host effects.
   moderation categories, rationale, and target validation.
 - Added NIP-58 typed `Badge` records and `publish_badge`, with validated
   credential identifiers and descriptive metadata.
+- Added NIP-68 typed `ImageEvent` records and `publish_image`, with explicit
+  media URL/caption validation and source/runtime conformance coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

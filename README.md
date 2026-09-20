@@ -151,6 +151,10 @@ NIP-58 badges use typed `Badge` records for credentials and memberships.
 `nip58.publish_badge` validates the identifier and descriptive metadata before
 publication through an explicit signing/relay capability.
 
+NIP-68 image events use typed `ImageEvent` records. `nip68.publish_image`
+validates media URL and caption fields before publication through an explicit
+signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

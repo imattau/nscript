@@ -1,0 +1,11 @@
+// NIP-68 image events provide a typed media boundary.
+use nip68
+
+permissions {
+    image
+}
+
+let result = nip68.publish_image(ImageEvent {
+    url: "https://cdn.example/image.jpg";
+    caption: "A Nostr image";
+})

@@ -1,0 +1,15 @@
+module nip68 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/68.md"
+use nip01 @ "^0.1"
+
+record ImageEvent {
+    field url: Text
+    field caption: Text
+}
+
+error ImageError {
+    field message: Text
+}
+
+operation publish_image(event: ImageEvent) -> Result<PublishReport,ImageError> effect Sign,Relay permission image
