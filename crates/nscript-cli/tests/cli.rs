@@ -96,6 +96,32 @@ fn run_reports_checked_handler_subscriptions() {
 }
 
 #[test]
+fn generates_npack_compatible_manifest() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args([
+            "package",
+            "manifest",
+            "--publisher",
+            "npub1publisher",
+            "--name",
+            "hello",
+            "--version",
+            "0.1.0",
+            "--artifact",
+            "hello.npk",
+        ])
+        .arg(repository_path("conformance/valid/hello-note.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let manifest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(manifest["format"], "npk");
+    assert_eq!(manifest["name"], "hello");
+    assert_eq!(manifest["runtime_requires"][0], "nscript-runtime >=0.1");
+    assert_eq!(manifest["nscript"]["permissions_reviewed"], true);
+}
+
+#[test]
 fn reports_missing_module() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("check")

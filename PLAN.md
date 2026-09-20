@@ -322,6 +322,9 @@ subscription handles to their owning connection, fans out publications, and
 supports reconnect-all recovery.
 Release-blocker conformance now includes NIP-19 encode/decode round trips,
 timer overlap rejection, and missing/incompatible package resolution tests.
+Added `nscript package manifest`, which validates an NScript source program and
+emits an `npack`-compatible manifest with runtime capability requirements and
+an NScript permission/effect review section.
 
 ## Deferred
 

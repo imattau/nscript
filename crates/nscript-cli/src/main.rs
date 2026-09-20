@@ -1,4 +1,8 @@
-use std::{env, fs, path::PathBuf, process::ExitCode};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_hex, parse_module};
 use nscript_semantics::{analyze_with_modules, check};
@@ -14,6 +18,9 @@ fn main() -> ExitCode {
         }
         [command, rest @ ..] if command == "inspect" => inspect_program(rest, false),
         [command, rest @ ..] if command == "run" => run_program(rest),
+        [package, manifest, rest @ ..] if package == "package" && manifest == "manifest" => {
+            package_manifest(rest)
+        }
         [command, emit, format, rest @ ..]
             if command == "compile" && emit == "--emit" && format == "ir" =>
         {
@@ -30,11 +37,112 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript compile --emit ir [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
     }
+}
+
+fn package_manifest(arguments: &[String]) -> ExitCode {
+    let Some(source) = arguments.iter().find(|item| {
+        Path::new(item)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("ns"))
+    }) else {
+        eprintln!("package manifest requires an NScript source file");
+        return ExitCode::from(2);
+    };
+    let flag = |name: &str| {
+        arguments
+            .windows(2)
+            .find(|pair| pair[0] == name)
+            .map(|pair| pair[1].clone())
+    };
+    let Some(publisher) = flag("--publisher") else {
+        eprintln!("package manifest requires --publisher");
+        return ExitCode::from(2);
+    };
+    let Some(name) = flag("--name") else {
+        eprintln!("package manifest requires --name");
+        return ExitCode::from(2);
+    };
+    let Some(version) = flag("--version") else {
+        eprintln!("package manifest requires --version");
+        return ExitCode::from(2);
+    };
+    if semver::Version::parse(&version).is_err() {
+        eprintln!("package manifest requires a valid SemVer version");
+        return ExitCode::from(2);
+    }
+    let Some(artifact) = flag("--artifact") else {
+        eprintln!("package manifest requires --artifact");
+        return ExitCode::from(2);
+    };
+    let sha256 = flag("--sha256").unwrap_or_default();
+    if !sha256.is_empty()
+        && (sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        eprintln!("--sha256 must be 64 hexadecimal characters");
+        return ExitCode::from(2);
+    }
+    let mut compiler_arguments = vec![source.clone()];
+    let mut argument_index = 0;
+    while argument_index < arguments.len() {
+        if arguments[argument_index] == "-M"
+            && let Some(directory) = arguments.get(argument_index + 1)
+        {
+            compiler_arguments.extend(["-M".to_owned(), directory.clone()]);
+            argument_index += 2;
+            continue;
+        }
+        argument_index += 1;
+    }
+    let Ok((_path, program, graph, mut diagnostics)) = load_program(&compiler_arguments) else {
+        return ExitCode::from(2);
+    };
+    diagnostics.extend(analyze_with_modules(&program, &graph));
+    if !diagnostics.is_empty() {
+        return finish(source, diagnostics);
+    }
+    let (checked, typed_diagnostics) = check(&program);
+    if !typed_diagnostics.is_empty() {
+        return finish(source, typed_diagnostics);
+    }
+    let Some(checked) = checked else {
+        return ExitCode::from(1);
+    };
+    let manifest = serde_json::json!({
+        "publisher": publisher,
+        "name": name,
+        "version": version,
+        "artifact": artifact,
+        "sha256": sha256,
+        "dependencies": [],
+        "conflicts": [],
+        "artifact_event": serde_json::Value::Null,
+        "os": "any",
+        "arch": "any",
+        "format": "npk",
+        "runtime_requires": ["nscript-runtime >=0.1"],
+        "provides": ["nscript-program"],
+        "post_install": [],
+        "nscript": {
+            "source": source,
+            "effects": checked.effects.iter().map(|effect| format!("{effect:?}").to_lowercase()).collect::<Vec<_>>(),
+            "permissions_reviewed": true
+        }
+    });
+    let rendered = serde_json::to_string_pretty(&manifest).expect("manifest is serializable");
+    if let Some(output) = flag("--output") {
+        if fs::write(&output, format!("{rendered}\n")).is_err() {
+            eprintln!("could not write manifest: {output}");
+            return ExitCode::from(1);
+        }
+    } else {
+        println!("{rendered}");
+    }
+    ExitCode::SUCCESS
 }
 
 fn describe_module(path: &str) -> ExitCode {
