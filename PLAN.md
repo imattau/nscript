@@ -154,6 +154,9 @@ performing relay, signer, storage, or other host effects.
 - Added transactional storage execution: `TransactionalStorageHost` commits
   staged writes only after a successful closure, rolls failed work back, and
   records committed/rolled-back outcomes in the runtime audit stream.
+- Added a host-controlled `TimerHost` and audited `Runtime::schedule_timer`
+  entry point for deterministic `every`/`at` scheduling with interval and
+  catch-up metadata.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

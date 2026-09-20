@@ -118,6 +118,19 @@ pub struct AuthenticatedRelay {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScheduleRequest {
+    pub name: String,
+    pub next_at: u64,
+    pub interval: Option<u64>,
+    pub catch_up: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimerHandle {
+    pub id: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchRequest {
     pub query: String,
 }
@@ -524,6 +537,19 @@ pub trait ClockHost {
     fn now(&self) -> u64;
 }
 
+pub trait TimerHost {
+    /// Register a schedule with the host.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable runtime error when scheduling is denied or unavailable.
+    fn schedule(
+        &mut self,
+        invocation: InvocationId,
+        request: &ScheduleRequest,
+    ) -> Result<TimerHandle, RuntimeError>;
+}
+
 pub trait AuditHost {
     fn record(&mut self, entry: AuditEntry);
 }
@@ -722,6 +748,28 @@ where
             invocation,
             operation: "http_request".to_owned(),
             target: request.url.clone(),
+            result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
+        });
+        result
+    }
+
+    /// Register a host-controlled timer for an `every` or `at` declaration.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's scheduling failure.
+    pub fn schedule_timer<H: TimerHost>(
+        &mut self,
+        host: &mut H,
+        request: &ScheduleRequest,
+    ) -> Result<TimerHandle, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = host.schedule(invocation, request);
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "schedule_timer".to_owned(),
+            target: request.name.clone(),
             result: if result.is_ok() { "ok" } else { "error" }.to_owned(),
         });
         result
@@ -1064,6 +1112,35 @@ pub struct FakeClock {
 impl ClockHost for FakeClock {
     fn now(&self) -> u64 {
         self.now
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FakeTimerHost {
+    pub schedules: Vec<ScheduleRequest>,
+    pub next_id: u64,
+    pub reject: bool,
+}
+
+impl TimerHost for FakeTimerHost {
+    fn schedule(
+        &mut self,
+        _invocation: InvocationId,
+        request: &ScheduleRequest,
+    ) -> Result<TimerHandle, RuntimeError> {
+        if self.reject || request.name.is_empty() || request.next_at == 0 {
+            return Err(RuntimeError::ResourceLimit {
+                resource: "timer".to_owned(),
+            });
+        }
+        if request.interval == Some(0) {
+            return Err(RuntimeError::InvalidOperationArguments {
+                operation: "schedule_timer".to_owned(),
+            });
+        }
+        self.schedules.push(request.clone());
+        self.next_id += 1;
+        Ok(TimerHandle { id: self.next_id })
     }
 }
 
@@ -2359,6 +2436,41 @@ mod tests {
         assert_eq!(runtime.audit.entries.len(), 2);
         assert_eq!(runtime.audit.entries[0].result, "committed");
         assert_eq!(runtime.audit.entries[1].result, "rolled_back");
+    }
+
+    #[test]
+    fn timer_scheduling_is_host_controlled_and_audited() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock { now: 100 },
+            RecordingAudit::default(),
+        );
+        let mut timers = FakeTimerHost::default();
+        let request = ScheduleRequest {
+            name: "heartbeat".to_owned(),
+            next_at: 200,
+            interval: Some(60),
+            catch_up: false,
+        };
+        let handle = runtime
+            .schedule_timer(&mut timers, &request)
+            .expect("valid timer is scheduled");
+        assert_eq!(handle, TimerHandle { id: 1 });
+        assert_eq!(timers.schedules, vec![request]);
+        assert_eq!(runtime.audit.entries[0].operation, "schedule_timer");
+
+        let invalid = ScheduleRequest {
+            name: "bad".to_owned(),
+            next_at: 0,
+            interval: None,
+            catch_up: false,
+        };
+        assert!(matches!(
+            runtime.schedule_timer(&mut timers, &invalid),
+            Err(RuntimeError::ResourceLimit { resource }) if resource == "timer"
+        ));
+        assert_eq!(runtime.audit.entries[1].result, "error");
     }
 
     #[test]

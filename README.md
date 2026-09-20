@@ -211,6 +211,9 @@ Stateful hosts can implement `TransactionalStorageHost` so
 `Runtime::storage_transaction` stages writes and commits them only when the
 script operation succeeds; failed transactions are discarded and audited as
 `rolled_back`.
+Timer declarations can be handed to a host through `TimerHost` and
+`Runtime::schedule_timer`, preserving deterministic schedule metadata while
+keeping wakeups and civil-time policy outside the script.
 
 ## Repository map
 
