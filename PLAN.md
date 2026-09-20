@@ -341,7 +341,9 @@ serialized typed operation trace, and each lowered operation is now exposed as
 a deterministic `op:<index>:<name>` host import invoked by `nscript_main`.
 Operation imports now expose a first typed ABI as `(ptr, len)` pairs, with the
 dispatch metadata remaining the authoritative payload until linear-memory
-encoding is added.
+encoding is added. The dispatch JSON is now embedded in a one-page linear
+memory data segment at offset zero, and `nscript_main` passes its actual length
+to operation imports.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by

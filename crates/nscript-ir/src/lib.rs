@@ -27,6 +27,7 @@ pub struct NostrIr {
 #[must_use]
 pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+    let dispatch_json = serde_json::to_vec(&ir.operations).expect("operations are serializable");
     // Type 0: capability handle, type 1: typed payload ptr/len, type 2: main.
     push_section(
         &mut module,
@@ -86,7 +87,12 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
         );
     }
     for index in ir.capabilities.len()..(ir.capabilities.len() + operation_imports.len()) {
-        body.extend_from_slice(&[0x41, 0, 0x41, 0]); // ptr=0, len=0 until memory lowering
+        body.extend_from_slice(&[0x41, 0]); // ptr=0
+        body.push(0x41);
+        push_i32(
+            &mut body,
+            u32::try_from(dispatch_json.len()).expect("dispatch fits WASM"),
+        );
         body.push(0x10);
         push_u32(
             &mut body,
@@ -102,6 +108,17 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     );
     code.extend_from_slice(&body);
     push_section(&mut module, 10, &code);
+    // Dispatch payload is available to host imports through linear memory.
+    push_section(&mut module, 5, &[1, 0, 1]); // one memory, minimum one page
+    let mut data = Vec::new();
+    push_u32(&mut data, 1);
+    data.extend_from_slice(&[0, 0x41, 0, 0x0b]); // active segment at offset 0
+    push_u32(
+        &mut data,
+        u32::try_from(dispatch_json.len()).expect("dispatch fits WASM"),
+    );
+    data.extend_from_slice(&dispatch_json);
+    push_section(&mut module, 11, &data);
     let ir_json = serde_json::to_vec(ir).expect("IR is serializable");
     push_custom_section(&mut module, "nscript.ir", &ir_json);
     let capabilities = ir
@@ -111,7 +128,6 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
         .collect::<Vec<_>>();
     let capability_json = serde_json::to_vec(&capabilities).expect("capabilities are serializable");
     push_custom_section(&mut module, "nscript.capabilities", &capability_json);
-    let dispatch_json = serde_json::to_vec(&ir.operations).expect("operations are serializable");
     push_custom_section(&mut module, "nscript.dispatch", &dispatch_json);
     module
 }
@@ -160,6 +176,10 @@ fn push_u32(output: &mut Vec<u8>, mut value: u32) {
             break;
         }
     }
+}
+
+fn push_i32(output: &mut Vec<u8>, value: u32) {
+    push_u32(output, value);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
