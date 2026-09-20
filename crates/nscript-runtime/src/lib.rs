@@ -1273,12 +1273,30 @@ where
         handler: &CheckedHandler,
         log_host: &mut H,
     ) -> Result<(), RuntimeError> {
-        self.execute_handler_items(&handler.body, log_host)
+        self.execute_handler_items(&handler.body, None, log_host)
+    }
+
+    /// Execute a handler body with the delivered event available to conditions.
+    ///
+    /// The event binding currently exposes `event.id`, `event.author`, and
+    /// `event.content` in boolean comparisons and `contains` expressions.
+    ///
+    /// # Errors
+    ///
+    /// Returns logging or unsupported-body failures.
+    pub fn execute_handler_body_for_event<H: LogHost>(
+        &mut self,
+        handler: &CheckedHandler,
+        event: &SignedEvent,
+        log_host: &mut H,
+    ) -> Result<(), RuntimeError> {
+        self.execute_handler_items(&handler.body, Some(event), log_host)
     }
 
     fn execute_handler_items<H: LogHost>(
         &mut self,
         items: &[Item],
+        event: Option<&SignedEvent>,
         log_host: &mut H,
     ) -> Result<(), RuntimeError> {
         for item in items {
@@ -1319,10 +1337,10 @@ where
                     then_body,
                     else_body,
                 } => {
-                    if Self::evaluate_handler_condition(condition)? {
-                        self.execute_handler_items(then_body, log_host)?;
+                    if Self::evaluate_handler_condition(condition, event)? {
+                        self.execute_handler_items(then_body, event, log_host)?;
                     } else {
-                        self.execute_handler_items(else_body, log_host)?;
+                        self.execute_handler_items(else_body, event, log_host)?;
                     }
                 }
                 _ => {
@@ -1338,44 +1356,82 @@ where
 
     fn evaluate_handler_condition(
         expression: &nscript_syntax::ast::Expr,
+        event: Option<&SignedEvent>,
     ) -> Result<bool, RuntimeError> {
         match &expression.value {
             ExprKind::Bool(value) => Ok(*value),
             ExprKind::Unary { operator, value } if operator == "!" => {
-                Ok(!Self::evaluate_handler_condition(value)?)
+                Ok(!Self::evaluate_handler_condition(value, event)?)
             }
             ExprKind::Binary {
                 operator,
                 left,
                 right,
             } if operator == "&&" || operator == "||" => {
-                let left = Self::evaluate_handler_condition(left)?;
+                let left = Self::evaluate_handler_condition(left, event)?;
                 if operator == "&&" {
-                    Ok(left && Self::evaluate_handler_condition(right)?)
+                    Ok(left && Self::evaluate_handler_condition(right, event)?)
                 } else {
-                    Ok(left || Self::evaluate_handler_condition(right)?)
+                    Ok(left || Self::evaluate_handler_condition(right, event)?)
                 }
             }
             ExprKind::Binary {
                 operator,
                 left,
                 right,
-            } if operator == "==" || operator == "!=" => {
+            } if matches!(operator.as_str(), "==" | "!=" | "contains") => {
+                if operator == "contains" {
+                    let (Some(haystack), Some(needle)) = (
+                        Self::handler_text(left, event),
+                        Self::handler_text(right, event),
+                    ) else {
+                        return Err(RuntimeError::InvalidOperationArguments {
+                            operation: "handler_condition".to_owned(),
+                        });
+                    };
+                    return Ok(haystack.contains(&needle));
+                }
                 let equal = match (&left.value, &right.value) {
                     (ExprKind::Bool(a), ExprKind::Bool(b)) => a == b,
                     (ExprKind::Integer(a), ExprKind::Integer(b)) => a == b,
                     (ExprKind::Text(a), ExprKind::Text(b)) => a == b,
-                    _ => {
-                        return Err(RuntimeError::InvalidOperationArguments {
-                            operation: "handler_condition".to_owned(),
-                        });
-                    }
+                    _ => match (
+                        Self::handler_text(left, event),
+                        Self::handler_text(right, event),
+                    ) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => {
+                            return Err(RuntimeError::InvalidOperationArguments {
+                                operation: "handler_condition".to_owned(),
+                            });
+                        }
+                    },
                 };
                 Ok(if operator == "==" { equal } else { !equal })
             }
             _ => Err(RuntimeError::InvalidOperationArguments {
                 operation: "handler_condition".to_owned(),
             }),
+        }
+    }
+
+    fn handler_text(
+        expression: &nscript_syntax::ast::Expr,
+        event: Option<&SignedEvent>,
+    ) -> Option<String> {
+        match &expression.value {
+            ExprKind::Text(value) => Some(value.clone()),
+            ExprKind::Member { value, name } if matches!(&value.value, ExprKind::Identifier(base) if base == "event") =>
+            {
+                let event = event?;
+                match name.value.as_str() {
+                    "id" => Some(event.id.clone()),
+                    "author" => Some(event.signer.clone()),
+                    "content" => Some(event.unsigned.content.clone()),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -3491,6 +3547,38 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["then"]
         );
+    }
+
+    #[test]
+    fn handler_body_can_match_delivered_event_fields() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    if event.author == \"alice\" && event.content contains \"nostr\" {\n        print(\"matched\")\n    }\n}";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "hello nostr".to_owned(),
+                tags: Vec::new(),
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "event-fields".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut logs = FakeLogHost::default();
+        runtime
+            .execute_handler_body_for_event(&checked.handlers[0], &event, &mut logs)
+            .expect("event-bound condition executes");
+        assert_eq!(logs.records[0].message, "matched");
     }
 
     #[test]
