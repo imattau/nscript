@@ -53,6 +53,7 @@ pub enum RuntimeError {
     ResourceLimit { resource: String },
     OperationUnavailable { module: String, operation: String },
     InvalidOperationArguments { operation: String },
+    PaymentLimitExceeded { amount: i64, limit: i64 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -412,6 +413,7 @@ pub trait OperationHost {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OperationPolicy {
     allowed: BTreeSet<(String, String)>,
+    max_payment: Option<i64>,
 }
 
 impl OperationPolicy {
@@ -425,6 +427,17 @@ impl OperationPolicy {
     pub fn permits(&self, module: &str, operation: &str) -> bool {
         self.allowed
             .contains(&(module.to_owned(), operation.to_owned()))
+    }
+
+    #[must_use]
+    pub fn allow_payment_up_to(mut self, limit: i64) -> Self {
+        self.max_payment = Some(limit);
+        self
+    }
+
+    #[must_use]
+    pub fn payment_limit(&self) -> Option<i64> {
+        self.max_payment
     }
 }
 
@@ -606,6 +619,14 @@ where
                 capability: format!("{module}.{operation}"),
             });
         }
+        if module == "nip47"
+            && operation == "pay_invoice"
+            && let Some(amount) = payment_amount(arguments)
+            && let Some(limit) = policy.payment_limit()
+            && amount > limit
+        {
+            return Err(RuntimeError::PaymentLimitExceeded { amount, limit });
+        }
         self.invoke_operation(host, module, operation, arguments)
     }
 
@@ -725,6 +746,21 @@ fn checked_to_operation(argument: &CheckedArgument) -> OperationValue {
                 .map(|(field, value)| (field.clone(), checked_to_operation(value)))
                 .collect(),
         },
+    }
+}
+
+fn payment_amount(arguments: &[OperationValue]) -> Option<i64> {
+    match arguments {
+        [OperationValue::WalletPayment(payment)] => Some(payment.amount),
+        [OperationValue::Record { name, fields }] if name == "WalletPayment" => {
+            fields.iter().find_map(|(field, value)| {
+                (field == "amount").then_some(match value {
+                    OperationValue::Integer(amount) => Some(*amount),
+                    _ => None,
+                })?
+            })
+        }
+        _ => None,
     }
 }
 
@@ -3092,6 +3128,37 @@ mod tests {
                 invoice: "lnbc1example".to_owned(),
                 amount: 1000,
                 settled: true,
+            })
+        );
+    }
+
+    #[test]
+    fn payment_policy_rejects_amounts_over_budget_before_host_call() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let policy = OperationPolicy::default()
+            .allow("nip47", "pay_invoice")
+            .allow_payment_up_to(500);
+        let result = runtime.invoke_authorized_operation(
+            &policy,
+            &mut host,
+            "nip47",
+            "pay_invoice",
+            &[OperationValue::WalletPayment(WalletPayment {
+                invoice: "lnbc1example".to_owned(),
+                amount: 1000,
+            })],
+        );
+        assert_eq!(
+            result,
+            Err(RuntimeError::PaymentLimitExceeded {
+                amount: 1000,
+                limit: 500,
             })
         );
     }

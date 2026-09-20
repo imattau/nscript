@@ -141,6 +141,8 @@ performing relay, signer, storage, or other host effects.
   method validation behind explicit signing/HTTP capabilities.
 - Added NIP-47 typed `WalletPayment`/`PaymentResult` values and `pay_invoice`,
   with positive-amount validation and an explicit `Payment` capability.
+- Added policy-level payment budgets via `allow_payment_up_to`, enforcing the
+  limit before a wallet host is invoked and returning a typed runtime error.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

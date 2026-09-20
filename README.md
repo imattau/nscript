@@ -194,6 +194,8 @@ and methods behind explicit signing/HTTP capabilities.
 NIP-47 wallet payments use typed `WalletPayment` and `PaymentResult` values.
 `nip47.pay_invoice` validates invoices and positive amounts behind an explicit
 `Payment` capability; payment authorization is never ambient.
+Policies can additionally constrain payment authority with
+`allow_payment_up_to`, which rejects over-budget requests before host dispatch.
 
 ## Repository map
 
