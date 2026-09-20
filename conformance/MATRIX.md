@@ -15,15 +15,15 @@ against deterministic host fakes.
 | Secret-key isolation | Planned | `secret-without-capability.ns` | Secret redaction |
 | Query lowering and bounds | `mentions.ns` | `unbounded-local-filter.ns` | Filter trace planned |
 | Pattern exhaustiveness | `exhaustive-match.ns` | `non-exhaustive-match.ns`, `unreachable-pattern.ns` | — |
-| At-least-once handlers | `idempotent-handler.ns` | Planned | Duplicate delivery |
-| Store transactions | `idempotent-handler.ns` | Planned | Transaction rollback |
+| At-least-once handlers | `idempotent-handler.ns` | `dispatch_event` runtime test | Duplicate delivery |
+| Store transactions | `idempotent-handler.ns` | `dispatch_event_transactional` runtime test | Transaction rollback |
 | NIP-19 round trips | `nip19.ns` | Planned | `vectors/nip19.json` |
 | NIP-46 validation | `hello-note.ns` | Planned | Signer denial |
 | Typed tags | `mentions.ns` | Planned | Serialization planned |
 | Replaceable events | `replaceable.ns` | `invalid-event-mode.ns` | Tie-break vector planned |
 | Timers | `timer.ns` | Planned | Timer overlap |
 | HTTP origin policy | Example only | Planned | Redirect denial |
-| Partial relay publication | `hello-note.ns` | Planned | Partial publication |
+| Partial relay publication | `hello-note.ns` | Runtime partial-publication test | Partial publication |
 | Package resolution | Planned | Planned | Resolver vector planned |
 
 Rows marked “Planned” are release blockers, not unspecified behaviour.
