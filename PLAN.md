@@ -88,6 +88,9 @@ performing relay, signer, storage, or other host effects.
   record names and field values across the capability boundary. Runtime hosts
   normalize scalar NIP records into their validated typed values before
   dispatch, while preserving legacy typed host calls.
+- Added the first next-tranche module, NIP-10, with typed `Reply` records,
+  root/target references, a `publish_reply` operation, reply-tag lowering, and
+  valid source/runtime conformance coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

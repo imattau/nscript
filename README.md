@@ -97,6 +97,10 @@ NIP-5A site deployment uses typed `SiteDeployment` values and explicit
 storage/signing/relay capabilities; it does not grant ambient filesystem or
 shell access.
 
+NIP-10 replies use typed root and target references. `nip10.publish_reply`
+lowers a checked `Reply` record to reply-tag semantics through an explicit
+signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

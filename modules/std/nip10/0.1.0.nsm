@@ -10,3 +10,15 @@ tag ReplyTo {
     literal "reply" at 3
     field author: Option<PubKey> at 4
 }
+
+record Reply {
+    field target: EventId
+    field root: EventId
+    field content: Text
+}
+
+error ReplyError {
+    field message: Text
+}
+
+operation publish_reply(reply: Reply) -> Result<PublishReport,ReplyError> effect Sign,Relay permission reply

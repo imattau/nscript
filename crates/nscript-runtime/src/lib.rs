@@ -62,6 +62,13 @@ pub struct PrivateMessage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ThreadReply {
+    pub target: String,
+    pub root: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -143,6 +150,7 @@ pub enum OperationValue {
     EncryptedText(String),
     GiftWrap(String),
     PrivateMessage(PrivateMessage),
+    ThreadReply(ThreadReply),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -849,6 +857,25 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip10", "publish_reply") => {
+                let [OperationValue::ThreadReply(reply)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if reply.target.is_empty() || reply.root.is_empty() || reply.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://replies".to_owned(),
+                        accepted: true,
+                        detail: "reply tags lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1027,6 +1054,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             (Some(content), Some(recipient)) => {
                 OperationValue::PrivateMessage(PrivateMessage { content, recipient })
             }
+            _ => value.clone(),
+        },
+        "Reply" => match (text("target"), text("root"), text("content")) {
+            (Some(target), Some(root), Some(content)) => OperationValue::ThreadReply(ThreadReply {
+                target,
+                root,
+                content,
+            }),
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -1406,6 +1441,43 @@ mod tests {
                 host.call_function("nip19", function, &[FunctionValue::Text(value.to_owned())]);
             assert!(result.is_ok());
         }
+    }
+
+    #[test]
+    fn nip10_lowers_replies_to_root_and_target_references() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip10", "publish_reply"),
+                &mut host,
+                "nip10",
+                "publish_reply",
+                &[OperationValue::Record {
+                    name: "Reply".to_owned(),
+                    fields: vec![
+                        (
+                            "target".to_owned(),
+                            OperationValue::Text("event-target".to_owned()),
+                        ),
+                        (
+                            "root".to_owned(),
+                            OperationValue::Text("event-root".to_owned()),
+                        ),
+                        (
+                            "content".to_owned(),
+                            OperationValue::Text("Agreed".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("reply host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 
     #[test]

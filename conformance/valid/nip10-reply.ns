@@ -1,0 +1,12 @@
+// NIP-10 replies lower into typed root/reply event references.
+use nip10
+
+permissions {
+    reply
+}
+
+let result = nip10.publish_reply(Reply {
+    target: "event-target";
+    root: "event-root";
+    content: "Agreed";
+})
