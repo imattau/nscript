@@ -276,7 +276,9 @@ Inspect output also lists checked handler event types and lowered author/tag
 predicates for pre-execution review.
 Checked handlers retain their typed AST body, and the first interpreter slice
 executes direct `print("…")` statements through the bounded, audited
-`LogHost`; broader expression and control-flow evaluation remains next.
+`LogHost`. Boolean `if`/`else` branches now execute recursively, including
+short-circuit boolean operators and literal equality; broader expressions and
+event-bound values remain next.
 Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
 Signed-event values now carry typed `(tag, value)` pairs, allowing lowered tag

@@ -1261,9 +1261,9 @@ where
 
     /// Execute the currently supported handler body subset through host effects.
     ///
-    /// The initial interpreter slice supports direct `print("...")` statements;
-    /// unsupported statements return a stable runtime error instead of being
-    /// silently skipped.
+    /// The initial interpreter slice supports direct `print("...")` statements
+    /// and boolean `if` branches; unsupported statements return a stable
+    /// runtime error instead of being silently skipped.
     ///
     /// # Errors
     ///
@@ -1273,44 +1273,110 @@ where
         handler: &CheckedHandler,
         log_host: &mut H,
     ) -> Result<(), RuntimeError> {
-        for item in &handler.body {
+        self.execute_handler_items(&handler.body, log_host)
+    }
+
+    fn execute_handler_items<H: LogHost>(
+        &mut self,
+        items: &[Item],
+        log_host: &mut H,
+    ) -> Result<(), RuntimeError> {
+        for item in items {
             let Item::Statement(statement) = item else {
                 continue;
             };
-            let StatementKind::Expression(expression) = &statement.value else {
-                return Err(RuntimeError::OperationUnavailable {
-                    module: "handler".to_owned(),
-                    operation: "body_statement".to_owned(),
-                });
-            };
-            let ExprKind::Call { callee, arguments } = &expression.value else {
-                return Err(RuntimeError::OperationUnavailable {
-                    module: "handler".to_owned(),
-                    operation: "body_expression".to_owned(),
-                });
-            };
-            if !matches!(&callee.value, ExprKind::Identifier(name) if name == "print")
-                || arguments.len() != 1
-            {
-                return Err(RuntimeError::OperationUnavailable {
-                    module: "handler".to_owned(),
-                    operation: "body_call".to_owned(),
-                });
+            match &statement.value {
+                StatementKind::Expression(expression) => {
+                    let ExprKind::Call { callee, arguments } = &expression.value else {
+                        return Err(RuntimeError::OperationUnavailable {
+                            module: "handler".to_owned(),
+                            operation: "body_expression".to_owned(),
+                        });
+                    };
+                    if !matches!(&callee.value, ExprKind::Identifier(name) if name == "print")
+                        || arguments.len() != 1
+                    {
+                        return Err(RuntimeError::OperationUnavailable {
+                            module: "handler".to_owned(),
+                            operation: "body_call".to_owned(),
+                        });
+                    }
+                    let ExprKind::Text(message) = &arguments[0].value else {
+                        return Err(RuntimeError::InvalidOperationArguments {
+                            operation: "print".to_owned(),
+                        });
+                    };
+                    self.log(
+                        log_host,
+                        &LogRecord {
+                            level: "info".to_owned(),
+                            message: message.clone(),
+                        },
+                    )?;
+                }
+                StatementKind::If {
+                    condition,
+                    then_body,
+                    else_body,
+                } => {
+                    if Self::evaluate_handler_condition(condition)? {
+                        self.execute_handler_items(then_body, log_host)?;
+                    } else {
+                        self.execute_handler_items(else_body, log_host)?;
+                    }
+                }
+                _ => {
+                    return Err(RuntimeError::OperationUnavailable {
+                        module: "handler".to_owned(),
+                        operation: "body_statement".to_owned(),
+                    });
+                }
             }
-            let ExprKind::Text(message) = &arguments[0].value else {
-                return Err(RuntimeError::InvalidOperationArguments {
-                    operation: "print".to_owned(),
-                });
-            };
-            self.log(
-                log_host,
-                &LogRecord {
-                    level: "info".to_owned(),
-                    message: message.clone(),
-                },
-            )?;
         }
         Ok(())
+    }
+
+    fn evaluate_handler_condition(
+        expression: &nscript_syntax::ast::Expr,
+    ) -> Result<bool, RuntimeError> {
+        match &expression.value {
+            ExprKind::Bool(value) => Ok(*value),
+            ExprKind::Unary { operator, value } if operator == "!" => {
+                Ok(!Self::evaluate_handler_condition(value)?)
+            }
+            ExprKind::Binary {
+                operator,
+                left,
+                right,
+            } if operator == "&&" || operator == "||" => {
+                let left = Self::evaluate_handler_condition(left)?;
+                if operator == "&&" {
+                    Ok(left && Self::evaluate_handler_condition(right)?)
+                } else {
+                    Ok(left || Self::evaluate_handler_condition(right)?)
+                }
+            }
+            ExprKind::Binary {
+                operator,
+                left,
+                right,
+            } if operator == "==" || operator == "!=" => {
+                let equal = match (&left.value, &right.value) {
+                    (ExprKind::Bool(a), ExprKind::Bool(b)) => a == b,
+                    (ExprKind::Integer(a), ExprKind::Integer(b)) => a == b,
+                    (ExprKind::Text(a), ExprKind::Text(b)) => a == b,
+                    _ => {
+                        return Err(RuntimeError::InvalidOperationArguments {
+                            operation: "handler_condition".to_owned(),
+                        });
+                    }
+                };
+                Ok(if operator == "==" { equal } else { !equal })
+            }
+            _ => Err(RuntimeError::InvalidOperationArguments {
+                operation: "handler_condition".to_owned(),
+            }),
+        }
     }
 
     /// Run a staged storage transaction and commit it only when the closure succeeds.
@@ -3399,6 +3465,32 @@ mod tests {
             .expect("print statement executes");
         assert_eq!(logs.records.len(), 1);
         assert_eq!(logs.records[0].message, "hello");
+    }
+
+    #[test]
+    fn handler_body_evaluates_boolean_branches() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note { if true { print(\"then\") } else { print(\"else\") } }";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut logs = FakeLogHost::default();
+        runtime
+            .execute_handler_body(&checked.handlers[0], &mut logs)
+            .expect("conditional body executes");
+        assert_eq!(
+            logs.records
+                .iter()
+                .map(|record| record.message.as_str())
+                .collect::<Vec<_>>(),
+            vec!["then"]
+        );
     }
 
     #[test]
