@@ -27,9 +27,9 @@ pub struct NostrIr {
 #[must_use]
 pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-    if !ir.capabilities.is_empty() {
-        // One shared `() -> ()` function type for capability host calls.
-        push_section(&mut module, 1, &[1, 0x60, 0, 0]);
+    // One shared `() -> ()` function type for capability host calls and main.
+    push_section(&mut module, 1, &[1, 0x60, 0, 0]);
+    {
         let mut imports = Vec::new();
         push_u32(
             &mut imports,
@@ -46,6 +46,36 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
         }
         push_section(&mut module, 2, &imports);
     }
+    // Define and export an executable entry point. Each declared capability is
+    // called in stable order; host bindings provide the real typed arguments in
+    // the next lowering stage.
+    push_section(&mut module, 3, &[1, 0]);
+    let mut export = Vec::new();
+    push_u32(&mut export, 1);
+    push_name(&mut export, "nscript_main");
+    export.push(0);
+    push_u32(
+        &mut export,
+        u32::try_from(ir.capabilities.len()).expect("import count fits WASM"),
+    );
+    push_section(&mut module, 7, &export);
+    let mut body = vec![0];
+    for index in 0..ir.capabilities.len() {
+        body.push(0x10);
+        push_u32(
+            &mut body,
+            u32::try_from(index).expect("import index fits WASM"),
+        );
+    }
+    body.push(0x0b);
+    let mut code = Vec::new();
+    push_u32(&mut code, 1);
+    push_u32(
+        &mut code,
+        u32::try_from(body.len()).expect("function body fits WASM"),
+    );
+    code.extend_from_slice(&body);
+    push_section(&mut module, 10, &code);
     let ir_json = serde_json::to_vec(ir).expect("IR is serializable");
     push_custom_section(&mut module, "nscript.ir", &ir_json);
     let capabilities = ir
@@ -287,6 +317,11 @@ mod tests {
         };
         let bytes = emit_wasm(&ir);
         assert_eq!(&bytes[..8], b"\0asm\x01\0\0\0");
+        assert!(
+            bytes
+                .windows(b"nscript_main".len())
+                .any(|window| window == b"nscript_main")
+        );
         assert!(
             bytes
                 .windows(b"nscript.capabilities".len())

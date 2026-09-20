@@ -335,7 +335,9 @@ transport/encryption to an injected `Nip46Transport` without exposing keys.
 Started the WASM backend with deterministic `nscript-ir` artifacts: valid WASM
 containers declare capability imports and carry the checked IR and capability
 manifest in custom sections. `nscript compile --emit wasm` now emits the
-artifact; executable handler lowering remains the next WASM increment.
+artifact. The artifact now exports `nscript_main` and deterministically invokes
+declared capability imports; typed argument lowering and host dispatch remain
+the next WASM increment.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
