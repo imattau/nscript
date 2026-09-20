@@ -75,6 +75,9 @@ and the same explicit publication boundary.
 NIP-09 deletion is modeled as a typed `DeletionRequest`, preserving the fact
 that relays may accept or ignore the request.
 
+NIP-51 user lists use a typed `UserList` with nominal `PubKey` members and an
+explicit signed publication operation.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

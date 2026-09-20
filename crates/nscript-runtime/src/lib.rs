@@ -91,6 +91,12 @@ pub struct DeletionRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserList {
+    pub identifier: String,
+    pub members: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
@@ -102,6 +108,7 @@ pub enum OperationValue {
     FollowList(FollowList),
     Reaction(Reaction),
     DeletionRequest(DeletionRequest),
+    UserList(UserList),
     PublishReport(PublishReport),
 }
 
@@ -848,6 +855,20 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip51", "publish_user_list") => {
+                let [OperationValue::UserList(_list)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://lists".to_owned(),
+                        accepted: true,
+                        detail: "ok".to_owned(),
+                    }],
+                }))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: operation.to_owned(),
@@ -1230,6 +1251,30 @@ mod tests {
                 })],
             )
             .expect("deletion request operation is authorized");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip51_publishes_typed_user_lists() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip51", "publish_user_list"),
+                &mut host,
+                "nip51",
+                "publish_user_list",
+                &[OperationValue::UserList(UserList {
+                    identifier: "muted".to_owned(),
+                    members: vec!["33".repeat(32)],
+                })],
+            )
+            .expect("user-list operation is authorized");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 }

@@ -73,6 +73,8 @@ performing relay, signer, storage, or other host effects.
   values with deterministic runtime coverage.
 - Added typed NIP-09 `DeletionRequest` publication, explicitly modeling
   deletion as a relay request rather than a guaranteed erase.
+- Added typed NIP-51 `UserList` publication with nominal `PubKey` members and
+  deterministic runtime coverage.
 
 ## Deferred
 
