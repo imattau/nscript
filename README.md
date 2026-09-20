@@ -78,6 +78,9 @@ that relays may accept or ignore the request.
 NIP-51 user lists use a typed `UserList` with nominal `PubKey` members and an
 explicit signed publication operation.
 
+NIP-57 zaps produce a typed `PaymentIntent` through an explicit payment effect;
+creating a request does not silently authorize a transfer.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.

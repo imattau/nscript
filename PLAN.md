@@ -75,6 +75,8 @@ performing relay, signer, storage, or other host effects.
   deletion as a relay request rather than a guaranteed erase.
 - Added typed NIP-51 `UserList` publication with nominal `PubKey` members and
   deterministic runtime coverage.
+- Added typed NIP-57 `ZapRequest` and `PaymentIntent`, enforcing positive
+  amounts while keeping payment authorization outside request creation.
 
 ## Deferred
 

@@ -97,6 +97,20 @@ pub struct UserList {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZapRequest {
+    pub recipient: String,
+    pub amount: i64,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentIntent {
+    pub recipient: String,
+    pub amount: i64,
+    pub invoice: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     PubKey(String),
@@ -109,6 +123,8 @@ pub enum OperationValue {
     Reaction(Reaction),
     DeletionRequest(DeletionRequest),
     UserList(UserList),
+    ZapRequest(ZapRequest),
+    PaymentIntent(PaymentIntent),
     PublishReport(PublishReport),
 }
 
@@ -869,6 +885,23 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip57", "create_zap_request") => {
+                let [OperationValue::ZapRequest(request)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if request.amount <= 0 {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PaymentIntent(PaymentIntent {
+                    recipient: request.recipient.clone(),
+                    amount: request.amount,
+                    invoice: format!("fake-invoice-{}", request.amount),
+                }))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: operation.to_owned(),
@@ -1276,5 +1309,46 @@ mod tests {
             )
             .expect("user-list operation is authorized");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip57_creates_payment_intent_without_authorizing_payment() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip57", "create_zap_request"),
+                &mut host,
+                "nip57",
+                "create_zap_request",
+                &[OperationValue::ZapRequest(ZapRequest {
+                    recipient: "44".repeat(32),
+                    amount: 1_000,
+                    message: "thanks".to_owned(),
+                })],
+            )
+            .expect("zap request operation is authorized");
+        assert!(matches!(result, OperationValue::PaymentIntent(intent) if intent.amount == 1_000));
+    }
+
+    #[test]
+    fn nip57_rejects_non_positive_amounts() {
+        let mut host = FakeOperationHost::default();
+        let result = host.call(
+            1,
+            "nip57",
+            "create_zap_request",
+            &[OperationValue::ZapRequest(ZapRequest {
+                recipient: "44".repeat(32),
+                amount: 0,
+                message: String::new(),
+            })],
+        );
+        assert!(result.is_err());
     }
 }
