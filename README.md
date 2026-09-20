@@ -56,8 +56,9 @@ bound and are not given raw private keys. Runtime operation dispatch checks an
 explicit capability policy before invoking any module host operation, and
 checked source calls can now be executed through that boundary.
 
-NIP-19 identifiers also have a pure typed host path: valid `npub` Bech32
-values are checksum-verified before conversion to a nominal `PubKey`.
+NIP-19 identifiers also have a pure typed host path: valid `npub`, `nprofile`,
+`nevent`, and `naddr` Bech32 values are checksum-verified before becoming
+nominal identifier values; `npub` can then convert to a nominal `PubKey`.
 
 ## Repository map
 

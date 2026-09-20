@@ -10,6 +10,18 @@ nominal NoteId from Text {
     require length(value) > 0
 }
 
+nominal Nprofile from Text {
+    require length(value) > 0
+}
+
+nominal Nevent from Text {
+    require length(value) > 0
+}
+
+nominal Naddr from Text {
+    require length(value) > 0
+}
+
 enum EntityPrefix {
     Npub,
     Note,
@@ -29,3 +41,6 @@ error DecodeError {
 
 function npub(value: Text) -> Result<Npub,DecodeError>
 function pubkey(value: Npub) -> Result<PubKey,DecodeError>
+function nprofile(value: Text) -> Result<Nprofile,DecodeError>
+function nevent(value: Text) -> Result<Nevent,DecodeError>
+function naddr(value: Text) -> Result<Naddr,DecodeError>

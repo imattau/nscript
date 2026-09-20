@@ -61,6 +61,8 @@ performing relay, signer, storage, or other host effects.
   fake relay publication report from the composed operation host.
 - Added a pure-function host boundary with real NIP-19 `npub` Bech32 checksum
   validation and conversion to nominal `PubKey`, including invalid-input tests.
+- Extended NIP-19 with nominal `Nprofile`, `Nevent`, and `Naddr` values and
+  checksum-validated constructors.
 
 ## Deferred
 

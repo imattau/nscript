@@ -75,6 +75,9 @@ pub enum OperationValue {
 pub enum FunctionValue {
     Text(String),
     Npub(String),
+    Nprofile(String),
+    Nevent(String),
+    Naddr(String),
     PubKey(String),
 }
 
@@ -524,6 +527,15 @@ impl PureFunctionHost for Nip19FunctionHost {
             ("nip19", "pubkey", [FunctionValue::Npub(value)]) => {
                 decode_npub(value).map(FunctionValue::PubKey)
             }
+            ("nip19", "nprofile", [FunctionValue::Text(value)]) => {
+                validate_hrp(value, "nprofile").map(|_| FunctionValue::Nprofile(value.clone()))
+            }
+            ("nip19", "nevent", [FunctionValue::Text(value)]) => {
+                validate_hrp(value, "nevent").map(|_| FunctionValue::Nevent(value.clone()))
+            }
+            ("nip19", "naddr", [FunctionValue::Text(value)]) => {
+                validate_hrp(value, "naddr").map(|_| FunctionValue::Naddr(value.clone()))
+            }
             _ => Err(RuntimeError::OperationUnavailable {
                 module: module.to_owned(),
                 operation: function.to_owned(),
@@ -534,26 +546,28 @@ impl PureFunctionHost for Nip19FunctionHost {
 
 #[allow(clippy::format_collect)]
 fn decode_npub(value: &str) -> Result<String, RuntimeError> {
-    let (hrp, data) =
-        bech32_decode(value).ok_or_else(|| RuntimeError::InvalidOperationArguments {
-            operation: "nip19.npub".to_owned(),
-        })?;
-    if hrp != "npub" {
-        return Err(RuntimeError::InvalidOperationArguments {
-            operation: "nip19.npub".to_owned(),
-        });
-    }
-    let bytes = convert_bits(&data, 5, 8, false).ok_or_else(|| {
-        RuntimeError::InvalidOperationArguments {
-            operation: "nip19.npub".to_owned(),
-        }
-    })?;
+    let bytes = validate_hrp(value, "npub")?;
     if bytes.len() != 32 {
         return Err(RuntimeError::InvalidOperationArguments {
             operation: "nip19.npub".to_owned(),
         });
     }
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn validate_hrp(value: &str, expected: &str) -> Result<Vec<u8>, RuntimeError> {
+    let (hrp, data) =
+        bech32_decode(value).ok_or_else(|| RuntimeError::InvalidOperationArguments {
+            operation: format!("nip19.{expected}"),
+        })?;
+    if hrp != expected {
+        return Err(RuntimeError::InvalidOperationArguments {
+            operation: format!("nip19.{expected}"),
+        });
+    }
+    convert_bits(&data, 5, 8, false).ok_or_else(|| RuntimeError::InvalidOperationArguments {
+        operation: format!("nip19.{expected}"),
+    })
 }
 
 fn bech32_decode(value: &str) -> Option<(String, Vec<u8>)> {
@@ -973,5 +987,25 @@ mod tests {
             )],
         );
         assert!(bad_checksum.is_err());
+    }
+
+    #[test]
+    fn nip19_validates_profile_event_and_address_hrps() {
+        let mut host = Nip19FunctionHost;
+        for (function, value) in [
+            (
+                "nprofile",
+                "nprofile1qqsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq8uzqt",
+            ),
+            (
+                "nevent",
+                "nevent1qqsqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqradspk",
+            ),
+            ("naddr", "naddr1qypqxkrtttv"),
+        ] {
+            let result =
+                host.call_function("nip19", function, &[FunctionValue::Text(value.to_owned())]);
+            assert!(result.is_ok());
+        }
     }
 }
