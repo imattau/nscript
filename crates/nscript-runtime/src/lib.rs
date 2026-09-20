@@ -128,6 +128,13 @@ pub struct SearchResults {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LiveEvent {
+    pub identifier: String,
+    pub title: String,
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayList {
     pub read: Vec<String>,
     pub write: Vec<String>,
@@ -220,6 +227,7 @@ pub enum OperationValue {
     AuthenticatedRelay(AuthenticatedRelay),
     SearchRequest(SearchRequest),
     SearchResults(SearchResults),
+    LiveEvent(LiveEvent),
     RelayList(RelayList),
     AppData(AppData),
     FollowList(FollowList),
@@ -1125,6 +1133,26 @@ impl OperationHost for FakeOperationHost {
                     count: 0,
                 }))
             }
+            ("nip53", "publish_live_event") => {
+                let [OperationValue::LiveEvent(event)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if event.identifier.is_empty() || event.title.is_empty() || event.summary.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://live-events".to_owned(),
+                        accepted: true,
+                        detail: "live event lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip65", "publish_relay_list") => {
                 let [OperationValue::RelayList(_list)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -1359,6 +1387,16 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         },
         "SearchRequest" => match text("query") {
             Some(query) => OperationValue::SearchRequest(SearchRequest { query }),
+            _ => value.clone(),
+        },
+        "LiveEvent" => match (text("identifier"), text("title"), text("summary")) {
+            (Some(identifier), Some(title), Some(summary)) => {
+                OperationValue::LiveEvent(LiveEvent {
+                    identifier,
+                    title,
+                    summary,
+                })
+            }
             _ => value.clone(),
         },
         "AppData" => match (text("identifier"), text("content")) {
@@ -2084,6 +2122,43 @@ mod tests {
                 count: 0,
             })
         );
+    }
+
+    #[test]
+    fn nip53_lowers_addressable_live_events() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime
+            .invoke_authorized_operation(
+                &OperationPolicy::default().allow("nip53", "publish_live_event"),
+                &mut host,
+                "nip53",
+                "publish_live_event",
+                &[OperationValue::Record {
+                    name: "LiveEvent".to_owned(),
+                    fields: vec![
+                        (
+                            "identifier".to_owned(),
+                            OperationValue::Text("weekly-space".to_owned()),
+                        ),
+                        (
+                            "title".to_owned(),
+                            OperationValue::Text("Nostr Builders".to_owned()),
+                        ),
+                        (
+                            "summary".to_owned(),
+                            OperationValue::Text("A live discussion".to_owned()),
+                        ),
+                    ],
+                }],
+            )
+            .expect("live event host available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 
     #[test]

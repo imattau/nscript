@@ -112,6 +112,8 @@ performing relay, signer, storage, or other host effects.
   validated filter without materializing matching events.
 - Added NIP-50 typed `SearchRequest`/`SearchResults` and `search_events`, with
   explicit relay capability and query validation.
+- Added NIP-53 typed `LiveEvent` records and `publish_live_event`, with
+  addressable event validation and source/runtime conformance coverage.
 
 ## Next tranche: content, groups, relay tooling, payments, and extensibility
 

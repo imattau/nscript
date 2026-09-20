@@ -1,0 +1,12 @@
+// NIP-53 live events and spaces are addressable event records.
+use nip53
+
+permissions {
+    live_event
+}
+
+let result = nip53.publish_live_event(LiveEvent {
+    identifier: "weekly-space";
+    title: "Nostr Builders";
+    summary: "A live discussion";
+})

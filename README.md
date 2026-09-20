@@ -139,6 +139,10 @@ NIP-50 search uses typed `SearchRequest` and `SearchResults` values.
 `nip50.search_events` validates query intent and delegates result retrieval to
 the relay capability.
 
+NIP-53 live events use typed addressable `LiveEvent` records.
+`nip53.publish_live_event` validates the identifier and descriptive fields
+before publication through an explicit signing/relay capability.
+
 ## Repository map
 
 - [`PLAN.md`](PLAN.md) records the approved implementation plan.
