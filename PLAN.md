@@ -374,8 +374,8 @@ zero-argument capability imports or `(i32, i32)` payload imports.
 WASM artifacts now export their linear memory, allowing Wasmi `Caller`
 callbacks to read the pointer/length dispatch payload directly.
 `run_with_dispatch_host` now binds payload imports to `WasmDispatchHost`,
-decoding memory slices and returning the host state after `nscript_main`
-completes.
+decoding memory slices and dispatching each indexed operation import exactly
+once before returning the host state after `nscript_main` completes.
 The CLI now has a feature-backed end-to-end test that compiles `hello-note.ns`,
 executes it through Wasmi, and observes all three operation callbacks.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`

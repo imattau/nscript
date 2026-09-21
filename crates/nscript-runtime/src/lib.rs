@@ -124,13 +124,17 @@ pub mod wasmi_engine {
             let mut linker = Linker::new(&self.engine);
             for (name, takes_payload) in imports {
                 if *takes_payload {
+                    let operation_index = name
+                        .strip_prefix("op:")
+                        .and_then(|value| value.split(':').next())
+                        .and_then(|value| value.parse::<usize>().ok());
                     linker
                         .func_wrap(
                             "nscript",
                             name,
-                            |mut caller: Caller<'_, (H, super::InvocationId)>,
-                             ptr: i32,
-                             len: i32| {
+                            move |mut caller: Caller<'_, (H, super::InvocationId)>,
+                                  ptr: i32,
+                                  len: i32| {
                                 let memory = caller
                                     .get_export("memory")
                                     .and_then(Extern::into_memory)
@@ -143,11 +147,16 @@ pub mod wasmi_engine {
                                 let records =
                                     super::decode_wasm_dispatch(bytes, pointer, length)
                                         .map_err(|_| Error::new("invalid dispatch payload"))?;
+                                let index = operation_index
+                                    .ok_or_else(|| Error::new("invalid operation import"))?;
+                                let record = records
+                                    .get(index)
+                                    .ok_or_else(|| Error::new("operation index out of bounds"))?;
                                 let invocation = caller.data().1;
                                 super::dispatch_wasm_operations(
                                     &mut caller.data_mut().0,
                                     invocation,
-                                    &records,
+                                    std::slice::from_ref(record),
                                 )
                                 .map_err(|_| Error::new("dispatch denied"))?;
                                 Ok::<(), Error>(())

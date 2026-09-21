@@ -268,7 +268,7 @@ fn executes_compiled_wasm_through_wasmi_dispatch_host() {
     let host = WasmiEngine::new(100_000)
         .run_with_dispatch_host(&module, &imports, Host::default(), 1)
         .expect("wasmi executes compiled artifact");
-    assert_eq!(host.0, 9);
+    assert_eq!(host.0, 3);
     let _ = std::fs::remove_file(output_path);
 }
 
