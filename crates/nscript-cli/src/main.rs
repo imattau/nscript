@@ -49,7 +49,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>]\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -544,7 +544,129 @@ fn compile_program(arguments: &[String], wasm: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Options that deliver events to handlers during `nscript run`.
+#[derive(Default)]
+struct RunOptions {
+    events: Vec<serde_json::Value>,
+    principal: Option<String>,
+}
+
+/// Separates `--event <json>`, `--events <file>` and `--as <key>` from the
+/// compiler arguments. `--events` reads one JSON event per line, or a single
+/// JSON array of events.
+fn take_run_options(arguments: &[String]) -> Result<(Vec<String>, RunOptions), String> {
+    let mut rest = Vec::new();
+    let mut options = RunOptions::default();
+    let mut index = 0;
+    while index < arguments.len() {
+        let flag = arguments[index].as_str();
+        if !matches!(flag, "--event" | "--events" | "--as") {
+            rest.push(arguments[index].clone());
+            index += 1;
+            continue;
+        }
+        let Some(value) = arguments.get(index + 1) else {
+            return Err(format!("{flag} requires a value"));
+        };
+        match flag {
+            "--event" => options.events.push(
+                serde_json::from_str(value)
+                    .map_err(|error| format!("--event is not valid JSON: {error}"))?,
+            ),
+            "--events" => {
+                let text = std::fs::read_to_string(value)
+                    .map_err(|error| format!("cannot read {value}: {error}"))?;
+                if let Ok(serde_json::Value::Array(events)) = serde_json::from_str(&text) {
+                    options.events.extend(events);
+                } else {
+                    for (number, line) in text
+                        .lines()
+                        .enumerate()
+                        .filter(|(_, line)| !line.trim().is_empty())
+                    {
+                        options
+                            .events
+                            .push(serde_json::from_str(line).map_err(|error| {
+                                format!("{value} line {}: {error}", number + 1)
+                            })?);
+                    }
+                }
+            }
+            _ => options.principal = Some(value.clone()),
+        }
+        index += 2;
+    }
+    Ok((rest, options))
+}
+
+/// `(module, operation)` to declared return type, for simulating operations no
+/// host implements.
+fn declared_returns(
+    graph: &nscript_modules::ResolvedModuleGraph,
+) -> std::collections::BTreeMap<(String, String), String> {
+    graph
+        .modules
+        .iter()
+        .flat_map(|(module, registered)| {
+            registered
+                .descriptor
+                .operations
+                .iter()
+                .map(move |operation| {
+                    (
+                        (module.clone(), operation.name.clone()),
+                        operation.return_type.clone(),
+                    )
+                })
+        })
+        .collect()
+}
+
+/// Runs the program's top-level module operation calls against the simulator.
+/// `run` simulates: what no host implements is answered from the operation's
+/// declared return type and recorded, never sent anywhere. Handler and function
+/// bodies are excluded, because they run when an event arrives or the function is
+/// called, not at startup.
+fn run_startup_operations<R, S, C, A>(
+    runtime: &mut nscript_runtime::Runtime<R, S, C, A>,
+    program: &Program,
+    checked: &nscript_semantics::CheckedProgram,
+    policy: &nscript_runtime::OperationPolicy,
+    operations: &mut nscript_runtime::eval::SimulatedOperations,
+) -> Result<(), ExitCode>
+where
+    R: nscript_runtime::RelayHost,
+    S: nscript_runtime::SignerHost,
+    C: nscript_runtime::ClockHost,
+    A: nscript_runtime::AuditHost,
+{
+    let mut startup = checked.clone();
+    startup.operation_calls =
+        nscript_runtime::eval::top_level_operation_calls(Some(program), checked)
+            .into_iter()
+            .cloned()
+            .collect();
+    let values = runtime
+        .run_operations(&startup, policy, operations)
+        .map_err(|error| {
+            eprintln!("error[R1002]: {error:?}");
+            ExitCode::from(1)
+        })?;
+    for (index, value) in values.iter().enumerate() {
+        println!("operation {index}: {value:?}");
+    }
+    Ok(())
+}
+
 fn run_program(arguments: &[String]) -> ExitCode {
+    let (arguments, options) = match take_run_options(arguments) {
+        Ok(taken) => taken,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let arguments = arguments.as_slice();
     if arguments.iter().any(|argument| argument == "--dry-run") {
         let json = arguments.iter().any(|argument| argument == "--json");
         let filtered = arguments
@@ -599,17 +721,16 @@ fn run_program(arguments: &[String]) -> ExitCode {
         nscript_runtime::OperationPolicy::default(),
         |policy, call| policy.allow(&call.module, &call.operation),
     );
-    let mut operation_host = nscript_runtime::FakeOperationHost::default();
-    let operation_values =
-        match runtime.run_operations(&checked, &operation_policy, &mut operation_host) {
-            Ok(values) => values,
-            Err(error) => {
-                eprintln!("error[R1002]: {error:?}");
-                return ExitCode::from(1);
-            }
-        };
-    for (index, value) in operation_values.iter().enumerate() {
-        println!("operation {index}: {value:?}");
+    let mut operation_host =
+        nscript_runtime::eval::SimulatedOperations::new(declared_returns(&graph));
+    if let Err(code) = run_startup_operations(
+        &mut runtime,
+        &program,
+        &checked,
+        &operation_policy,
+        &mut operation_host,
+    ) {
+        return code;
     }
     let reports = match runtime.run(&program, &checked) {
         Ok(reports) => reports,
@@ -629,7 +750,112 @@ fn run_program(arguments: &[String]) -> ExitCode {
             report.outcomes.len()
         );
     }
-    ExitCode::SUCCESS
+    deliver_events(
+        &mut runtime,
+        &program,
+        &checked,
+        &options,
+        &operation_policy,
+        &mut operation_host,
+    )
+}
+
+/// Delivers each `--event` to the handlers it matches and reports what they did:
+/// their status, what they logged, and the module operations they called.
+fn deliver_events<R, S, C, A>(
+    runtime: &mut nscript_runtime::Runtime<R, S, C, A>,
+    program: &Program,
+    checked: &nscript_semantics::CheckedProgram,
+    options: &RunOptions,
+    policy: &nscript_runtime::OperationPolicy,
+    operations: &mut nscript_runtime::eval::SimulatedOperations,
+) -> ExitCode
+where
+    R: nscript_runtime::RelayHost,
+    S: nscript_runtime::SignerHost,
+    C: nscript_runtime::ClockHost,
+    A: nscript_runtime::AuditHost,
+{
+    if options.events.is_empty() {
+        if !checked.handlers.is_empty() {
+            println!(
+                "note: {} handler(s) registered; deliver events with --event <json> or --events <file>",
+                checked.handlers.len()
+            );
+        }
+        return ExitCode::SUCCESS;
+    }
+    let mut failed = false;
+    for (index, value) in options.events.iter().enumerate() {
+        let event = match nscript_runtime::eval::event_from_json(value) {
+            Ok(event) => event,
+            Err(message) => {
+                eprintln!("error[R1004]: event {index}: {message}");
+                failed = true;
+                continue;
+            }
+        };
+        println!(
+            "event {} ({}, kind {})",
+            event.id, event.unsigned.event_type, event.unsigned.kind
+        );
+        let mut log = nscript_runtime::FakeLogHost::default();
+        let calls_before = operations.calls.len();
+        let outcomes = runtime.run_handlers_for_event(
+            program,
+            checked,
+            &event,
+            policy,
+            operations,
+            &mut log,
+            options.principal.as_deref(),
+            nscript_runtime::eval::EvalLimits::default(),
+        );
+        if outcomes.is_empty() {
+            println!("  no handler matched");
+        }
+        for outcome in &outcomes {
+            match &outcome.result {
+                Ok(_) => println!("  handler {}: ok", outcome.handler),
+                Err(error) => {
+                    failed = true;
+                    let detail = match error {
+                        nscript_runtime::RuntimeError::EvaluationError { message }
+                            if message.contains("`me`") =>
+                        {
+                            format!("{message} (pass --as <key>)")
+                        }
+                        nscript_runtime::RuntimeError::EvaluationError { message } => {
+                            message.clone()
+                        }
+                        other => format!("{other:?}"),
+                    };
+                    eprintln!("error[R1004]: handler {} failed: {detail}", outcome.handler);
+                }
+            }
+        }
+        for record in &log.records {
+            println!("  log {}: {}", record.level, record.message);
+        }
+        for call in &operations.calls[calls_before..] {
+            let arguments = call
+                .arguments
+                .iter()
+                .map(|argument| format!("{argument:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let note = if call.simulated { "  [simulated]" } else { "" };
+            println!(
+                "  operation {}.{}({arguments}){note}",
+                call.module, call.operation
+            );
+        }
+    }
+    if failed {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn load_program(

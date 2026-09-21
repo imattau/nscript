@@ -710,6 +710,251 @@ where
     }
 }
 
+/// Builds a [`crate::SignedEvent`] from JSON, for delivering a synthetic event
+/// to handlers (`nscript run --event`). Missing fields take defaults: an
+/// `event_type` of `Note`, kind 1, empty content and tags, and a placeholder
+/// author, id and signature. `author` is accepted as an alias for `signer`. Tags
+/// are `[name, value]` arrays; a tag with no value has an empty one.
+///
+/// # Errors
+///
+/// Returns a message for a non-object or an out-of-range `kind`.
+pub fn event_from_json(value: &serde_json::Value) -> Result<crate::SignedEvent, String> {
+    use serde_json::Value as Json;
+    let object = value.as_object().ok_or("an event must be a JSON object")?;
+    let text = |keys: &[&str], default: &str| {
+        keys.iter()
+            .find_map(|key| object.get(*key).and_then(Json::as_str))
+            .unwrap_or(default)
+            .to_owned()
+    };
+    let kind = u16::try_from(object.get("kind").and_then(Json::as_u64).unwrap_or(1))
+        .map_err(|_| "kind must fit in 16 bits")?;
+    let tags = object
+        .get("tags")
+        .and_then(Json::as_array)
+        .map(|tags| {
+            tags.iter()
+                .filter_map(|tag| {
+                    let tag = tag.as_array()?;
+                    let name = tag.first()?.as_str()?;
+                    let value = tag.get(1).and_then(Json::as_str).unwrap_or("");
+                    Some((name.to_owned(), value.to_owned()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(crate::SignedEvent {
+        unsigned: crate::UnsignedEvent {
+            event_type: text(&["event_type"], "Note"),
+            kind,
+            content: text(&["content"], ""),
+            tags,
+            created_at: object.get("created_at").and_then(Json::as_u64).unwrap_or(0),
+        },
+        signer: text(&["signer", "author"], "alice"),
+        id: text(&["id"], "sim-event"),
+        signature: text(&["signature"], "sig"),
+    })
+}
+
+/// One module operation a simulated handler made.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SimulatedCall {
+    pub module: String,
+    pub operation: String,
+    pub arguments: Vec<OperationValue>,
+    /// `true` if no host implements the operation and it was answered from its
+    /// declared return type; `false` if the fake host really ran it.
+    pub simulated: bool,
+}
+
+/// The operation host for `nscript run`, which simulates and never touches the
+/// network or a key. Operations the fake host implements run for real against
+/// it. Every other module operation is recorded and answered from its declared
+/// return type, so a script can be exercised end to end and its effects read off
+/// the recorded calls.
+#[derive(Default)]
+pub struct SimulatedOperations {
+    fake: crate::FakeOperationHost,
+    /// `(module, operation)` to the declared return type, e.g.
+    /// `Result<PublishReport,ModerationError>`.
+    returns: BTreeMap<(String, String), String>,
+    pub calls: Vec<SimulatedCall>,
+}
+
+impl SimulatedOperations {
+    #[must_use]
+    pub fn new(returns: BTreeMap<(String, String), String>) -> Self {
+        Self {
+            fake: crate::FakeOperationHost::default(),
+            returns,
+            calls: Vec::new(),
+        }
+    }
+
+    /// A benign value of the operation's declared success type.
+    fn simulated_result(&self, module: &str, operation: &str) -> OperationValue {
+        let declared = self
+            .returns
+            .get(&(module.to_owned(), operation.to_owned()))
+            .map_or("", String::as_str);
+        let inner = declared
+            .strip_prefix("Result<")
+            .map_or(declared, |rest| rest.split(',').next().unwrap_or(rest))
+            .trim_end_matches('>')
+            .trim();
+        match inner {
+            "PublishReport" => OperationValue::PublishReport(crate::PublishReport {
+                outcomes: vec![crate::RelayOutcome {
+                    relay: "simulated://".to_owned(),
+                    accepted: true,
+                    detail: "simulated".to_owned(),
+                }],
+            }),
+            "Int" => OperationValue::Integer(0),
+            _ => OperationValue::Text("simulated".to_owned()),
+        }
+    }
+}
+
+impl OperationHost for SimulatedOperations {
+    fn call(
+        &mut self,
+        invocation: crate::InvocationId,
+        module: &str,
+        operation: &str,
+        arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError> {
+        let (result, simulated) = match self.fake.call(invocation, module, operation, arguments) {
+            Ok(value) => (value, false),
+            Err(RuntimeError::OperationUnavailable { .. }) => {
+                (self.simulated_result(module, operation), true)
+            }
+            // A wrong argument shape or a denied capability is a real failure.
+            Err(error) => return Err(error),
+        };
+        self.calls.push(SimulatedCall {
+            module: module.to_owned(),
+            operation: operation.to_owned(),
+            arguments: arguments.to_vec(),
+            simulated,
+        });
+        Ok(result)
+    }
+}
+
+/// What one handler did with one event.
+#[derive(Debug)]
+pub struct HandlerOutcome {
+    /// The handler's event type (for a stream handler, the stream's name).
+    pub handler: String,
+    /// The value the body returned, or why it stopped.
+    pub result: Result<Value, RuntimeError>,
+}
+
+/// The policy a checked program implies: every module operation the checker
+/// validated is allowed, because the checker already required each one's
+/// permission to be granted. This is the same rule `nscript run` applies to
+/// top-level calls.
+#[must_use]
+pub fn policy_for(checked: &nscript_semantics::CheckedProgram) -> OperationPolicy {
+    checked
+        .operation_calls
+        .iter()
+        .fold(OperationPolicy::default(), |policy, call| {
+            policy.allow(&call.module, &call.operation)
+        })
+}
+
+fn within(inner: nscript_syntax::Span, outer: nscript_syntax::Span) -> bool {
+    inner.start >= outer.start && inner.end <= outer.end
+}
+
+/// The operation calls a program makes at startup: every collected call except
+/// those inside a handler body. The checker collects calls wherever they appear,
+/// so without this a handler's `kick event.author` would run once at startup,
+/// with its non-literal argument silently dropped.
+///
+/// `program` also excludes calls inside `fn` bodies, which run only when called.
+#[must_use]
+pub fn top_level_operation_calls<'a>(
+    program: Option<&Program>,
+    checked: &'a nscript_semantics::CheckedProgram,
+) -> Vec<&'a nscript_semantics::CheckedOperationCall> {
+    let mut deferred: Vec<nscript_syntax::Span> = checked
+        .handlers
+        .iter()
+        .map(|handler| handler.span)
+        .collect();
+    if let Some(program) = program {
+        deferred.extend(program.ast.items.iter().filter_map(|item| match item {
+            Item::Function(function) => Some(function.span),
+            _ => None,
+        }));
+    }
+    checked
+        .operation_calls
+        .iter()
+        .filter(|call| !deferred.iter().any(|span| within(call.span, *span)))
+        .collect()
+}
+
+impl<R, S, C, A> Runtime<R, S, C, A>
+where
+    R: RelayHost,
+    S: SignerHost,
+    C: ClockHost,
+    A: AuditHost,
+{
+    /// Delivers `event` to every handler whose subscription it matches and runs
+    /// each body with the evaluator. A handler that fails does not stop the
+    /// others, so one bad body cannot hide the rest.
+    ///
+    /// Handlers are matched by [`Runtime::matches_subscription`]: event type,
+    /// author and tag predicates. Only the handlers that matched appear in the
+    /// result.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_handlers_for_event<O: OperationHost, L: LogHost>(
+        &mut self,
+        program: &Program,
+        checked: &nscript_semantics::CheckedProgram,
+        event: &crate::SignedEvent,
+        policy: &OperationPolicy,
+        operations: &mut O,
+        log: &mut L,
+        principal: Option<&str>,
+        limits: EvalLimits,
+    ) -> Vec<HandlerOutcome> {
+        let requests = Self::handler_subscriptions(checked, None);
+        let mut outcomes = Vec::new();
+        for (handler, request) in checked.handlers.iter().zip(&requests) {
+            if !Self::matches_subscription(request, event) {
+                continue;
+            }
+            let mut session = RuntimeSession {
+                runtime: self,
+                policy,
+                operations,
+                log,
+                principal: principal.map(str::to_owned),
+            };
+            let result = run_handler(
+                program,
+                &handler.body,
+                Value::from_event(event),
+                &mut session,
+                limits,
+            );
+            outcomes.push(HandlerOutcome {
+                handler: handler.event_type.clone(),
+                result,
+            });
+        }
+        outcomes
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -980,5 +1225,209 @@ mod tests {
         .unwrap();
         assert_eq!(moderation.issued.len(), 1);
         let _: InvocationId = 0;
+    }
+
+    fn checked(source: &str) -> (nscript_syntax::Program, nscript_semantics::CheckedProgram) {
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        (program, checked.expect("checks"))
+    }
+
+    const BOT: &str = "use concord04\n\npermissions {\n    concord_kick\n    log\n}\n\non Note {\n    if event.content contains \"spam\" {\n        print(\"kicking \" + event.author)\n        kick event.author\n    }\n}\n";
+
+    fn runtime() -> Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
+        Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        )
+    }
+
+    #[test]
+    fn events_are_built_from_json_with_defaults_and_an_author_alias() {
+        let event = event_from_json(
+            &serde_json::json!({"content": "hi", "author": "bob", "tags": [["t", "nostr"], ["p"]]}),
+        )
+        .unwrap();
+        assert_eq!(event.unsigned.event_type, "Note");
+        assert_eq!(
+            (event.unsigned.kind, event.unsigned.content.as_str()),
+            (1, "hi")
+        );
+        assert_eq!(event.signer, "bob");
+        assert_eq!(
+            event.unsigned.tags,
+            vec![
+                ("t".to_owned(), "nostr".to_owned()),
+                ("p".to_owned(), String::new())
+            ]
+        );
+        assert!(event_from_json(&serde_json::json!([1])).is_err());
+        assert!(event_from_json(&serde_json::json!({"kind": 70000})).is_err());
+    }
+
+    #[test]
+    fn the_simulator_runs_what_the_fake_host_knows_and_answers_the_rest_by_declared_type() {
+        let mut ops = SimulatedOperations::new(BTreeMap::from([
+            (
+                ("concord04".to_owned(), "kick_member".to_owned()),
+                "Result<PublishReport,ModerationError>".to_owned(),
+            ),
+            (
+                ("concord04".to_owned(), "can_kick".to_owned()),
+                "Result<Int,ModerationError>".to_owned(),
+            ),
+        ]));
+        let target = [OperationValue::PubKey("alice".to_owned())];
+        let kicked = ops.call(1, "concord04", "kick_member", &target).unwrap();
+        assert!(matches!(kicked, OperationValue::PublishReport(ref r) if r.accepted()));
+        assert_eq!(
+            ops.call(1, "concord04", "can_kick", &target).unwrap(),
+            OperationValue::Integer(0)
+        );
+        // A real fake-host operation is executed, not simulated.
+        ops.call(
+            1,
+            "nip44",
+            "encrypt_text",
+            &[
+                OperationValue::Text("x".to_owned()),
+                OperationValue::PubKey("alice".to_owned()),
+            ],
+        )
+        .unwrap();
+        let flags: Vec<_> = ops
+            .calls
+            .iter()
+            .map(|c| (c.operation.as_str(), c.simulated))
+            .collect();
+        assert_eq!(
+            flags,
+            [
+                ("kick_member", true),
+                ("can_kick", true),
+                ("encrypt_text", false)
+            ]
+        );
+        // A wrong argument shape to a known operation is a real failure.
+        let bad = ops.call(1, "nip44", "encrypt_text", &[]);
+        assert!(matches!(
+            bad,
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+    }
+
+    #[test]
+    fn handler_and_function_calls_are_not_startup_calls() {
+        let source = "use concord04\n\npermissions {\n    concord_kick\n    log\n}\n\nfn helper() {\n    concord04.kick_member(alice)\n}\n\nconcord04.kick_member(bob)\n\non Note {\n    kick event.author\n}\n";
+        let (program, checked) = checked(source);
+        assert_eq!(
+            checked.operation_calls.len(),
+            3,
+            "the checker collects every call"
+        );
+        assert_eq!(
+            top_level_operation_calls(None, &checked).len(),
+            2,
+            "handlers excluded"
+        );
+        let top = top_level_operation_calls(Some(&program), &checked);
+        assert_eq!(top.len(), 1, "functions excluded too");
+        assert_eq!(
+            top[0].arguments,
+            vec![nscript_semantics::CheckedArgument::PubKey("bob".to_owned())]
+        );
+    }
+
+    #[test]
+    fn an_event_reaches_only_the_handlers_it_matches_and_the_bot_acts() {
+        let (program, checked) = checked(BOT);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = runtime();
+        let policy = policy_for(&checked);
+        let spam =
+            event_from_json(&serde_json::json!({"content": "buy spam", "signer": "mallory"}))
+                .unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &spam,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok());
+        assert_eq!(log.records[0].message, "kicking mallory");
+        assert_eq!(ops.calls.len(), 1);
+        assert_eq!(
+            ops.calls[0].arguments,
+            vec![OperationValue::PubKey("mallory".to_owned())]
+        );
+
+        // Not spam: the handler runs and does nothing.
+        let fine = event_from_json(&serde_json::json!({"content": "hello"})).unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &fine,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(ops.calls.len(), 1, "no further call");
+        // A different event type matches no handler.
+        let other =
+            event_from_json(&serde_json::json!({"event_type": "Reaction", "content": "spam"}))
+                .unwrap();
+        assert!(
+            runtime
+                .run_handlers_for_event(
+                    &program,
+                    &checked,
+                    &other,
+                    &policy,
+                    &mut ops,
+                    &mut log,
+                    None,
+                    EvalLimits::default()
+                )
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn one_failing_handler_does_not_hide_the_others() {
+        let source = "permissions {\n    log\n}\n\non Note {\n    print(nope)\n}\n\non Note {\n    print(\"second ran\")\n}\n";
+        let (program, checked) = checked(source);
+        let mut log = FakeLogHost::default();
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let event = event_from_json(&serde_json::json!({})).unwrap();
+        let outcomes = runtime().run_handlers_for_event(
+            &program,
+            &checked,
+            &event,
+            &policy_for(&checked),
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+        );
+        assert_eq!(outcomes.len(), 2);
+        assert!(matches!(
+            outcomes[0].result,
+            Err(RuntimeError::EvaluationError { .. })
+        ));
+        assert!(outcomes[1].result.is_ok());
+        assert_eq!(log.records.len(), 1);
     }
 }

@@ -2798,9 +2798,9 @@ where
         policy: &OperationPolicy,
         host: &mut H,
     ) -> Result<Vec<OperationValue>, RuntimeError> {
-        checked
-            .operation_calls
-            .iter()
+        // Calls inside a handler run when an event arrives, not at startup.
+        eval::top_level_operation_calls(None, checked)
+            .into_iter()
             .map(|call| {
                 let arguments = call
                     .arguments

@@ -707,9 +707,12 @@ arithmetic, comparisons, user functions, `me`, and module operation calls that
 go through `OperationPolicy` via `RuntimeSession`. Proved end to end with a
 moderation bot: real encrypted channel messages, `ChannelReader`, an NScript
 handler (`if event.content contains "spam" { kick event.author }`), the real
-moderation host, and an independent Guestbook fold. Not wired into `nscript
-run`; `Result` values, `match`, `select` and in-handler publication are not yet
-evaluated. Fixed a parser bug found on the way: a lowercase name before a block
+moderation host, and an independent Guestbook fold. Now wired into `nscript run`: `--event`, `--events` and `--as` deliver
+events to matching handlers in the simulator, with unimplemented operations
+recorded and answered from their declared return type. Handler and function
+bodies no longer run at startup (a handler's `kick event.author` used to fail
+the whole run). `Result` values, `match`, `select` and in-handler publication
+are not yet evaluated. Fixed a parser bug found on the way: a lowercase name before a block
 (`if ready { .. }`) was read as a record literal.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before

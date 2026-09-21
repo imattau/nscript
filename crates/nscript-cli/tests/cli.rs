@@ -531,3 +531,134 @@ fn source_conformance_corpus_matches_expected_outcomes() {
         );
     }
 }
+
+/// Runs `nscript run` on `source` (written to a temporary file) with `extra`
+/// arguments, returning `(exit success, stdout, stderr)`.
+fn run_source(name: &str, source: &str, extra: &[&str]) -> (bool, String, String) {
+    let path = std::env::temp_dir().join(format!("nscript-run-{}-{name}.ns", std::process::id()));
+    std::fs::write(&path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(&path)
+        .args(extra)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+const MODERATION_BOT: &str = include_str!("../../../examples/concord-moderation-bot.ns");
+
+#[test]
+fn run_starts_a_handler_program_without_executing_its_handler_calls() {
+    // Before handlers were evaluated, the handler's `kick event.author` ran once
+    // at startup with its argument dropped, and the whole run failed.
+    let (ok, stdout, stderr) = run_source("startup", MODERATION_BOT, &[]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("subscription Note"));
+    assert!(stdout.contains("1 handler(s) registered"));
+    assert!(
+        !stdout.contains("operation "),
+        "no operation at startup: {stdout}"
+    );
+}
+
+#[test]
+fn run_delivers_events_to_handlers_and_reports_what_they_did() {
+    let (ok, stdout, stderr) = run_source(
+        "events",
+        MODERATION_BOT,
+        &[
+            "--event",
+            r#"{"id":"e1","content":"buy spam now","signer":"mallory"}"#,
+            "--event",
+            r#"{"id":"e2","content":"hello","signer":"alice"}"#,
+            "--event",
+            r#"{"id":"e3","event_type":"Reaction","content":"spam"}"#,
+        ],
+    );
+    assert!(ok, "{stderr}");
+    let spam = stdout.split("event e2").next().unwrap();
+    assert!(spam.contains("handler Note: ok"));
+    assert!(spam.contains("log info: kicking mallory"));
+    assert!(spam.contains(r#"operation concord04.kick_member(PubKey("mallory"))  [simulated]"#));
+    // The clean message and the other event type cause no operation.
+    let rest = &stdout[stdout.find("event e2").unwrap()..];
+    assert!(!rest.contains("operation "), "{rest}");
+    assert!(rest.contains("no handler matched"));
+}
+
+#[test]
+fn run_reads_events_from_a_file_of_lines_or_an_array() {
+    let dir = std::env::temp_dir();
+    let lines = dir.join(format!("nscript-events-{}.ndjson", std::process::id()));
+    let array = dir.join(format!("nscript-events-{}.json", std::process::id()));
+    std::fs::write(&lines, "{\"id\":\"a\",\"content\":\"spam\",\"signer\":\"x\"}\n\n{\"id\":\"b\",\"content\":\"ok\"}\n").unwrap();
+    std::fs::write(
+        &array,
+        r#"[{"id":"a","content":"spam","signer":"x"},{"id":"b","content":"ok"}]"#,
+    )
+    .unwrap();
+    for file in [&lines, &array] {
+        let (ok, stdout, stderr) = run_source(
+            "file",
+            MODERATION_BOT,
+            &["--events", file.to_str().unwrap()],
+        );
+        assert!(ok, "{stderr}");
+        assert!(
+            stdout.contains("event a") && stdout.contains("event b"),
+            "{stdout}"
+        );
+        assert_eq!(stdout.matches("kick_member").count(), 1);
+    }
+    let _ = std::fs::remove_file(lines);
+    let _ = std::fs::remove_file(array);
+}
+
+#[test]
+fn run_reports_a_failing_handler_and_exits_nonzero() {
+    let source = "permissions {\n    log\n}\n\non Note {\n    print(me)\n}\n";
+    let (ok, _, stderr) = run_source("me", source, &["--event", "{}"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("error[R1004]: handler Note failed"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("pass --as <key>"),
+        "the hint names the fix: {stderr}"
+    );
+    // With a principal the same program succeeds.
+    let (ok, stdout, stderr) = run_source("me-ok", source, &["--event", "{}", "--as", "my-key"]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("log info: my-key"), "{stdout}");
+}
+
+#[test]
+fn run_rejects_malformed_event_input_without_running_anything() {
+    let (ok, _, stderr) = run_source("bad-json", MODERATION_BOT, &["--event", "not json"]);
+    assert!(!ok);
+    assert!(stderr.contains("--event is not valid JSON"), "{stderr}");
+    let (ok, _, stderr) = run_source("bad-shape", MODERATION_BOT, &["--event", "[1]"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("an event must be a JSON object"),
+        "{stderr}"
+    );
+    let (ok, _, stderr) = run_source("no-value", MODERATION_BOT, &["--event"]);
+    assert!(!ok);
+    assert!(stderr.contains("--event requires a value"), "{stderr}");
+}
+
+#[test]
+fn run_bounds_a_runaway_handler() {
+    let source = "permissions {\n    log\n}\n\nfn spin(n: Int) -> Int {\n    return spin(n + 1)\n}\n\non Note {\n    print(spin(0))\n}\n";
+    let (ok, _, stderr) = run_source("runaway", source, &["--event", "{}"]);
+    assert!(!ok);
+    assert!(stderr.contains("ResourceLimit"), "{stderr}");
+}

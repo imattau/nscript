@@ -1,0 +1,24 @@
+// A moderation bot: kick anyone who posts spam.
+//
+// Try it without touching a network or a key:
+//
+//   nscript run examples/concord-moderation-bot.ns \
+//       --event '{"content": "buy spam now", "signer": "mallory"}' \
+//       --event '{"content": "hello", "signer": "alice"}'
+//
+// `kick` lowers to concord04.kick_member. `run` simulates, so the call is
+// recorded, not sent. In a real deployment the host still enforces CORD-04:
+// the acting identity must hold the KICK bit and outrank its target.
+use concord04
+
+permissions {
+    concord_kick
+    log
+}
+
+on Note {
+    if event.content contains "spam" {
+        print("kicking " + event.author)
+        kick event.author
+    }
+}

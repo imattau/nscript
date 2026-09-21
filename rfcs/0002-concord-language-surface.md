@@ -180,8 +180,8 @@ statements and leftover tokens were also being dropped silently (see
 `docs/HANDLERS.md`): a bounded evaluator runs handler bodies, calls module
 operations through the policy gate, and is proved end to end by a moderation bot
 that reads a real encrypted channel and kicks a spammer
-(`nscript-host-crypto/tests/handler.rs`). It is a library, not yet wired into
-`nscript run`. What remains:
+(`nscript-host-crypto/tests/handler.rs`). It is wired into `nscript run --event`, which simulates
+with fake hosts. What remains:
 
 - **`event` is not typed by the source.** A handler over a Concord stream checks
   as an untyped handler; `event.content` and `event.author` are checked at run
