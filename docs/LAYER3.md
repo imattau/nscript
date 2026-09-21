@@ -134,6 +134,18 @@ permissions {
 label event_to_label as "spam"
 ```
 
+User presence can be published with a concise status intent:
+
+```nostr
+use nip38
+
+permissions {
+    status
+}
+
+status "working"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

@@ -1,0 +1,7 @@
+use nip38
+
+permissions {
+    status
+}
+
+status "working"
