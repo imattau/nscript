@@ -584,6 +584,22 @@ only. BIP-340 Schnorr signing and verification (`schnorr.rs`) passes all 19
 official vectors (8 signing, 19 verification), and `random32`/`encrypt` use OS
 randomness. Seal/wrap host operations and blob wrapping remain to be built on
 it.
+Live interop (2026-09-21, `nscript-host-crypto` examples `concord_fetch_invite`
+and `concord_interop`) against a real Concord community created from an
+invite link: the bundle was fetched from relays and decrypted with the
+token-derived key (confirming `bundle_key`, the fragment codec and the assumed
+bit-0 stock-relay flag on a real link), the owner self-certified against the
+`community_id`, all 7 Control Plane wraps opened and verified (`concord/control`
+`group_key`, NIP-44, BIP-340, plaintext seals) and folded through
+`AuthorityFold` into the community metadata, channels and role, and the public
+channel's chat was decrypted. A throwaway identity then joined the Guestbook
+and posted kind 9, quote and kind 1111 messages with CORD-08 expiration tags on
+rumor and wrap; all were accepted by the relays and read back and verified.
+`stream.rs` provides the real wrap/seal builder and opener behind this. Not
+yet confirmed: rendering in an Armada client. Found on the way: tungstenite's
+`rustls-tls-native-roots` feature selects no crypto provider, so any `wss://`
+connect panics until one is installed; the runtime's `RealRelayHost` has this
+gap for production relays.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

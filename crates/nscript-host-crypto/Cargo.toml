@@ -15,11 +15,13 @@ hkdf = "0.12"
 hmac = "0.12"
 k256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "schnorr"] }
 nscript-runtime = { path = "../nscript-runtime" }
+serde_json.workspace = true
 sha2.workspace = true
 subtle = "2"
 
 [dev-dependencies]
-serde_json.workspace = true
+tungstenite.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 [lints]
 workspace = true

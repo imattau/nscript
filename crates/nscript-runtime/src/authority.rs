@@ -500,6 +500,29 @@ impl AuthorityFold {
         next
     }
 
+    /// The authority-verified head edition of every entity of type `vsk`,
+    /// judged against the settled Roster. Suspended entities are included with
+    /// their last intact head.
+    #[must_use]
+    pub fn heads(&self, vsk: u8) -> Vec<Edition> {
+        let roster = self.roster();
+        let by_hash = self.by_hash();
+        let authority = SnapshotAuthority(Judge {
+            community_id: &self.community_id,
+            roster: &roster,
+            by_hash: &by_hash,
+        });
+        let mut fold = EditionFold::new(authority, self.mode, self.editions.len().max(1));
+        for edition in &self.editions {
+            let _ = fold.insert(edition.clone());
+        }
+        fold.entity_ids()
+            .filter_map(|id| fold.head(id))
+            .filter(|head| head.head.vsk == vsk)
+            .map(|head| head.head.clone())
+            .collect()
+    }
+
     /// Folds to the Roster fixed point, starting from the owner alone.
     #[must_use]
     pub fn roster(&self) -> Roster {
