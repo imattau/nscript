@@ -1,5 +1,7 @@
 //! Deterministic reference runtime and host capability contracts.
 
+pub mod fold;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::{fs, net::TcpStream, path::PathBuf, thread, time::Duration};
@@ -797,11 +799,14 @@ fn concord_test_stream_pubkey(stream: &DerivedKey) -> String {
     let mut digest = Sha256::new();
     digest.update(b"nscript/concord01/test-stream-pubkey\0");
     digest.update(stream.as_bytes());
-    digest.finalize().iter().fold(String::new(), |mut out, byte| {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
+    digest
+        .finalize()
+        .iter()
+        .fold(String::new(), |mut out, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

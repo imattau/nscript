@@ -501,6 +501,10 @@ without exposing or reserialising the payload.
 Added kind-1059 `StreamWrap` wrap/unwrap operations with stream-pubkey
 validation, completing the CORD-01 wire path against the fake host; the
 deterministic state-fold primitive is the next stage.
+Added the generic `fold::Fold` reducer primitive: events are ordered by
+`(created_at, id)`, deduplicated, capacity-bounded, and replayed from the
+initial state so arrival order never changes the result. CORD-02/03 community
+and channel models build on it next.
 
 ## Deferred
 
