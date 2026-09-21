@@ -393,6 +393,8 @@ The CLI now has a feature-backed end-to-end test that compiles `hello-note.ns`,
 executes it through Wasmi, and observes all three operation callbacks.
 The same integration test verifies that a zero-fuel Wasmi budget rejects the
 artifact before execution completes.
+Wasmi stores now also apply a fixed 16 MiB linear-memory ceiling and bounded
+instance/table counts for each execution.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by

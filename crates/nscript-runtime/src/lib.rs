@@ -22,7 +22,12 @@ pub const MAX_WASM_OPERATIONS: usize = 1024;
 #[cfg(feature = "wasm-engine")]
 pub mod wasmi_engine {
     use super::{MAX_WASM_DISPATCH_BYTES, RuntimeError};
-    use wasmi::{Caller, Config, Engine, Error, Extern, Linker, Module, Store};
+    use wasmi::{
+        Caller, Config, Engine, Error, Extern, Linker, Module, Store, StoreLimits,
+        StoreLimitsBuilder,
+    };
+
+    const MAX_WASM_MEMORY_BYTES: usize = 16 * 1024 * 1024;
 
     /// Wasmi-backed validator with deterministic fuel configuration.
     pub struct WasmiEngine {
@@ -73,7 +78,13 @@ pub mod wasmi_engine {
             self.validate(module)?;
             let module =
                 Module::new(&self.engine, module).map_err(|_| RuntimeError::InvalidWasmPayload)?;
-            let mut store = Store::new(&self.engine, ());
+            let limits = StoreLimitsBuilder::new()
+                .memory_size(MAX_WASM_MEMORY_BYTES)
+                .instances(1)
+                .tables(1)
+                .build();
+            let mut store = Store::new(&self.engine, ((), limits));
+            store.limiter(|data| &mut data.1);
             store
                 .set_fuel(self.fuel)
                 .map_err(|_| RuntimeError::InvalidWasmPayload)?;
@@ -117,7 +128,13 @@ pub mod wasmi_engine {
             self.validate(module)?;
             let module =
                 Module::new(&self.engine, module).map_err(|_| RuntimeError::InvalidWasmPayload)?;
-            let mut store = Store::new(&self.engine, (host, invocation));
+            let limits = StoreLimitsBuilder::new()
+                .memory_size(MAX_WASM_MEMORY_BYTES)
+                .instances(1)
+                .tables(1)
+                .build();
+            let mut store = Store::new(&self.engine, (host, invocation, limits));
+            store.limiter(|data| &mut data.2);
             store
                 .set_fuel(self.fuel)
                 .map_err(|_| RuntimeError::InvalidWasmPayload)?;
@@ -132,7 +149,7 @@ pub mod wasmi_engine {
                         .func_wrap(
                             "nscript",
                             name,
-                            move |mut caller: Caller<'_, (H, super::InvocationId)>,
+                            move |mut caller: Caller<'_, (H, super::InvocationId, StoreLimits)>,
                                   ptr: i32,
                                   len: i32| {
                                 let memory = caller
