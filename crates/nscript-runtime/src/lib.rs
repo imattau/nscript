@@ -3,6 +3,7 @@
 pub mod community;
 pub mod edition;
 pub mod fold;
+pub mod stream;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -756,26 +757,48 @@ pub struct StreamMessage {
 }
 
 #[derive(Clone, Eq, PartialEq)]
-pub struct SealedEvent(Vec<u8>);
+pub struct SealedEvent {
+    bytes: Vec<u8>,
+    kind: stream::SealKind,
+}
 
 impl SealedEvent {
-    /// Creates an opaque sealed event, rejecting empty values.
+    /// Creates an opaque encrypted (kind 20013) seal, rejecting empty values.
     ///
     /// # Errors
     ///
     /// Returns [`RuntimeError::InvalidConcordBytes`] for an empty value.
     pub fn new(bytes: Vec<u8>) -> Result<Self, RuntimeError> {
+        Self::with_kind(bytes, stream::SealKind::Encrypted)
+    }
+
+    /// Creates a plaintext (kind 20014) seal whose bytes are the rumor JSON,
+    /// carried verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::InvalidConcordBytes`] for an empty value.
+    pub fn plaintext(bytes: Vec<u8>) -> Result<Self, RuntimeError> {
+        Self::with_kind(bytes, stream::SealKind::Plaintext)
+    }
+
+    fn with_kind(bytes: Vec<u8>, kind: stream::SealKind) -> Result<Self, RuntimeError> {
         if bytes.is_empty() {
             return Err(RuntimeError::InvalidConcordBytes {
                 type_name: "SealedEvent",
             });
         }
-        Ok(Self(bytes))
+        Ok(Self { bytes, kind })
     }
 
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
-        &self.0
+        &self.bytes
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> stream::SealKind {
+        self.kind
     }
 }
 
@@ -783,18 +806,54 @@ impl std::fmt::Debug for SealedEvent {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("SealedEvent")
-            .field("length", &self.0.len())
+            .field("kind", &self.kind.wire_kind())
+            .field("length", &self.bytes.len())
             .finish()
     }
 }
 
-/// CORD-01 private-stream envelope: a kind-1059 wrap addressed to the stream
-/// public key and carrying an opaque sealed payload.
+/// CORD-01 private-stream envelope: a kind-1059 wrap signed by the stream
+/// key (fixed author), tagged with an ephemeral `p` key, carrying a seal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StreamWrap {
     pub kind: u16,
     pub stream_pubkey: String,
+    /// Ephemeral `p` tag; never the key the wrap is encrypted to.
+    pub ephemeral_p: String,
     pub sealed: SealedEvent,
+}
+
+/// Why a received wrap was refused.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WrapError {
+    NotAGiftWrap,
+    WrongStream,
+    MalformedEphemeralKey,
+    /// The seal kind does not match what the plane requires.
+    WrongSealKind,
+}
+
+impl StreamWrap {
+    /// Validates the envelope against the plane it was read from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WrapError`] describing the first failed check.
+    pub fn validate(&self, expected_pubkey: &str, plane: stream::Plane) -> Result<(), WrapError> {
+        if self.kind != 1059 {
+            return Err(WrapError::NotAGiftWrap);
+        }
+        if self.stream_pubkey != expected_pubkey {
+            return Err(WrapError::WrongStream);
+        }
+        if !stream::is_hex32(&self.ephemeral_p) {
+            return Err(WrapError::MalformedEphemeralKey);
+        }
+        if self.sealed.kind() != plane.seal_kind() {
+            return Err(WrapError::WrongSealKind);
+        }
+        Ok(())
+    }
 }
 
 fn concord_test_stream_pubkey(stream: &DerivedKey) -> String {
@@ -1316,6 +1375,22 @@ pub trait ConcordKeyHost {
         &mut self,
         invocation: InvocationId,
         secret: &SharedSecret,
+    ) -> Result<DerivedKey, RuntimeError>;
+
+    /// Derive a plane key with CORD-02 §4 `group_key(label, secret, id,
+    /// epoch)`. `id` is a 32-byte lowercase-hex coordinate.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability error when denied, or
+    /// [`RuntimeError::InvalidOperationArguments`] for a malformed `id`.
+    fn derive_group_key(
+        &mut self,
+        invocation: InvocationId,
+        label: stream::GroupKeyLabel,
+        secret: &SharedSecret,
+        id: &str,
+        epoch: u64,
     ) -> Result<DerivedKey, RuntimeError>;
 }
 
@@ -3331,6 +3406,35 @@ impl ConcordKeyHost for FakeConcordKeyHost {
         self.derivations += 1;
         DerivedKey::new(digest.finalize().to_vec())
     }
+
+    fn derive_group_key(
+        &mut self,
+        _invocation: InvocationId,
+        label: stream::GroupKeyLabel,
+        secret: &SharedSecret,
+        id: &str,
+        epoch: u64,
+    ) -> Result<DerivedKey, RuntimeError> {
+        if self.denied {
+            return Err(RuntimeError::CapabilityDenied {
+                capability: "concord_key_derivation".to_owned(),
+            });
+        }
+        if !stream::is_hex32(id) {
+            return Err(RuntimeError::InvalidOperationArguments {
+                operation: "derive_group_key".to_owned(),
+            });
+        }
+        let mut digest = Sha256::new();
+        digest.update(b"nscript/concord01/test-group-key\0");
+        digest.update(label.as_str().as_bytes());
+        digest.update([0]);
+        digest.update(secret.as_bytes());
+        digest.update(id.as_bytes());
+        digest.update(epoch.to_be_bytes());
+        self.derivations += 1;
+        DerivedKey::new(digest.finalize().to_vec())
+    }
 }
 
 impl SignerHost for FakeSignerHost {
@@ -3777,6 +3881,25 @@ impl OperationHost for FakeOperationHost {
                 sealed.extend_from_slice(payload.as_bytes());
                 SealedEvent::new(sealed).map(OperationValue::SealedEvent)
             }
+            ("concord01", "seal_control_message") => {
+                let [
+                    OperationValue::DerivedKey(stream),
+                    OperationValue::SignedBytes(payload),
+                ] = arguments
+                else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if stream.as_bytes().is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                // Plaintext seal: the rumor bytes ride verbatim, so a
+                // compaction re-wrap keeps the author's signature valid.
+                SealedEvent::plaintext(payload.as_bytes().to_vec()).map(OperationValue::SealedEvent)
+            }
             ("concord01", "open_message") => {
                 let [
                     OperationValue::DerivedKey(stream),
@@ -3787,6 +3910,10 @@ impl OperationHost for FakeOperationHost {
                         operation: operation.to_owned(),
                     });
                 };
+                if payload.kind() == stream::SealKind::Plaintext {
+                    return SignedBytes::new(payload.as_bytes().to_vec())
+                        .map(OperationValue::SignedBytes);
+                }
                 let prefix = CONCORD_TEST_SEAL_PREFIX;
                 if stream.as_bytes().is_empty() || !payload.as_bytes().starts_with(prefix) {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -3806,9 +3933,22 @@ impl OperationHost for FakeOperationHost {
                         operation: operation.to_owned(),
                     });
                 };
+                self.next_value += 1;
+                let mut digest = Sha256::new();
+                digest.update(b"nscript/concord01/test-ephemeral\0");
+                digest.update(self.next_value.to_be_bytes());
+                digest.update(sealed.as_bytes());
+                let ephemeral_p = digest
+                    .finalize()
+                    .iter()
+                    .fold(String::new(), |mut out, byte| {
+                        let _ = write!(out, "{byte:02x}");
+                        out
+                    });
                 Ok(OperationValue::StreamWrap(StreamWrap {
                     kind: 1059,
                     stream_pubkey: concord_test_stream_pubkey(stream),
+                    ephemeral_p,
                     sealed: sealed.clone(),
                 }))
             }
@@ -3822,7 +3962,15 @@ impl OperationHost for FakeOperationHost {
                         operation: operation.to_owned(),
                     });
                 };
-                if wrap.kind != 1059 || wrap.stream_pubkey != concord_test_stream_pubkey(stream) {
+                let plane = if wrap.sealed.kind() == stream::SealKind::Plaintext {
+                    stream::Plane::Control
+                } else {
+                    stream::Plane::Chat
+                };
+                if wrap
+                    .validate(&concord_test_stream_pubkey(stream), plane)
+                    .is_err()
+                {
                     return Err(RuntimeError::InvalidOperationArguments {
                         operation: operation.to_owned(),
                     });
@@ -4934,6 +5082,92 @@ mod tests {
                 &[OperationValue::DerivedKey(other), wrap],
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn concord01_control_seal_is_plaintext_and_verbatim() {
+        let key = DerivedKey::new(vec![4, 4]).expect("key accepted");
+        let rumor = SignedBytes::new(br#"{"kind":3308, "content":"x"}"#.to_vec()).expect("bytes");
+        let mut host = FakeOperationHost::default();
+        let sealed = host
+            .call(
+                1,
+                "concord01",
+                "seal_control_message",
+                &[
+                    OperationValue::DerivedKey(key.clone()),
+                    OperationValue::SignedBytes(rumor.clone()),
+                ],
+            )
+            .expect("control seal available");
+        let OperationValue::SealedEvent(seal) = &sealed else {
+            panic!("expected sealed event");
+        };
+        assert_eq!(seal.kind().wire_kind(), 20014);
+        assert_eq!(seal.as_bytes(), rumor.as_bytes());
+        let opened = host
+            .call(
+                2,
+                "concord01",
+                "open_message",
+                &[OperationValue::DerivedKey(key), sealed],
+            )
+            .expect("open available");
+        assert_eq!(opened, OperationValue::SignedBytes(rumor));
+    }
+
+    #[test]
+    fn stream_wrap_validation_checks_kind_pubkey_ephemeral_and_seal_kind() {
+        let sealed = SealedEvent::new(vec![1]).expect("sealed");
+        let wrap = StreamWrap {
+            kind: 1059,
+            stream_pubkey: "aa".repeat(32),
+            ephemeral_p: "bb".repeat(32),
+            sealed: sealed.clone(),
+        };
+        assert_eq!(wrap.validate(&"aa".repeat(32), stream::Plane::Chat), Ok(()));
+        assert_eq!(
+            wrap.validate(&"cc".repeat(32), stream::Plane::Chat),
+            Err(WrapError::WrongStream)
+        );
+        assert_eq!(
+            wrap.validate(&"aa".repeat(32), stream::Plane::Control),
+            Err(WrapError::WrongSealKind)
+        );
+        let bad_p = StreamWrap {
+            ephemeral_p: "BB".repeat(32),
+            ..wrap.clone()
+        };
+        assert_eq!(
+            bad_p.validate(&"aa".repeat(32), stream::Plane::Chat),
+            Err(WrapError::MalformedEphemeralKey)
+        );
+        let not_wrap = StreamWrap { kind: 4, ..wrap };
+        assert_eq!(
+            not_wrap.validate(&"aa".repeat(32), stream::Plane::Chat),
+            Err(WrapError::NotAGiftWrap)
+        );
+    }
+
+    #[test]
+    fn group_keys_are_domain_separated_by_label_id_and_epoch() {
+        use stream::GroupKeyLabel::{Channel, Guestbook};
+        let secret = SharedSecret::new(vec![7; 32]).expect("secret");
+        let mut host = FakeConcordKeyHost::default();
+        let id = "ab".repeat(32);
+        let mut derive = |label, id: &str, epoch| {
+            host.derive_group_key(1, label, &secret, id, epoch)
+                .expect("derived")
+        };
+        let base = derive(Channel, &id, 1);
+        assert_eq!(base, derive(Channel, &id, 1));
+        assert_ne!(base, derive(Guestbook, &id, 1));
+        assert_ne!(base, derive(Channel, &id, 2));
+        assert_ne!(base, derive(Channel, &"cd".repeat(32), 1));
+        assert!(
+            host.derive_group_key(2, Channel, &secret, "short", 1)
+                .is_err()
         );
     }
 

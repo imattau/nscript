@@ -511,6 +511,10 @@ editions: `edition::EditionFold` implements the spec hash chain, refuse-
 downgrade, authority-then-lowest-id tie-break, and tracking vs fresh-joiner
 gap handling; `community::CommunityView` interprets community and channel
 metadata (terminal deletion, 64-byte name cap, ignore-invalid-content).
+CORD-01 rework landed: `stream` vocabulary (seal kinds 20013/20014 fixed per
+plane, `group_key` labels, channel/epoch binding check), `SealedEvent` carrying
+its kind, `StreamWrap` with ephemeral `p` and envelope validation, a
+`derive_group_key` host method, and a verbatim plaintext Control seal.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

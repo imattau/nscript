@@ -23,6 +23,7 @@ nominal SealedEvent from Bytes {
 record StreamWrap {
     field kind: Integer
     field stream_pubkey: PubKey
+    field ephemeral_p: PubKey
     field sealed: SealedEvent
 }
 
@@ -53,3 +54,4 @@ operation seal_message(stream: DerivedKey, payload: SignedBytes) -> Result<Seale
 operation open_message(stream: DerivedKey, payload: SealedEvent) -> Result<SignedBytes,ConcordSealError> effect Decrypt permission concord_open
 operation wrap_stream(stream: DerivedKey, payload: SealedEvent) -> Result<StreamWrap,ConcordWrapError> effect Encrypt permission concord_wrap
 operation unwrap_stream(stream: DerivedKey, wrap: StreamWrap) -> Result<SealedEvent,ConcordWrapError> effect Decrypt permission concord_unwrap
+operation seal_control_message(stream: DerivedKey, payload: SignedBytes) -> Result<SealedEvent,ConcordSealError> effect Encrypt permission concord_seal
