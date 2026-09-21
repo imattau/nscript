@@ -368,7 +368,9 @@ The runtime now declares Wasmi behind the opt-in `wasm-engine` feature; the
 default build remains engine-free while the dependency is locked for
 reproducible integration work.
 The feature now exposes `wasmi_engine::WasmiEngine`, enabling fuel metering
-and bounded module validation before host import binding.
+and bounded module validation before host import binding. Its
+`run_with_imports` path instantiates `nscript_main` with explicitly declared
+zero-argument capability imports or `(i32, i32)` payload imports.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by

@@ -22,7 +22,7 @@ pub const MAX_WASM_OPERATIONS: usize = 1024;
 #[cfg(feature = "wasm-engine")]
 pub mod wasmi_engine {
     use super::{MAX_WASM_DISPATCH_BYTES, RuntimeError};
-    use wasmi::{Config, Engine, Module};
+    use wasmi::{Config, Engine, Linker, Module, Store};
 
     /// Wasmi-backed validator with deterministic fuel configuration.
     pub struct WasmiEngine {
@@ -55,6 +55,49 @@ pub mod wasmi_engine {
             }
             Module::new(&self.engine, module)
                 .map(|_| ())
+                .map_err(|_| RuntimeError::InvalidWasmPayload)
+        }
+
+        /// Instantiates and calls `nscript_main` with explicitly supplied
+        /// import signatures. The caller still owns capability dispatch.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`RuntimeError::InvalidWasmPayload`] when imports or the
+        /// entrypoint cannot be instantiated or executed.
+        pub fn run_with_imports(
+            &self,
+            module: &[u8],
+            imports: &[(String, bool)],
+        ) -> Result<(), RuntimeError> {
+            self.validate(module)?;
+            let module =
+                Module::new(&self.engine, module).map_err(|_| RuntimeError::InvalidWasmPayload)?;
+            let mut store = Store::new(&self.engine, ());
+            store
+                .set_fuel(self.fuel)
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?;
+            let mut linker = Linker::new(&self.engine);
+            for (name, takes_payload) in imports {
+                if *takes_payload {
+                    linker
+                        .func_wrap("nscript", name, |_: i32, _: i32| {})
+                        .map_err(|_| RuntimeError::InvalidWasmPayload)?;
+                } else {
+                    linker
+                        .func_wrap("nscript", name, || {})
+                        .map_err(|_| RuntimeError::InvalidWasmPayload)?;
+                }
+            }
+            let instance = linker
+                .instantiate(&mut store, &module)
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?
+                .start(&mut store)
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?;
+            instance
+                .get_typed_func::<(), ()>(&store, "nscript_main")
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?
+                .call(&mut store, ())
                 .map_err(|_| RuntimeError::InvalidWasmPayload)
         }
 
