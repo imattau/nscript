@@ -11,6 +11,8 @@ pub enum CryptoError {
     /// Not a valid secp256k1 secret key or x-only public key.
     InvalidKey,
     InvalidLength,
+    /// The operating system's random number generator failed.
+    RandomUnavailable,
 }
 
 /// A Stream/plane keypair from `group_key` (CORD-02 A.2). The secret never

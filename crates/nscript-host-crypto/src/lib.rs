@@ -6,3 +6,15 @@
 pub mod group_key;
 pub mod host;
 pub mod nip44;
+pub mod schnorr;
+
+/// 32 bytes from the operating system's random number generator.
+///
+/// # Errors
+///
+/// Returns [`group_key::CryptoError::RandomUnavailable`] if the RNG fails.
+pub fn random32() -> Result<[u8; 32], group_key::CryptoError> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|_| group_key::CryptoError::RandomUnavailable)?;
+    Ok(bytes)
+}

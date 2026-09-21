@@ -580,8 +580,10 @@ vector from `paulmillr/nip44` (conversation keys, message keys, padding,
 encrypt/decrypt, 65,535-byte messages, invalid inputs); HKDF agrees with the
 runtime's independent RFC 5869-tested implementation. There are no official
 `group_key` vectors, so derivation is covered by properties and cross-checks
-only. BIP-340 signing of wraps, seal/wrap host operations and blob wrapping
-remain to be built on it.
+only. BIP-340 Schnorr signing and verification (`schnorr.rs`) passes all 19
+official vectors (8 signing, 19 verification), and `random32`/`encrypt` use OS
+randomness. Seal/wrap host operations and blob wrapping remain to be built on
+it.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

@@ -143,6 +143,16 @@ pub fn encrypt_with_nonce(
     Ok(STANDARD.encode(payload))
 }
 
+/// Encrypts with a fresh random nonce.
+///
+/// # Errors
+///
+/// Returns [`Nip44Error::InvalidPlaintextLength`] outside 1..=65535 bytes, or
+/// a key error if the OS RNG fails.
+pub fn encrypt(conversation_key: &[u8; 32], plaintext: &[u8]) -> Result<String, Nip44Error> {
+    encrypt_with_nonce(conversation_key, &crate::random32()?, plaintext)
+}
+
 /// Decrypts a payload, verifying the MAC in constant time before decrypting.
 ///
 /// # Errors

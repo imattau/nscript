@@ -10,9 +10,10 @@ description = "Production cryptography host implementations for NScript Concord 
 [dependencies]
 base64 = "0.22"
 chacha20 = "0.9"
+getrandom = "0.3"
 hkdf = "0.12"
 hmac = "0.12"
-k256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh"] }
+k256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "schnorr"] }
 nscript-runtime = { path = "../nscript-runtime" }
 sha2.workspace = true
 subtle = "2"
