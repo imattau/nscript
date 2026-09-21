@@ -74,6 +74,31 @@ stream's name. `signer` (or `author`), `content`, `kind`, `tags` (an array of
   calls run at startup. Before this, a handler's `kick event.author` was run once
   at startup with its argument dropped, and the whole run failed.
 
+## Subscription cycles
+
+`Runtime::run_evaluated_cycle` runs a whole subscription cycle with the
+evaluator: for each handler it subscribes, polls, and dispatches each delivered
+event through `dispatch_evaluated`, then unsubscribes. It is
+`run_handler_cycle_with_event_body` with the evaluator as the body engine, so a
+handler can call module operations.
+
+Each dispatch keeps the transactional discipline of the original cycle: the event
+must match the subscription, is claimed for idempotency, runs inside a storage
+transaction that commits only if the body succeeded, and is audited as
+`committed` or `rolled_back`. A handler that fails is reported in
+`CycleReport::failures` and does not abort the cycle.
+
+Two things are scoped per handler and per subscription, not runtime-wide:
+
+- the **idempotency claim** is keyed by handler and event, so redelivery to one
+  handler is suppressed while a second handler on the same event still runs;
+- the **poll dedupe** (dropping an event that arrives from several relays) is
+  keyed by subscription.
+
+Both used to be keyed by event id alone, so when two handlers subscribed to the
+same events the first consumed each one and the second never ran. The original
+cycle had the same defect and is fixed too.
+
 ## Limits
 
 Execution is bounded: a step budget (10,000 by default) and a call depth (32).

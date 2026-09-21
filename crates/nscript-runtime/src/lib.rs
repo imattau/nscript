@@ -1948,9 +1948,13 @@ where
                     resource: "subscription_batch".to_owned(),
                 });
             }
-            batch
-                .events
-                .retain(|event| self.seen_event_ids.insert(event.id.clone()));
+            // Drop an event that reached this subscription more than once (from
+            // several relays, say). The key includes the subscription: a second
+            // handler's subscription must still see an event the first has.
+            batch.events.retain(|event| {
+                self.seen_event_ids
+                    .insert(format!("{}/{}", handle.id, event.id))
+            });
             Ok(batch)
         });
         self.audit.record(AuditEntry {
@@ -2254,7 +2258,10 @@ where
         if !Self::matches_subscription(request, event) {
             return Ok(false);
         }
-        if !self.claim_once(idempotency_host, &event.id)? {
+        // Claimed per handler and event: a second handler on the same event
+        // must still run.
+        let claim = format!("{}/{}", handler.span.start, event.id);
+        if !self.claim_once(idempotency_host, &claim)? {
             return Ok(false);
         }
         let invocation = self.next_invocation;

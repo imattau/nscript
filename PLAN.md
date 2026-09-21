@@ -714,6 +714,13 @@ bodies no longer run at startup (a handler's `kick event.author` used to fail
 the whole run). `Result` values, `match`, `select` and in-handler publication
 are not yet evaluated. Fixed a parser bug found on the way: a lowercase name before a block
 (`if ready { .. }`) was read as a record literal.
+Added `Runtime::run_evaluated_cycle` and `dispatch_evaluated`: the subscription
+cycle (subscribe, poll, idempotent claim, storage transaction, audit) with the
+evaluator as the body engine, reporting a failing handler instead of aborting.
+Testing it exposed two runtime-wide keys that starved a second handler on the
+same stream: the poll dedupe and the idempotency claim were both keyed by event
+id alone. Both are now per subscription and per handler, in the original cycle
+too.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

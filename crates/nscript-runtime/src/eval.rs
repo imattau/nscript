@@ -17,8 +17,9 @@ use nscript_syntax::Program;
 use nscript_syntax::ast::{Expr, ExprKind, FunctionDeclaration, Item, StatementKind};
 
 use crate::{
-    AuditHost, ClockHost, LogHost, LogRecord, OperationHost, OperationPolicy, OperationValue,
-    RelayHost, Runtime, RuntimeError, SignerHost, StreamMessage,
+    AuditEntry, AuditHost, ClockHost, IdempotencyHost, LogHost, LogRecord, OperationHost,
+    OperationPolicy, OperationValue, RelayHost, Runtime, RuntimeError, SignerHost, StreamMessage,
+    SubscriptionHost, SubscriptionRequest, TransactionalStorageHost,
 };
 
 /// What the evaluator needs from its surroundings.
@@ -759,7 +760,7 @@ pub fn event_from_json(value: &serde_json::Value) -> Result<crate::SignedEvent, 
 }
 
 /// One module operation a simulated handler made.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SimulatedCall {
     pub module: String,
     pub operation: String,
@@ -952,6 +953,193 @@ where
             });
         }
         outcomes
+    }
+}
+
+/// A handler that ran and failed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HandlerFailure {
+    /// The handler's event type.
+    pub handler: String,
+    pub error: RuntimeError,
+}
+
+/// The result of one evaluated subscription cycle.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CycleReport {
+    /// Handlers that ran (a matching, unclaimed event), whether they succeeded
+    /// or failed.
+    pub dispatched: usize,
+    /// The subset of `dispatched` that failed. A failure is reported here rather
+    /// than aborting the cycle, so one bad body cannot hide the rest.
+    pub failures: Vec<HandlerFailure>,
+}
+
+impl<R, S, C, A> Runtime<R, S, C, A>
+where
+    R: RelayHost,
+    S: SignerHost,
+    C: ClockHost,
+    A: AuditHost,
+{
+    /// Dispatches one event to one handler with the evaluator, with the same
+    /// discipline as [`Runtime::dispatch_checked_handler_transactional`]: the
+    /// event must match the subscription, is claimed for idempotency, runs inside
+    /// a storage transaction that commits only if the body succeeded, and is
+    /// audited as `committed` or `rolled_back`.
+    ///
+    /// The idempotency claim is per handler *and* event (`handler_index` is the
+    /// handler's position in the program), so redelivery to one handler is
+    /// suppressed while a second handler on the same event still runs.
+    ///
+    /// `Ok(None)` means the handler did not run (no match, or the event was
+    /// already claimed). `Ok(Some(result))` carries the body's outcome; a body
+    /// failure is a value here, not an error, because the transaction has been
+    /// rolled back and the caller decides what to do.
+    ///
+    /// # Errors
+    ///
+    /// Returns idempotency or storage failures, which prevent the body running.
+    #[allow(clippy::too_many_arguments)]
+    pub fn dispatch_evaluated<I, T, L, O>(
+        &mut self,
+        program: &Program,
+        request: &SubscriptionRequest,
+        event: &crate::SignedEvent,
+        handler_index: usize,
+        handler: &nscript_semantics::CheckedHandler,
+        policy: &OperationPolicy,
+        idempotency_host: &mut I,
+        storage_host: &mut T,
+        log_host: &mut L,
+        operations: &mut O,
+        principal: Option<&str>,
+        limits: EvalLimits,
+    ) -> Result<Option<Result<Value, RuntimeError>>, RuntimeError>
+    where
+        I: IdempotencyHost,
+        T: TransactionalStorageHost,
+        L: LogHost,
+        O: OperationHost,
+    {
+        if !Self::matches_subscription(request, event) {
+            return Ok(None);
+        }
+        if !self.claim_once(idempotency_host, &format!("{handler_index}/{}", event.id))? {
+            return Ok(None);
+        }
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let transaction = storage_host.begin(invocation);
+        let result = {
+            let mut session = RuntimeSession {
+                runtime: self,
+                policy,
+                operations,
+                log: log_host,
+                principal: principal.map(str::to_owned),
+            };
+            run_handler(
+                program,
+                &handler.body,
+                Value::from_event(event),
+                &mut session,
+                limits,
+            )
+        };
+        if result.is_ok() {
+            storage_host.commit(transaction);
+        }
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "handler_transaction".to_owned(),
+            target: event.id.clone(),
+            result: if result.is_ok() {
+                "committed"
+            } else {
+                "rolled_back"
+            }
+            .to_owned(),
+        });
+        Ok(Some(result))
+    }
+
+    /// Runs one subscription cycle: for each handler, subscribe, poll and
+    /// dispatch each delivered event with the evaluator, then unsubscribe. This
+    /// is [`Runtime::run_handler_cycle_with_event_body`] with the evaluator as the
+    /// body engine, so a handler can call module operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns subscription, polling, idempotency or storage failures. A handler
+    /// body failure is reported in [`CycleReport::failures`] instead.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_evaluated_cycle<H, I, T, L, O>(
+        &mut self,
+        program: &Program,
+        checked: &nscript_semantics::CheckedProgram,
+        relayset: Option<&str>,
+        subscription_host: &mut H,
+        idempotency_host: &mut I,
+        storage_host: &mut T,
+        log_host: &mut L,
+        operations: &mut O,
+        principal: Option<&str>,
+        limits: EvalLimits,
+    ) -> Result<CycleReport, RuntimeError>
+    where
+        H: SubscriptionHost,
+        I: IdempotencyHost,
+        T: TransactionalStorageHost,
+        L: LogHost,
+        O: OperationHost,
+    {
+        let policy = policy_for(checked);
+        let requests = Self::handler_subscriptions(checked, relayset);
+        let mut report = CycleReport::default();
+        for (index, (handler, request)) in checked.handlers.iter().zip(&requests).enumerate() {
+            let handle = self.subscribe(subscription_host, request)?;
+            let batch = match self.poll_subscription(subscription_host, &handle) {
+                Ok(batch) => batch,
+                Err(error) => {
+                    let _ = self.unsubscribe(subscription_host, &handle);
+                    return Err(error);
+                }
+            };
+            for event in batch.events {
+                let outcome = self.dispatch_evaluated(
+                    program,
+                    request,
+                    &event,
+                    index,
+                    handler,
+                    &policy,
+                    idempotency_host,
+                    storage_host,
+                    log_host,
+                    operations,
+                    principal,
+                    limits,
+                );
+                match outcome {
+                    Ok(None) => {}
+                    Ok(Some(Ok(_))) => report.dispatched += 1,
+                    Ok(Some(Err(error))) => {
+                        report.dispatched += 1;
+                        report.failures.push(HandlerFailure {
+                            handler: handler.event_type.clone(),
+                            error,
+                        });
+                    }
+                    Err(error) => {
+                        let _ = self.unsubscribe(subscription_host, &handle);
+                        return Err(error);
+                    }
+                }
+            }
+            self.unsubscribe(subscription_host, &handle)?;
+        }
+        Ok(report)
     }
 }
 
@@ -1429,5 +1617,139 @@ mod tests {
         ));
         assert!(outcomes[1].result.is_ok());
         assert_eq!(log.records.len(), 1);
+    }
+
+    /// What one evaluated cycle produced.
+    struct CycleRun {
+        report: Result<CycleReport, RuntimeError>,
+        ops: SimulatedOperations,
+        log: FakeLogHost,
+        /// `(event id, "committed" | "rolled_back")` per dispatched handler.
+        audit: Vec<(String, String)>,
+    }
+
+    fn cycle(source: &str, events: &[crate::SignedEvent]) -> CycleRun {
+        let (program, checked) = checked(source);
+        let mut relay = FakeRelayHost::default();
+        // The cycle subscribes once per handler; give every handle the events.
+        for handle in 1..=checked.handlers.len() {
+            relay.queued_events.insert(handle as u64, events.to_vec());
+        }
+        let mut claims = crate::InMemoryStorage::default();
+        let mut storage = crate::InMemoryStorage::default();
+        let mut log = FakeLogHost::default();
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut runtime = runtime();
+        let report = runtime.run_evaluated_cycle(
+            &program,
+            &checked,
+            Some("public"),
+            &mut relay,
+            &mut claims,
+            &mut storage,
+            &mut log,
+            &mut ops,
+            None,
+            EvalLimits::default(),
+        );
+        let audit = runtime
+            .audit
+            .entries
+            .iter()
+            .filter(|entry| entry.operation == "handler_transaction")
+            .map(|entry| (entry.target.clone(), entry.result.clone()))
+            .collect();
+        CycleRun {
+            report,
+            ops,
+            log,
+            audit,
+        }
+    }
+
+    fn note(id: &str, content: &str) -> crate::SignedEvent {
+        event_from_json(&serde_json::json!({"id": id, "content": content, "signer": "mallory"}))
+            .unwrap()
+    }
+
+    #[test]
+    fn a_cycle_runs_the_handler_and_commits_its_transaction() {
+        let run = cycle(BOT, &[note("e1", "spam")]);
+        let (ops, log, audit) = (run.ops, run.log, run.audit);
+        let report = run.report.unwrap();
+        assert_eq!((report.dispatched, report.failures.len()), (1, 0));
+        assert_eq!(log.records[0].message, "kicking mallory");
+        assert_eq!(ops.calls.len(), 1, "the handler called a module operation");
+        assert_eq!(audit, [("e1".to_owned(), "committed".to_owned())]);
+    }
+
+    #[test]
+    fn a_redelivered_event_runs_once() {
+        let run = cycle(BOT, &[note("same", "spam"), note("same", "spam")]);
+        let (ops, audit) = (run.ops, run.audit);
+        assert_eq!(run.report.unwrap().dispatched, 1);
+        assert_eq!(ops.calls.len(), 1, "the duplicate was claimed and skipped");
+        assert_eq!(audit.len(), 1);
+    }
+
+    #[test]
+    fn a_failing_handler_rolls_back_is_reported_and_does_not_hide_the_next() {
+        let source = "permissions {\n    log\n}\n\non Note {\n    print(nope)\n}\n\non Note {\n    print(\"second ran\")\n}\n";
+        let run = cycle(source, &[note("e1", "x")]);
+        let (log, audit) = (run.log, run.audit);
+        let report = run.report.unwrap();
+        assert_eq!(report.dispatched, 2, "both handlers ran");
+        assert_eq!(report.failures.len(), 1);
+        assert!(
+            matches!(&report.failures[0].error, RuntimeError::EvaluationError { message } if message.contains("nope"))
+        );
+        assert_eq!(log.records.len(), 1);
+        // The failed body's transaction was rolled back; the other committed.
+        assert_eq!(
+            audit,
+            [
+                ("e1".to_owned(), "rolled_back".to_owned()),
+                ("e1".to_owned(), "committed".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn an_event_that_matches_no_handler_dispatches_nothing() {
+        let other =
+            event_from_json(&serde_json::json!({"id": "r", "event_type": "Reaction"})).unwrap();
+        let run = cycle(BOT, &[other]);
+        let (ops, audit) = (run.ops, run.audit);
+        assert_eq!(run.report.unwrap(), CycleReport::default());
+        assert!(ops.calls.is_empty() && audit.is_empty());
+    }
+
+    #[test]
+    fn two_handlers_on_one_event_both_run_in_the_original_cycle_too() {
+        // Two handlers subscribed to the same events used to starve the second:
+        // the poll dedupe and the idempotency claim were both keyed by event id
+        // alone, so the first handler consumed it.
+        let source = "permissions {\n    log\n}\n\non Note {\n    print(\"first\")\n}\n\non Note {\n    print(\"second\")\n}\n";
+        let (_, checked) = checked(source);
+        let mut relay = FakeRelayHost::default();
+        for handle in 1..=2 {
+            relay.queued_events.insert(handle, vec![note("e1", "x")]);
+        }
+        let mut claims = crate::InMemoryStorage::default();
+        let mut storage = crate::InMemoryStorage::default();
+        let mut log = FakeLogHost::default();
+        let dispatched = runtime()
+            .run_handler_cycle_with_event_body(
+                &checked,
+                Some("public"),
+                &mut relay,
+                &mut claims,
+                &mut storage,
+                &mut log,
+            )
+            .unwrap();
+        assert_eq!(dispatched, 2);
+        let messages: Vec<_> = log.records.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(messages, ["first", "second"]);
     }
 }
