@@ -25,8 +25,16 @@ decisions are made. A release manifest contains:
 - declared permissions and inferred effect summary; and
 - reproducible-build metadata when available.
 
-The canonical manifest encoding and release event kind will be allocated before
-this RFC advances from draft. Implementations MUST reject a manifest whose event
+### Canonical encoding (draft)
+
+The current NScript CLI canonical form is UTF-8 JSON with object keys ordered
+lexicographically, compact separators, and no trailing newline. Arrays retain
+their semantic order. A future signed-release profile MUST version this
+encoding explicitly and sign the exact canonical bytes; pretty-printed output
+MUST NOT be used as a signature input.
+
+The release event kind will be allocated before this RFC advances from draft.
+Implementations MUST reject a manifest whose event
 author, embedded publisher, and verified signature do not agree.
 
 ## Resolution
@@ -69,5 +77,5 @@ discovery inputs. None can replace publisher signature or content verification.
 ## Open allocation items
 
 Before stabilization, this RFC must allocate or adopt event kinds for package
-releases, yanks, and compromise notices; define canonical manifest encoding; and
-publish cross-implementation signature and resolution vectors.
+releases, yanks, and compromise notices; finalize the canonical encoding
+version; and publish cross-implementation signature and resolution vectors.
