@@ -49,7 +49,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>]\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -549,18 +549,22 @@ fn compile_program(arguments: &[String], wasm: bool) -> ExitCode {
 struct RunOptions {
     events: Vec<serde_json::Value>,
     principal: Option<String>,
+    /// `(module, operation)` pairs the simulator should make fail.
+    failing: Vec<(String, String)>,
 }
 
-/// Separates `--event <json>`, `--events <file>` and `--as <key>` from the
-/// compiler arguments. `--events` reads one JSON event per line, or a single
-/// JSON array of events.
+/// Separates `--event <json>`, `--events <file>`, `--as <key>` and
+/// `--fail <module.operation>` from the compiler arguments. `--events` reads one
+/// JSON event per line, or a single JSON array of events. `--fail` makes the
+/// simulator answer that operation with a recoverable error, so a script's error
+/// handling can be exercised.
 fn take_run_options(arguments: &[String]) -> Result<(Vec<String>, RunOptions), String> {
     let mut rest = Vec::new();
     let mut options = RunOptions::default();
     let mut index = 0;
     while index < arguments.len() {
         let flag = arguments[index].as_str();
-        if !matches!(flag, "--event" | "--events" | "--as") {
+        if !matches!(flag, "--event" | "--events" | "--as" | "--fail") {
             rest.push(arguments[index].clone());
             index += 1;
             continue;
@@ -591,6 +595,14 @@ fn take_run_options(arguments: &[String]) -> Result<(Vec<String>, RunOptions), S
                             })?);
                     }
                 }
+            }
+            "--fail" => {
+                let Some((module, operation)) = value.split_once('.') else {
+                    return Err(format!("--fail expects module.operation, found {value}"));
+                };
+                options
+                    .failing
+                    .push((module.to_owned(), operation.to_owned()));
             }
             _ => options.principal = Some(value.clone()),
         }
@@ -658,6 +670,20 @@ where
     Ok(())
 }
 
+/// The simulator every command that runs handlers uses: it runs what the fake
+/// host implements, answers the rest from declared return types, and makes the
+/// `--fail` operations fail.
+fn simulated_operations(
+    graph: &nscript_modules::ResolvedModuleGraph,
+    failing: &[(String, String)],
+) -> nscript_runtime::eval::SimulatedOperations {
+    let mut operations = nscript_runtime::eval::SimulatedOperations::new(declared_returns(graph));
+    for (module, operation) in failing {
+        operations.fail_operation(module, operation);
+    }
+    operations
+}
+
 fn run_program(arguments: &[String]) -> ExitCode {
     let (arguments, options) = match take_run_options(arguments) {
         Ok(taken) => taken,
@@ -721,8 +747,7 @@ fn run_program(arguments: &[String]) -> ExitCode {
         nscript_runtime::OperationPolicy::default(),
         |policy, call| policy.allow(&call.module, &call.operation),
     );
-    let mut operation_host =
-        nscript_runtime::eval::SimulatedOperations::new(declared_returns(&graph));
+    let mut operation_host = simulated_operations(&graph, &options.failing);
     if let Err(code) = run_startup_operations(
         &mut runtime,
         &program,
@@ -758,6 +783,36 @@ fn run_program(arguments: &[String]) -> ExitCode {
         &operation_policy,
         &mut operation_host,
     )
+}
+
+/// One recorded operation call, as `run` and `test-event` print it.
+fn describe_operation_call(call: &nscript_runtime::eval::SimulatedCall) -> String {
+    let arguments = call
+        .arguments
+        .iter()
+        .map(|argument| format!("{argument:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let note = if call.simulated { "  [simulated]" } else { "" };
+    format!(
+        "operation {}.{}({arguments}){note}",
+        call.module, call.operation
+    )
+}
+
+/// A handler failure in words, with the fix for an unconfigured `me`.
+fn describe_handler_error(error: &nscript_runtime::RuntimeError) -> String {
+    match error {
+        nscript_runtime::RuntimeError::EvaluationError { message } if message.contains("`me`") => {
+            format!("{message} (pass --as <key>)")
+        }
+        nscript_runtime::RuntimeError::EvaluationError { message } => message.clone(),
+        // A handler that returned an error result (by `?` or `return Err(..)`).
+        nscript_runtime::RuntimeError::HandlerError { message } => {
+            format!("it returned an error: {message}")
+        }
+        other => format!("{other:?}"),
+    }
 }
 
 /// Delivers each `--event` to the handlers it matches and reports what they did:
@@ -819,17 +874,7 @@ where
                 Ok(_) => println!("  handler {}: ok", outcome.handler),
                 Err(error) => {
                     failed = true;
-                    let detail = match error {
-                        nscript_runtime::RuntimeError::EvaluationError { message }
-                            if message.contains("`me`") =>
-                        {
-                            format!("{message} (pass --as <key>)")
-                        }
-                        nscript_runtime::RuntimeError::EvaluationError { message } => {
-                            message.clone()
-                        }
-                        other => format!("{other:?}"),
-                    };
+                    let detail = describe_handler_error(error);
                     eprintln!("error[R1004]: handler {} failed: {detail}", outcome.handler);
                 }
             }
@@ -838,17 +883,7 @@ where
             println!("  log {}: {}", record.level, record.message);
         }
         for call in &operations.calls[calls_before..] {
-            let arguments = call
-                .arguments
-                .iter()
-                .map(|argument| format!("{argument:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let note = if call.simulated { "  [simulated]" } else { "" };
-            println!(
-                "  operation {}.{}({arguments}){note}",
-                call.module, call.operation
-            );
+            println!("  {}", describe_operation_call(call));
         }
     }
     if failed {

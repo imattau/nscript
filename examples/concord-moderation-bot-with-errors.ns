@@ -1,0 +1,30 @@
+// A moderation bot that handles a refused kick instead of ignoring it.
+//
+// Operations return a Result. `match` branches on it, and `?` would return the
+// error from the handler. Try it, first with the kick succeeding and then with
+// the simulator making it fail:
+//
+//   nscript run examples/concord-moderation-bot-with-errors.ns \
+//       --event '{"content": "buy spam now", "signer": "mallory"}'
+//
+//   nscript run examples/concord-moderation-bot-with-errors.ns \
+//       --event '{"content": "buy spam now", "signer": "mallory"}' \
+//       --fail concord04.kick_member
+//
+// In a real deployment a kick is refused when the acting identity lacks the KICK
+// bit or does not outrank its target; that arrives here as the same `Err`.
+use concord04
+
+permissions {
+    concord_kick
+    log
+}
+
+on Note {
+    if event.content contains "spam" {
+        match concord04.kick_member(event.author) {
+            Ok(report) => print("kicked " + event.author)
+            Err(error) => print("could not kick " + event.author + ": " + error.message)
+        }
+    }
+}

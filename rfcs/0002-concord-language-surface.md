@@ -190,8 +190,10 @@ with fake hosts. What remains:
   now concrete: the language has no way to bind a host-held key to a name. The
   `me` principal is the only host-provided value today. `concord01.stream(key)`
   passes an undefined identifier that the checker does not resolve.
-- **`Result` values are not modelled**, so a handler cannot branch on a failed
-  operation, and publication from a handler is not evaluated.
+- **Publication from a handler is not evaluated.** `Result` values are now
+  modelled (see `docs/HANDLERS.md`): a handler can `match` on an operation's
+  `Ok`/`Err`, use `?`, and a kick the Roster refuses reaches the script as an
+  `Err` it can read.
 - **Scoped grants (section 2) and fold queries (section 3)** are untouched.
 
 Writing the evaluator's first handler also exposed a parser bug: a lowercase

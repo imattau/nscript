@@ -662,3 +662,65 @@ fn run_bounds_a_runaway_handler() {
     assert!(!ok);
     assert!(stderr.contains("ResourceLimit"), "{stderr}");
 }
+
+const BOT_WITH_ERRORS: &str =
+    include_str!("../../../examples/concord-moderation-bot-with-errors.ns");
+
+#[test]
+fn run_lets_a_script_branch_on_an_operations_result() {
+    let spam = r#"{"content":"buy spam now","signer":"mallory"}"#;
+    let (ok, stdout, stderr) = run_source("branch-ok", BOT_WITH_ERRORS, &["--event", spam]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("log info: kicked mallory"), "{stdout}");
+    // `--fail` makes the simulator refuse the operation; the script's `Err` arm
+    // handles it, so the handler itself succeeds and the attempt is recorded.
+    let (ok, stdout, stderr) = run_source(
+        "branch-err",
+        BOT_WITH_ERRORS,
+        &["--event", spam, "--fail", "concord04.kick_member"],
+    );
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.contains("log info: could not kick mallory: publication rejected"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("handler Note: ok"), "{stdout}");
+    assert!(
+        stdout.contains("operation concord04.kick_member"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn run_treats_an_error_returned_by_question_mark_as_a_failed_handler() {
+    let source = "use concord04\n\npermissions {\n    concord_kick\n    log\n}\n\non Note {\n    let report = concord04.kick_member(event.author)?\n    print(\"after\")\n}\n";
+    let (ok, stdout, stderr) = run_source(
+        "question",
+        source,
+        &["--event", "{}", "--fail", "concord04.kick_member"],
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("error[R1004]: handler Note failed: it returned an error"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("publication rejected"), "{stderr}");
+    assert!(
+        !stdout.contains("log info: after"),
+        "the statement after `?` did not run: {stdout}"
+    );
+    // Without a failure the same handler unwraps the result and carries on.
+    let (ok, stdout, stderr) = run_source("question-ok", source, &["--event", "{}"]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("log info: after"), "{stdout}");
+}
+
+#[test]
+fn run_rejects_a_malformed_fail_option() {
+    let (ok, _, stderr) = run_source("bad-fail", BOT_WITH_ERRORS, &["--fail", "nodot"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("--fail expects module.operation"),
+        "{stderr}"
+    );
+}

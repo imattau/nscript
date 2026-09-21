@@ -23,6 +23,7 @@ applies inside a handler exactly as it does outside one.
 | integer arithmetic `+ - * / %` | overflow and division by zero are errors |
 | `==`, `!=`, `< > <= >=`, `and`/`or` (short-circuit), `!` | ordering is for ints and text |
 | `contains`, `in` | text in text, element in list |
+| `Ok(x)`, `Err(x)`, `?`, `match` | see Results below |
 | text and list literals, records (`Name { field: value }`), indexing | |
 | `event.id`, `event.author`, `event.content`, `event.kind`, `event.created_at`, `event.tags` | `tags` iterates as `name=value` text |
 | `me` | the program's principal; an error if none is configured |
@@ -74,6 +75,53 @@ stream's name. `signer` (or `author`), `content`, `kind`, `tags` (an array of
   calls run at startup. Before this, a handler's `kick event.author` was run once
   at startup with its argument dropped, and the whole run failed.
 
+## Results
+
+Recoverable operations return `Result<T,E>`, and there are no exceptions. The
+evaluator models this as the spec says.
+
+- **An operation declared `Result<T,E>` returns `Ok(value)` or `Err(error)`.** The
+  declared type comes from the module descriptor, through
+  `OperationHost::declared_return` (the simulator has it; `WithReturns` adds it to
+  any other host). An operation with no declared type returns its plain value, as
+  before.
+- **Only a failure the operation legitimately reports becomes an `Err`:** a
+  refusal by the Roster (`AuthorityDenied`), an unreachable relay, a rejected
+  publication, a storage conflict, a denied signer, a payment over its limit. The
+  error is a record of the operation's declared error type with a `message`.
+- **Everything else still aborts the handler:** a capability denial, a wrong
+  argument, an unavailable operation, a resource limit. A script must not be able
+  to catch a permission boundary or its own programming mistake.
+- **`?`** unwraps an `Ok`. On an `Err` it returns that error from the nearest
+  enclosing function or handler, so the rest of the body does not run. A value
+  that is not a result passes through unchanged.
+- **A handler that ends with an `Err`** (by `?` or by `return Err(..)`) has
+  failed: its transaction rolls back and it is reported as
+  `RuntimeError::HandlerError`. A handler that handles the error itself has not.
+- **`match`** works on results (`Ok(v)`, `Err(e)`, nested) with bindings and `_`.
+  A value no arm covers is an evaluation error, never a silent fall-through,
+  because the checker cannot always prove a match exhaustive (it cannot see the
+  type of a call's result).
+- **`Ok(x)` and `Err(x)`** are values a script can build and return. A result
+  cannot be passed to an operation without being unwrapped.
+
+```nostr
+match concord04.kick_member(event.author) {
+    Ok(report) => print("kicked " + event.author)
+    Err(error) => print("could not kick: " + error.message)
+}
+```
+
+`nscript run` takes `--fail module.operation` (repeatable) to make the simulator
+answer that operation with a recoverable error, so the `Err` path can be
+exercised: `--fail concord04.kick_member`. Without it the simulator never fails.
+
+**Parser gap.** The parser accepts only bindings, `_` and variant patterns
+(`Ok(v)`, `Err(e)`). Literal patterns, record patterns such as
+`Note { author }`, and guards (`x if x > 5`) do not parse, although the spec's
+section 10 uses them and the AST has nodes for them. The evaluator handles those
+nodes, tested on hand-built AST, so they will work when the parser produces them.
+
 ## Subscription cycles
 
 `Runtime::run_evaluated_cycle` runs a whole subscription cycle with the
@@ -110,11 +158,8 @@ A handler that loops or recurses without end stops with
 An unsupported construct is a stable `OperationUnavailable` or
 `EvaluationError`, never a silent skip.
 
-- **`Result` values are not modelled.** An operation that fails aborts the
-  handler, as `?` would; a script cannot yet branch on a failure. `?` is a no-op
-  on the success path.
-- **Not evaluated:** `match`, `select`, `fetch`, `latest`, `publish`, `sign`,
-  decimals, durations, nested `on`/`every`/`at`/`once`, and `Send`. Publication
+- **Not evaluated:** `select`, `fetch`, `latest`, `publish`, `sign`, decimals,
+  durations, nested `on`/`every`/`at`/`once`, and `Send`. Publication
   from inside a handler is the largest missing piece.
 - **`event` is not statically typed by its source**, so `event.content` is
   checked at run time, not by `nscript check`.

@@ -309,3 +309,91 @@ fn the_script_cannot_do_more_than_the_program_was_granted() {
         "nothing was published"
     );
 }
+
+const RESULT_BOT: &str = r#"
+use concord04
+
+permissions {
+    concord_kick
+    log
+}
+
+on messages {
+    match concord04.kick_member(event.author) {
+        Ok(report) => print("kicked " + event.author)
+        Err(error) => print("could not kick " + event.author + ": " + error.message)
+    }
+}
+"#;
+
+#[test]
+fn a_script_branches_on_a_kick_the_roster_refuses() {
+    use nscript_runtime::eval::WithReturns;
+
+    let plane = DerivedKey::new(
+        group_key("concord/channel", &ROOT, &unhex32(CHANNEL), Some(0))
+            .secret_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    let mut reader = ChannelReader::new(&plane, CHANNEL, 0).unwrap();
+    // The owner is unremovable; the spammer holds no role.
+    let wraps = [
+        channel_wrap(&OWNER, "spam from the owner", 100),
+        channel_wrap(&SPAMMER, "spam", 200),
+    ];
+    let messages = reader.ingest_all(wraps.iter().map(String::as_str), NOW, &BTreeSet::new());
+    assert_eq!(messages.len(), 2);
+
+    let recorder = Recorder::default();
+    let (mut moderation, _) = moderation_host(&recorder);
+    let mut with_types = WithReturns {
+        inner: &mut moderation,
+        returns: std::collections::BTreeMap::from([(
+            ("concord04".to_owned(), "kick_member".to_owned()),
+            "Result<PublishReport,ModerationError>".to_owned(),
+        )]),
+    };
+    let (program, body) = handler_body(RESULT_BOT);
+    let policy = OperationPolicy::default().allow("concord04", "kick_member");
+    let mut runtime = Runtime::new(
+        FakeRelayHost::default(),
+        FakeSignerHost::default(),
+        FakeClock::default(),
+        RecordingAudit::default(),
+    );
+    let mut log = FakeLogHost::default();
+    for message in &messages {
+        let mut session = RuntimeSession {
+            runtime: &mut runtime,
+            policy: &policy,
+            operations: &mut with_types,
+            log: &mut log,
+            principal: Some(pk(&BOT)),
+        };
+        // The refusal is a value the script handled, so neither handler fails.
+        run_handler(
+            &program,
+            &body,
+            Value::from_event(&message.to_signed_event()),
+            &mut session,
+            EvalLimits::default(),
+        )
+        .unwrap();
+    }
+
+    let said: Vec<_> = log.records.iter().map(|r| r.message.clone()).collect();
+    assert_eq!(
+        said,
+        [
+            format!("could not kick {}: not authorized to kick", pk(&OWNER)),
+            format!("kicked {}", pk(&SPAMMER)),
+        ],
+        "the Roster's refusal reached the script as an Err it could read"
+    );
+    assert_eq!(
+        recorder.0.lock().unwrap().len(),
+        1,
+        "only the permitted kick was published"
+    );
+}

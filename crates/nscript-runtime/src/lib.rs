@@ -492,6 +492,11 @@ pub enum RuntimeError {
     EvaluationError {
         message: String,
     },
+    /// A handler ended by returning an error result, either by `?` on an error
+    /// or by returning one. The handler's transaction is rolled back.
+    HandlerError {
+        message: String,
+    },
 }
 
 /// Decodes a dispatch payload supplied by a WASM operation import.
@@ -1320,6 +1325,16 @@ pub trait OperationHost {
         operation: &str,
         arguments: &[OperationValue],
     ) -> Result<OperationValue, RuntimeError>;
+
+    /// The declared return type of an operation (for example
+    /// `Result<PublishReport,ModerationError>`), if this host knows it. The
+    /// handler evaluator uses it to hand a script `Ok`/`Err` values for
+    /// operations declared to return a `Result`. Hosts that do not know their
+    /// operations' signatures leave the default, and their operations return
+    /// plain values.
+    fn declared_return(&self, _module: &str, _operation: &str) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

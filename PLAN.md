@@ -711,8 +711,8 @@ moderation host, and an independent Guestbook fold. Now wired into `nscript run`
 events to matching handlers in the simulator, with unimplemented operations
 recorded and answered from their declared return type. Handler and function
 bodies no longer run at startup (a handler's `kick event.author` used to fail
-the whole run). `Result` values, `match`, `select` and in-handler publication
-are not yet evaluated. Fixed a parser bug found on the way: a lowercase name before a block
+the whole run). `select`, `fetch` and in-handler publication are not yet
+evaluated. Fixed a parser bug found on the way: a lowercase name before a block
 (`if ready { .. }`) was read as a record literal.
 Added `Runtime::run_evaluated_cycle` and `dispatch_evaluated`: the subscription
 cycle (subscribe, poll, idempotent claim, storage transaction, audit) with the
@@ -721,6 +721,17 @@ Testing it exposed two runtime-wide keys that starved a second handler on the
 same stream: the poll dedupe and the idempotency claim were both keyed by event
 id alone. Both are now per subscription and per handler, in the original cycle
 too.
+`Result` values are modelled in the handler evaluator, as the spec describes:
+an operation declared `Result<T,E>` returns `Ok`/`Err`; only failures it
+legitimately reports (a Roster refusal, an unreachable relay, a rejected
+publication) become an `Err` a script can branch on, while a capability denial or
+a bad argument still aborts; `?` returns the error from the enclosing function or
+handler; `match` works on results; and a handler that ends with an `Err` rolls
+back. `nscript run --fail module.operation` exercises the `Err` path in the
+simulator. Proved against the real Roster: a kick of the owner is refused and
+reaches the script as an `Err` it can read. Found on the way: the parser accepts
+only binding, wildcard and variant patterns, so literal and record patterns and
+guards (used by spec section 10) do not parse although the AST has them.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

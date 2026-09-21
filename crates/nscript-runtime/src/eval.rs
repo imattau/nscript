@@ -14,7 +14,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nscript_syntax::Program;
-use nscript_syntax::ast::{Expr, ExprKind, FunctionDeclaration, Item, StatementKind};
+use nscript_syntax::ast::{
+    Expr, ExprKind, FunctionDeclaration, Item, MatchArm, PatternKind, StatementKind,
+};
 
 use crate::{
     AuditEntry, AuditHost, ClockHost, IdempotencyHost, LogHost, LogRecord, OperationHost,
@@ -45,6 +47,14 @@ pub trait EvalHost {
         operation: &str,
         arguments: &[OperationValue],
     ) -> Result<OperationValue, RuntimeError>;
+
+    /// The declared return type of an operation, if known. For one declared
+    /// `Result<T,E>` the evaluator returns `Ok`/`Err` values, and turns a
+    /// recoverable failure into an `Err` a script can branch on. Without it an
+    /// operation returns its plain value and any failure aborts the handler.
+    fn declared_return(&self, _module: &str, _operation: &str) -> Option<String> {
+        None
+    }
 }
 
 /// A run-time value.
@@ -61,6 +71,10 @@ pub enum Value {
         name: String,
         fields: Vec<(String, Value)>,
     },
+    /// The success arm of a `Result`.
+    ResultOk(Box<Value>),
+    /// The error arm of a `Result`.
+    ResultErr(Box<Value>),
     /// An operation result the evaluator does not model, kept whole so it can
     /// be passed back into another operation.
     Op(OperationValue),
@@ -76,6 +90,7 @@ impl Value {
             Self::PubKey(_) => "pubkey",
             Self::List(_) => "list",
             Self::Record { .. } => "record",
+            Self::ResultOk(_) | Self::ResultErr(_) => "result",
             Self::Op(_) => "operation value",
         }
     }
@@ -99,6 +114,8 @@ impl Value {
                     .collect();
                 format!("{name} {{ {} }}", fields.join(", "))
             }
+            Self::ResultOk(value) => format!("Ok({})", value.display()),
+            Self::ResultErr(value) => format!("Err({})", value.display()),
             Self::Op(value) => format!("{value:?}"),
         }
     }
@@ -107,10 +124,13 @@ impl Value {
     #[must_use]
     pub fn from_event(event: &crate::SignedEvent) -> Self {
         Self::Record {
-            name: "Event".to_owned(),
+            // Named by its type, so `match event { Note { author, content } => .. }`
+            // selects on it.
+            name: event.unsigned.event_type.clone(),
             fields: vec![
                 ("id".to_owned(), Self::Text(event.id.clone())),
                 ("author".to_owned(), Self::PubKey(event.signer.clone())),
+                ("pubkey".to_owned(), Self::PubKey(event.signer.clone())),
                 (
                     "content".to_owned(),
                     Self::Text(event.unsigned.content.clone()),
@@ -135,7 +155,7 @@ impl Value {
         }
     }
 
-    fn to_operation(&self) -> Result<OperationValue, RuntimeError> {
+    fn to_operation(&self) -> Result<OperationValue, Stop> {
         match self {
             Self::Text(value) => Ok(OperationValue::Text(value.clone())),
             Self::Int(value) => Ok(OperationValue::Integer(*value)),
@@ -163,7 +183,7 @@ impl Value {
                 fields: fields
                     .iter()
                     .map(|(field, value)| Ok((field.clone(), value.to_operation()?)))
-                    .collect::<Result<_, RuntimeError>>()?,
+                    .collect::<Result<_, Stop>>()?,
             }),
             other => Err(fail(format!(
                 "cannot pass a {} to an operation",
@@ -203,10 +223,25 @@ impl Default for EvalLimits {
     }
 }
 
-fn fail(message: impl Into<String>) -> RuntimeError {
-    RuntimeError::EvaluationError {
-        message: message.into(),
+/// Why an evaluation step ended early. A real failure aborts the handler; a `?`
+/// on an error result instead returns that error from the nearest enclosing
+/// function or handler (the spec: "postfix `?` returns the error"), so it is
+/// carried separately and caught at the function or handler boundary.
+enum Stop {
+    Error(RuntimeError),
+    Propagate(Value),
+}
+
+impl From<RuntimeError> for Stop {
+    fn from(error: RuntimeError) -> Self {
+        Self::Error(error)
     }
+}
+
+fn fail(message: impl Into<String>) -> Stop {
+    Stop::Error(RuntimeError::EvaluationError {
+        message: message.into(),
+    })
 }
 
 enum Flow {
@@ -264,31 +299,35 @@ pub fn run_handler<'a, H: EvalHost>(
         steps: 0,
         depth: 0,
     };
-    match interpreter.block(body)? {
-        Flow::Return(value) => Ok(value),
-        Flow::Next => Ok(Value::Unit),
+    match interpreter.block(body) {
+        Ok(Flow::Return(value)) => Ok(value),
+        Ok(Flow::Next) => Ok(Value::Unit),
+        // A `?` on an error returns that error from the handler.
+        Err(Stop::Propagate(error)) => Ok(Value::ResultErr(Box::new(error))),
+        Err(Stop::Error(error)) => Err(error),
     }
 }
 
 impl<H: EvalHost> Interpreter<'_, H> {
-    fn step(&mut self) -> Result<(), RuntimeError> {
+    fn step(&mut self) -> Result<(), Stop> {
         self.steps += 1;
         if self.steps > self.limits.max_steps {
             return Err(RuntimeError::ResourceLimit {
                 resource: "handler steps".to_owned(),
-            });
+            }
+            .into());
         }
         Ok(())
     }
 
-    fn block(&mut self, items: &[Item]) -> Result<Flow, RuntimeError> {
+    fn block(&mut self, items: &[Item]) -> Result<Flow, Stop> {
         self.scopes.push(BTreeMap::new());
         let result = self.items(items);
         self.scopes.pop();
         result
     }
 
-    fn items(&mut self, items: &[Item]) -> Result<Flow, RuntimeError> {
+    fn items(&mut self, items: &[Item]) -> Result<Flow, Stop> {
         for item in items {
             self.step()?;
             match item {
@@ -314,7 +353,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
         Ok(Flow::Next)
     }
 
-    fn statement(&mut self, statement: &StatementKind) -> Result<Flow, RuntimeError> {
+    fn statement(&mut self, statement: &StatementKind) -> Result<Flow, Stop> {
         match statement {
             StatementKind::Expression(expression) => {
                 self.expression(expression)?;
@@ -366,7 +405,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
         }
     }
 
-    fn condition(&mut self, expression: &Expr) -> Result<bool, RuntimeError> {
+    fn condition(&mut self, expression: &Expr) -> Result<bool, Stop> {
         match self.expression(expression)? {
             Value::Bool(value) => Ok(value),
             other => Err(fail(format!(
@@ -380,7 +419,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
     }
 
-    fn expression(&mut self, expression: &Expr) -> Result<Value, RuntimeError> {
+    fn expression(&mut self, expression: &Expr) -> Result<Value, Stop> {
         self.step()?;
         match &expression.value {
             ExprKind::Integer(value) => Ok(Value::Int(*value)),
@@ -399,7 +438,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 fields: fields
                     .iter()
                     .map(|(field, value)| Ok((field.value.clone(), self.expression(value)?)))
-                    .collect::<Result<_, RuntimeError>>()?,
+                    .collect::<Result<_, Stop>>()?,
             }),
             ExprKind::Member { value, name } => match self.expression(value)? {
                 Value::Record { fields, .. } => fields
@@ -438,9 +477,16 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 }
                 Err(fail(format!("assignment to undeclared name `{name}`")))
             }
-            // Operation failures already abort the handler, so `?` is a no-op
-            // on the success path.
-            ExprKind::Propagate(value) => self.expression(value),
+            // `?` unwraps a success and returns an error from the nearest
+            // enclosing function or handler. A value that is not a result passes
+            // through: it came from an operation whose result type is not
+            // modelled.
+            ExprKind::Propagate(value) => match self.expression(value)? {
+                Value::ResultOk(inner) => Ok(*inner),
+                Value::ResultErr(error) => Err(Stop::Propagate(*error)),
+                other => Ok(other),
+            },
+            ExprKind::Match { value, arms } => self.match_expression(value, arms),
             ExprKind::Call { callee, arguments } => self.call(callee, arguments),
             other => Err(unsupported(
                 &format!("{other:?}").chars().take(24).collect::<String>(),
@@ -448,7 +494,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
         }
     }
 
-    fn identifier(&self, name: &str) -> Result<Value, RuntimeError> {
+    fn identifier(&self, name: &str) -> Result<Value, Stop> {
         if let Some(value) = self.lookup(name) {
             return Ok(value.clone());
         }
@@ -462,7 +508,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
         Err(fail(format!("unknown name `{name}`")))
     }
 
-    fn unary(&mut self, operator: &str, value: &Expr) -> Result<Value, RuntimeError> {
+    fn unary(&mut self, operator: &str, value: &Expr) -> Result<Value, Stop> {
         match (operator, self.expression(value)?) {
             ("!" | "not", Value::Bool(value)) => Ok(Value::Bool(!value)),
             ("-", Value::Int(value)) => value
@@ -476,7 +522,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
         }
     }
 
-    fn binary(&mut self, operator: &str, left: &Expr, right: &Expr) -> Result<Value, RuntimeError> {
+    fn binary(&mut self, operator: &str, left: &Expr, right: &Expr) -> Result<Value, Stop> {
         // `and` / `or` short-circuit, so the right side may be a guarded call.
         if matches!(operator, "and" | "&&" | "or" | "||") {
             let short = matches!(operator, "or" | "||");
@@ -497,7 +543,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
         }
     }
 
-    fn call(&mut self, callee: &Expr, arguments: &[Expr]) -> Result<Value, RuntimeError> {
+    fn call(&mut self, callee: &Expr, arguments: &[Expr]) -> Result<Value, Stop> {
         let arguments = arguments
             .iter()
             .map(|argument| self.expression(argument))
@@ -519,6 +565,17 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 )),
                 _ => Err(fail("`len` takes a list or text")),
             },
+            ExprKind::Identifier(name) if name == "Ok" || name == "Err" => {
+                let [value] = arguments.as_slice() else {
+                    return Err(fail(format!("`{name}` takes one argument")));
+                };
+                let value = Box::new(value.clone());
+                Ok(if name == "Ok" {
+                    Value::ResultOk(value)
+                } else {
+                    Value::ResultErr(value)
+                })
+            }
             ExprKind::Identifier(name) => self.call_function(name, arguments),
             ExprKind::Member { value, name } if matches!(&value.value, ExprKind::Identifier(module) if self.modules.contains(module.as_str())) =>
             {
@@ -529,14 +586,27 @@ impl<H: EvalHost> Interpreter<'_, H> {
                     .iter()
                     .map(Value::to_operation)
                     .collect::<Result<Vec<_>, _>>()?;
-                let result = self.host.call_operation(module, &name.value, &operands)?;
-                Ok(Value::from_operation(result))
+                let declared = self.host.declared_return(module, &name.value);
+                let outcome = self.host.call_operation(module, &name.value, &operands);
+                match declared.as_deref().and_then(result_error_type) {
+                    // Declared `Result<T,E>`: hand the script `Ok`/`Err`. A failure
+                    // that is not the operation's to report (a capability denial, a
+                    // bad argument) still aborts the handler.
+                    Some(error_type) => Ok(match outcome {
+                        Ok(value) => Value::ResultOk(Box::new(Value::from_operation(value))),
+                        Err(error) => match recoverable(&error, &error_type) {
+                            Some(failure) => Value::ResultErr(Box::new(failure)),
+                            None => return Err(Stop::Error(error)),
+                        },
+                    }),
+                    None => Ok(Value::from_operation(outcome?)),
+                }
             }
             _ => Err(fail("this call is not supported")),
         }
     }
 
-    fn call_function(&mut self, name: &str, arguments: Vec<Value>) -> Result<Value, RuntimeError> {
+    fn call_function(&mut self, name: &str, arguments: Vec<Value>) -> Result<Value, Stop> {
         let function = *self
             .functions
             .get(name)
@@ -550,7 +620,8 @@ impl<H: EvalHost> Interpreter<'_, H> {
         if self.depth >= self.limits.max_depth {
             return Err(RuntimeError::ResourceLimit {
                 resource: "handler call depth".to_owned(),
-            });
+            }
+            .into());
         }
         self.depth += 1;
         // A function sees only its own parameters, never the caller's names.
@@ -568,18 +639,156 @@ impl<H: EvalHost> Interpreter<'_, H> {
         let result = self.block(&function.body);
         self.scopes = caller;
         self.depth -= 1;
-        match result? {
-            Flow::Return(value) => Ok(value),
-            Flow::Next => Ok(Value::Unit),
+        match result {
+            Ok(Flow::Return(value)) => Ok(value),
+            Ok(Flow::Next) => Ok(Value::Unit),
+            // `?` inside a function returns the error from that function.
+            Err(Stop::Propagate(error)) => Ok(Value::ResultErr(Box::new(error))),
+            Err(other) => Err(other),
+        }
+    }
+
+    fn match_expression(&mut self, value: &Expr, arms: &[MatchArm]) -> Result<Value, Stop> {
+        let subject = self.expression(value)?;
+        for arm in arms {
+            self.step()?;
+            let mut bindings = BTreeMap::new();
+            if !pattern_matches(&arm.pattern.value, &subject, &mut bindings) {
+                continue;
+            }
+            self.scopes.push(bindings);
+            let outcome = match &arm.guard {
+                Some(guard) => self.condition(guard).and_then(|held| {
+                    if held {
+                        self.expression(&arm.value).map(Some)
+                    } else {
+                        Ok(None)
+                    }
+                }),
+                None => self.expression(&arm.value).map(Some),
+            };
+            self.scopes.pop();
+            if let Some(chosen) = outcome? {
+                return Ok(chosen);
+            }
+        }
+        // The checker cannot always prove a match exhaustive (a call's result has
+        // no declared type it can see), so a value no arm covers is an error
+        // here, never a silent fall-through.
+        Err(fail("no `match` arm matched the value"))
+    }
+}
+
+/// Whether `value` fits `pattern`, collecting its bindings. Bindings from a
+/// failed attempt are discarded by the caller.
+fn pattern_matches(
+    pattern: &PatternKind,
+    value: &Value,
+    bindings: &mut BTreeMap<String, Value>,
+) -> bool {
+    match pattern {
+        PatternKind::Wildcard => true,
+        PatternKind::Binding(name) => {
+            bindings.insert(name.clone(), value.clone());
+            true
+        }
+        PatternKind::Literal(literal) => match (literal, value) {
+            (ExprKind::Integer(a), Value::Int(b)) => a == b,
+            (ExprKind::Text(a), Value::Text(b) | Value::PubKey(b)) => a == b,
+            (ExprKind::Bool(a), Value::Bool(b)) => a == b,
+            (ExprKind::None, Value::Unit) => true,
+            _ => false,
+        },
+        PatternKind::Variant { name, values } => match (name.as_str(), value, values.as_slice()) {
+            ("Ok", Value::ResultOk(inner), [pattern])
+            | ("Err", Value::ResultErr(inner), [pattern]) => {
+                pattern_matches(&pattern.value, inner, bindings)
+            }
+            _ => false,
+        },
+        PatternKind::Record { name, fields } => {
+            let Value::Record {
+                name: actual,
+                fields: actual_fields,
+            } = value
+            else {
+                return false;
+            };
+            name == actual
+                && fields.iter().all(|(field, sub)| {
+                    let Some((_, found)) = actual_fields.iter().find(|(key, _)| key == field)
+                    else {
+                        return false;
+                    };
+                    if let Some(sub) = sub {
+                        pattern_matches(&sub.value, found, bindings)
+                    } else {
+                        // `{ author }` binds the field to its own name.
+                        bindings.insert(field.clone(), found.clone());
+                        true
+                    }
+                })
         }
     }
 }
 
-fn unsupported(what: &str) -> RuntimeError {
-    RuntimeError::OperationUnavailable {
+/// The error type `E` of a declared `Result<T,E>`, splitting at the top-level
+/// comma so `Result<List<X>,E>` works.
+fn result_error_type(declared: &str) -> Option<String> {
+    let inner = declared.strip_prefix("Result<")?.strip_suffix('>')?;
+    let mut depth = 0_usize;
+    for (index, character) in inner.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => return Some(inner[index + 1..].trim().to_owned()),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// An operation's own failure as an error value a script can branch on. Only
+/// failures the operation legitimately reports are recoverable: a refusal by the
+/// roster, an unreachable relay, a rejected publication. A capability denial, a
+/// bad argument or a resource limit is the program's mistake or the host's
+/// boundary, and must abort rather than be caught.
+fn recoverable(error: &RuntimeError, error_type: &str) -> Option<Value> {
+    let message = match error {
+        RuntimeError::AuthorityDenied { action, .. } => format!("not authorized to {action}"),
+        RuntimeError::RelayUnavailable { relayset } => {
+            format!("relay set `{relayset}` is unavailable")
+        }
+        RuntimeError::PublicationRejected => "publication rejected".to_owned(),
+        RuntimeError::StoreConflict => "storage conflict".to_owned(),
+        RuntimeError::SignerDenied { signer } => format!("signer `{signer}` was denied"),
+        RuntimeError::PaymentLimitExceeded { amount, limit } => {
+            format!("payment of {amount} exceeds the limit of {limit}")
+        }
+        _ => return None,
+    };
+    Some(Value::Record {
+        name: error_type.to_owned(),
+        fields: vec![("message".to_owned(), Value::Text(message))],
+    })
+}
+
+/// A handler that ends by returning an error result has failed: it becomes an
+/// error, so its transaction rolls back and it is reported.
+fn settle(result: Result<Value, RuntimeError>) -> Result<Value, RuntimeError> {
+    match result {
+        Ok(Value::ResultErr(error)) => Err(RuntimeError::HandlerError {
+            message: error.display(),
+        }),
+        other => other,
+    }
+}
+
+fn unsupported(what: &str) -> Stop {
+    Stop::Error(RuntimeError::OperationUnavailable {
         module: "handler".to_owned(),
         operation: what.to_owned(),
-    }
+    })
 }
 
 /// Equality across the text-like kinds: a `PubKey` written as a literal is
@@ -591,7 +800,7 @@ fn same(left: &Value, right: &Value) -> bool {
     }
 }
 
-fn contains(haystack: &Value, needle: &Value) -> Result<bool, RuntimeError> {
+fn contains(haystack: &Value, needle: &Value) -> Result<bool, Stop> {
     match (haystack, needle) {
         (Value::Text(text), Value::Text(needle)) => Ok(text.contains(needle.as_str())),
         (Value::List(items), needle) => Ok(items.iter().any(|item| same(item, needle))),
@@ -603,7 +812,7 @@ fn contains(haystack: &Value, needle: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-fn compare(operator: &str, left: &Value, right: &Value) -> Result<bool, RuntimeError> {
+fn compare(operator: &str, left: &Value, right: &Value) -> Result<bool, Stop> {
     let ordering = match (left, right) {
         (Value::Int(a), Value::Int(b)) => a.cmp(b),
         (Value::Text(a), Value::Text(b)) => a.cmp(b),
@@ -623,7 +832,7 @@ fn compare(operator: &str, left: &Value, right: &Value) -> Result<bool, RuntimeE
     })
 }
 
-fn arithmetic(operator: &str, left: &Value, right: &Value) -> Result<Value, RuntimeError> {
+fn arithmetic(operator: &str, left: &Value, right: &Value) -> Result<Value, Stop> {
     // `+` joins text; a public key is text too.
     if let (Value::Text(a) | Value::PubKey(a), Value::Text(b) | Value::PubKey(b), "+") =
         (&left, &right, operator)
@@ -709,6 +918,10 @@ where
             arguments,
         )
     }
+
+    fn declared_return(&self, module: &str, operation: &str) -> Option<String> {
+        self.operations.declared_return(module, operation)
+    }
 }
 
 /// Builds a [`crate::SignedEvent`] from JSON, for delivering a synthetic event
@@ -781,6 +994,8 @@ pub struct SimulatedOperations {
     /// `(module, operation)` to the declared return type, e.g.
     /// `Result<PublishReport,ModerationError>`.
     returns: BTreeMap<(String, String), String>,
+    /// Operations made to fail, to exercise a script's error handling.
+    failing: BTreeSet<(String, String)>,
     pub calls: Vec<SimulatedCall>,
 }
 
@@ -790,8 +1005,17 @@ impl SimulatedOperations {
         Self {
             fake: crate::FakeOperationHost::default(),
             returns,
+            failing: BTreeSet::new(),
             calls: Vec::new(),
         }
+    }
+
+    /// Makes `module.operation` fail with a recoverable error (a rejected
+    /// publication), so a script's `Err` handling can be exercised. The attempt
+    /// is still recorded.
+    pub fn fail_operation(&mut self, module: &str, operation: &str) {
+        self.failing
+            .insert((module.to_owned(), operation.to_owned()));
     }
 
     /// A benign value of the operation's declared success type.
@@ -827,6 +1051,18 @@ impl OperationHost for SimulatedOperations {
         operation: &str,
         arguments: &[OperationValue],
     ) -> Result<OperationValue, RuntimeError> {
+        if self
+            .failing
+            .contains(&(module.to_owned(), operation.to_owned()))
+        {
+            self.calls.push(SimulatedCall {
+                module: module.to_owned(),
+                operation: operation.to_owned(),
+                arguments: arguments.to_vec(),
+                simulated: true,
+            });
+            return Err(RuntimeError::PublicationRejected);
+        }
         let (result, simulated) = match self.fake.call(invocation, module, operation, arguments) {
             Ok(value) => (value, false),
             Err(RuntimeError::OperationUnavailable { .. }) => {
@@ -842,6 +1078,41 @@ impl OperationHost for SimulatedOperations {
             simulated,
         });
         Ok(result)
+    }
+
+    fn declared_return(&self, module: &str, operation: &str) -> Option<String> {
+        self.returns
+            .get(&(module.to_owned(), operation.to_owned()))
+            .cloned()
+    }
+}
+
+/// Gives any operation host declared return types, so a handler evaluated over it
+/// gets `Ok`/`Err` values for operations declared `Result<T,E>`. Operation calls
+/// pass straight through to `inner`. The table is the same `(module, operation)`
+/// to declared-type map the simulator uses, typically built from the imported
+/// modules' descriptors.
+pub struct WithReturns<'a, O: OperationHost> {
+    pub inner: &'a mut O,
+    pub returns: BTreeMap<(String, String), String>,
+}
+
+impl<O: OperationHost> OperationHost for WithReturns<'_, O> {
+    fn call(
+        &mut self,
+        invocation: crate::InvocationId,
+        module: &str,
+        operation: &str,
+        arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError> {
+        self.inner.call(invocation, module, operation, arguments)
+    }
+
+    fn declared_return(&self, module: &str, operation: &str) -> Option<String> {
+        self.returns
+            .get(&(module.to_owned(), operation.to_owned()))
+            .cloned()
+            .or_else(|| self.inner.declared_return(module, operation))
     }
 }
 
@@ -940,13 +1211,13 @@ where
                 log,
                 principal: principal.map(str::to_owned),
             };
-            let result = run_handler(
+            let result = settle(run_handler(
                 program,
                 &handler.body,
                 Value::from_event(event),
                 &mut session,
                 limits,
-            );
+            ));
             outcomes.push(HandlerOutcome {
                 handler: handler.event_type.clone(),
                 result,
@@ -1039,13 +1310,13 @@ where
                 log: log_host,
                 principal: principal.map(str::to_owned),
             };
-            run_handler(
+            settle(run_handler(
                 program,
                 &handler.body,
                 Value::from_event(event),
                 &mut session,
                 limits,
-            )
+            ))
         };
         if result.is_ok() {
             storage_host.commit(transaction);
@@ -1751,5 +2022,445 @@ mod tests {
         assert_eq!(dispatched, 2);
         let messages: Vec<_> = log.records.iter().map(|r| r.message.as_str()).collect();
         assert_eq!(messages, ["first", "second"]);
+    }
+
+    /// A host whose `concord04` operations succeed or fail on demand and declare
+    /// their return type (or not).
+    #[derive(Default)]
+    struct Scripted {
+        printed: Vec<String>,
+        fail_with: Option<RuntimeError>,
+        declared: Option<&'static str>,
+        calls: usize,
+    }
+
+    impl EvalHost for Scripted {
+        fn print(&mut self, message: &str) -> Result<(), RuntimeError> {
+            self.printed.push(message.to_owned());
+            Ok(())
+        }
+        fn principal(&self) -> Option<String> {
+            Some("me-key".to_owned())
+        }
+        fn call_operation(
+            &mut self,
+            _module: &str,
+            _operation: &str,
+            _arguments: &[OperationValue],
+        ) -> Result<OperationValue, RuntimeError> {
+            self.calls += 1;
+            match &self.fail_with {
+                Some(error) => Err(error.clone()),
+                None => Ok(OperationValue::PublishReport(crate::PublishReport {
+                    outcomes: vec![crate::RelayOutcome {
+                        relay: "r".to_owned(),
+                        accepted: true,
+                        detail: String::new(),
+                    }],
+                })),
+            }
+        }
+        fn declared_return(&self, _module: &str, _operation: &str) -> Option<String> {
+            self.declared.map(str::to_owned)
+        }
+    }
+
+    const RESULT_TYPE: &str = "Result<PublishReport,ModerationError>";
+
+    fn scripted(fail_with: Option<RuntimeError>) -> Scripted {
+        Scripted {
+            declared: Some(RESULT_TYPE),
+            fail_with,
+            ..Scripted::default()
+        }
+    }
+
+    fn denied() -> RuntimeError {
+        RuntimeError::AuthorityDenied {
+            actor: "bot".to_owned(),
+            action: "kick".to_owned(),
+        }
+    }
+
+    /// Runs the first handler of `source` against `host`, returning the raw
+    /// value (a `?`-propagated error is `Ok(Value::ResultErr(..))`).
+    fn run_scripted(source: &str, host: &mut Scripted) -> Result<Value, RuntimeError> {
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let body = program
+            .ast
+            .items
+            .iter()
+            .find_map(|item| match item {
+                Item::Statement(statement) => match &statement.value {
+                    StatementKind::On { body, .. } => Some(body.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("an `on` handler");
+        run_handler(&program, &body, event("x"), host, EvalLimits::default())
+    }
+
+    const BRANCHING_BOT: &str = "use concord04\non m {\n    match concord04.kick_member(event.author) {\n        Ok(report) => print(\"kicked\")\n        Err(error) => print(\"could not kick: \" + error.message)\n    }\n}\n";
+
+    #[test]
+    fn a_handler_can_branch_on_a_successful_operation_result() {
+        let mut host = scripted(None);
+        run_scripted(BRANCHING_BOT, &mut host).unwrap();
+        assert_eq!(host.printed, ["kicked"]);
+        // The success payload is the operation's value.
+        let source = "use concord04\non m {\n    match concord04.kick_member(event.author) {\n        Ok(report) => print(report.accepted)\n        Err(e) => print(\"no\")\n    }\n}\n";
+        let mut host = scripted(None);
+        run_scripted(source, &mut host).unwrap();
+        assert_eq!(host.printed, ["true"]);
+    }
+
+    #[test]
+    fn a_recoverable_failure_becomes_an_error_value_the_script_can_read() {
+        let mut host = scripted(Some(denied()));
+        run_scripted(BRANCHING_BOT, &mut host).unwrap();
+        assert_eq!(host.printed, ["could not kick: not authorized to kick"]);
+        for recoverable in [
+            RuntimeError::RelayUnavailable {
+                relayset: "r".to_owned(),
+            },
+            RuntimeError::PublicationRejected,
+            RuntimeError::StoreConflict,
+            RuntimeError::SignerDenied {
+                signer: "s".to_owned(),
+            },
+            RuntimeError::PaymentLimitExceeded {
+                amount: 5,
+                limit: 1,
+            },
+        ] {
+            let mut host = scripted(Some(recoverable));
+            run_scripted(BRANCHING_BOT, &mut host).unwrap();
+            assert!(
+                host.printed[0].starts_with("could not kick: "),
+                "{:?}",
+                host.printed
+            );
+        }
+    }
+
+    #[test]
+    fn a_failure_that_is_not_the_operations_to_report_still_aborts() {
+        // A script must not be able to catch a permission boundary or its own
+        // programming mistake.
+        for fatal in [
+            RuntimeError::CapabilityDenied {
+                capability: "concord04.kick_member".to_owned(),
+            },
+            RuntimeError::InvalidOperationArguments {
+                operation: "kick_member".to_owned(),
+            },
+            RuntimeError::OperationUnavailable {
+                module: "m".to_owned(),
+                operation: "o".to_owned(),
+            },
+            RuntimeError::ResourceLimit {
+                resource: "x".to_owned(),
+            },
+        ] {
+            let mut host = scripted(Some(fatal.clone()));
+            assert_eq!(run_scripted(BRANCHING_BOT, &mut host), Err(fatal));
+            assert!(host.printed.is_empty(), "no arm ran");
+        }
+    }
+
+    #[test]
+    fn question_mark_returns_the_error_from_the_handler_and_skips_the_rest() {
+        let source = "use concord04\non m {\n    let report = concord04.kick_member(event.author)?\n    print(\"after\")\n}\n";
+        let mut host = scripted(Some(denied()));
+        let value = run_scripted(source, &mut host).unwrap();
+        assert!(
+            matches!(&value, Value::ResultErr(error) if error.display().contains("not authorized to kick")),
+            "{value:?}"
+        );
+        assert!(
+            host.printed.is_empty(),
+            "the statement after `?` did not run"
+        );
+        // The evaluator settles that into a handler failure, so it rolls back.
+        let settled = settle(Ok(value));
+        assert!(
+            matches!(settled, Err(RuntimeError::HandlerError { ref message }) if message.contains("ModerationError"))
+        );
+        // On success `?` unwraps and the handler carries on.
+        let mut host = scripted(None);
+        run_scripted(source, &mut host).unwrap();
+        assert_eq!(host.printed, ["after"]);
+    }
+
+    #[test]
+    fn question_mark_in_a_function_returns_the_error_from_that_function() {
+        let source = "use concord04\nfn try_kick(who: PubKey) -> Result<Int, ModerationError> {\n    let report = concord04.kick_member(who)?\n    return Ok(1)\n}\non m {\n    match try_kick(event.author) {\n        Ok(n) => print(\"ok\")\n        Err(e) => print(\"failed: \" + e.message)\n    }\n    print(\"handler continued\")\n}\n";
+        let mut host = scripted(Some(denied()));
+        run_scripted(source, &mut host).unwrap();
+        assert_eq!(
+            host.printed,
+            ["failed: not authorized to kick", "handler continued"]
+        );
+        let mut host = scripted(None);
+        run_scripted(source, &mut host).unwrap();
+        assert_eq!(host.printed, ["ok", "handler continued"]);
+    }
+
+    #[test]
+    fn hosts_that_do_not_declare_types_keep_plain_values() {
+        // No declared return type: no Result wrapping, so existing scripts that
+        // read the value directly, and a `?` on a plain value, are unchanged.
+        let source = "use concord04\non m {\n    let report = concord04.kick_member(event.author)?\n    print(report.accepted)\n}\n";
+        let mut host = Scripted::default();
+        run_scripted(source, &mut host).unwrap();
+        assert_eq!(host.printed, ["true"]);
+        // Without a declared type a failure aborts, as before.
+        let mut host = Scripted {
+            fail_with: Some(denied()),
+            ..Scripted::default()
+        };
+        assert_eq!(run_scripted(source, &mut host), Err(denied()));
+    }
+
+    #[test]
+    fn match_binds_nests_and_falls_through_to_a_catch_all() {
+        // Only the pattern forms the parser produces: variants, bindings, `_`.
+        let source = "on m {\n    match Ok(3) {\n        Err(e) => print(\"err\")\n        Ok(n) => print(n)\n    }\n    match Ok(Err(\"deep\")) {\n        Ok(Ok(v)) => print(\"no\")\n        Ok(Err(e)) => print(e)\n        _ => print(\"other\")\n    }\n    match Err(1) {\n        Ok(v) => print(\"no\")\n        other => print(other)\n    }\n}\n";
+        let mut host = Scripted::default();
+        run_scripted(source, &mut host).unwrap();
+        assert_eq!(host.printed, ["3", "deep", "Err(1)"]);
+    }
+
+    fn pat(kind: PatternKind) -> nscript_syntax::ast::Pattern {
+        nscript_syntax::ast::Spanned {
+            value: kind,
+            span: nscript_syntax::Span::default(),
+        }
+    }
+
+    /// The parser does not yet produce literal, record or guarded patterns
+    /// (the spec's section 10 uses them), but the AST has them, so the evaluator
+    /// must handle them correctly for when it does. Tested on hand-built AST.
+    #[test]
+    fn literal_and_record_patterns_are_handled_though_the_parser_cannot_yet_produce_them() {
+        let mut bound = BTreeMap::new();
+        let matches = |kind: &PatternKind, value: &Value, bound: &mut BTreeMap<String, Value>| {
+            pattern_matches(kind, value, bound)
+        };
+        assert!(matches(
+            &PatternKind::Literal(ExprKind::Integer(1)),
+            &Value::Int(1),
+            &mut bound
+        ));
+        assert!(!matches(
+            &PatternKind::Literal(ExprKind::Integer(1)),
+            &Value::Int(2),
+            &mut bound
+        ));
+        assert!(matches(
+            &PatternKind::Literal(ExprKind::Text("a".into())),
+            &Value::PubKey("a".into()),
+            &mut bound
+        ));
+        assert!(matches(
+            &PatternKind::Literal(ExprKind::Bool(true)),
+            &Value::Bool(true),
+            &mut bound
+        ));
+        assert!(!matches(
+            &PatternKind::Literal(ExprKind::Text("a".into())),
+            &Value::Int(1),
+            &mut bound
+        ));
+
+        let message = Value::Record {
+            name: "Note".into(),
+            fields: vec![
+                ("author".into(), Value::PubKey("alice".into())),
+                ("content".into(), Value::Text("hi".into())),
+            ],
+        };
+        // `Note { author, content: c }`: shorthand binds the field's own name.
+        let record = PatternKind::Record {
+            name: "Note".into(),
+            fields: vec![
+                ("author".into(), None),
+                (
+                    "content".into(),
+                    Some(pat(PatternKind::Binding("c".into()))),
+                ),
+            ],
+        };
+        assert!(matches(&record, &message, &mut bound));
+        assert_eq!(bound["author"], Value::PubKey("alice".into()));
+        assert_eq!(bound["c"], Value::Text("hi".into()));
+        let wrong_name = PatternKind::Record {
+            name: "Other".into(),
+            fields: vec![],
+        };
+        assert!(!matches(&wrong_name, &message, &mut BTreeMap::new()));
+        let missing_field = PatternKind::Record {
+            name: "Note".into(),
+            fields: vec![("nope".into(), None)],
+        };
+        assert!(!matches(&missing_field, &message, &mut BTreeMap::new()));
+    }
+
+    /// A guard picks between arms that share a pattern.
+    #[test]
+    fn a_guard_picks_between_arms_though_the_parser_cannot_yet_produce_one() {
+        let (program, _) = parse_program("on m {\n}\n");
+        let mut host = Scripted::default();
+        let mut interpreter = Interpreter {
+            host: &mut host,
+            functions: BTreeMap::new(),
+            modules: BTreeSet::new(),
+            scopes: vec![BTreeMap::new()],
+            limits: EvalLimits::default(),
+            steps: 0,
+            depth: 0,
+        };
+        let _ = &program;
+        let text = |value: &str| nscript_syntax::ast::Spanned {
+            value: ExprKind::Text(value.to_owned()),
+            span: nscript_syntax::Span::default(),
+        };
+        let name = |value: &str| nscript_syntax::ast::Spanned {
+            value: ExprKind::Identifier(value.to_owned()),
+            span: nscript_syntax::Span::default(),
+        };
+        let greater = nscript_syntax::ast::Spanned {
+            value: ExprKind::Binary {
+                operator: ">".to_owned(),
+                left: Box::new(name("n")),
+                right: Box::new(nscript_syntax::ast::Spanned {
+                    value: ExprKind::Integer(5),
+                    span: nscript_syntax::Span::default(),
+                }),
+            },
+            span: nscript_syntax::Span::default(),
+        };
+        let arms = [
+            MatchArm {
+                pattern: pat(PatternKind::Binding("n".into())),
+                guard: Some(greater),
+                value: text("big"),
+            },
+            MatchArm {
+                pattern: pat(PatternKind::Wildcard),
+                guard: None,
+                value: text("small"),
+            },
+        ];
+        let subject = |n: i64| nscript_syntax::ast::Spanned {
+            value: ExprKind::Integer(n),
+            span: nscript_syntax::Span::default(),
+        };
+        assert_eq!(
+            interpreter.match_expression(&subject(9), &arms).ok(),
+            Some(Value::Text("big".into()))
+        );
+        assert_eq!(
+            interpreter.match_expression(&subject(2), &arms).ok(),
+            Some(Value::Text("small".into()))
+        );
+    }
+
+    #[test]
+    fn a_match_no_arm_covers_is_an_error_not_a_silent_fall_through() {
+        // The checker cannot see the type of a call's result, so an arm that
+        // handles only `Ok` passes `check`; at run time it must not be ignored.
+        let source = "use concord04\non m {\n    match concord04.kick_member(event.author) {\n        Ok(report) => print(\"ok\")\n    }\n}\n";
+        let mut host = scripted(Some(denied()));
+        let error = run_scripted(source, &mut host).unwrap_err();
+        assert!(
+            matches!(error, RuntimeError::EvaluationError { ref message } if message.contains("no `match` arm")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn ok_and_err_are_values_scripts_can_build_and_return() {
+        let source = "on m {\n    let a = Ok(2)\n    let b = Err(\"bad\")\n    match a {\n        Ok(n) => print(n + 1)\n        Err(e) => print(\"e\")\n    }\n    match b {\n        Ok(n) => print(\"o\")\n        Err(e) => print(\"err \" + e)\n    }\n    return Err(\"stop\")\n}\n";
+        let mut host = Scripted::default();
+        let value = run_scripted(source, &mut host).unwrap();
+        assert_eq!(host.printed, ["3", "err bad"]);
+        assert_eq!(
+            value,
+            Value::ResultErr(Box::new(Value::Text("stop".to_owned())))
+        );
+        // A result cannot be passed to an operation without being unwrapped.
+        let bad = "use concord04\non m {\n    concord04.kick_member(Ok(1))\n}\n";
+        let error = run_scripted(bad, &mut Scripted::default()).unwrap_err();
+        assert!(
+            matches!(error, RuntimeError::EvaluationError { ref message } if message.contains("cannot pass a result")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn declared_result_types_are_parsed_at_the_top_level_comma() {
+        assert_eq!(
+            result_error_type("Result<PublishReport,ModerationError>").as_deref(),
+            Some("ModerationError")
+        );
+        assert_eq!(
+            result_error_type("Result<List<Note>, RelayError>").as_deref(),
+            Some("RelayError")
+        );
+        assert_eq!(
+            result_error_type("Result<Map<A,B>,E>").as_deref(),
+            Some("E")
+        );
+        assert_eq!(result_error_type("PublishReport"), None);
+        assert_eq!(result_error_type("Result<OnlyOne>"), None);
+    }
+
+    #[test]
+    fn a_handler_that_returns_an_error_rolls_back_and_is_reported_in_a_cycle() {
+        let source = "use concord04\n\npermissions {\n    concord_kick\n}\n\non Note {\n    let report = concord04.kick_member(event.author)?\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::from([(
+            ("concord04".to_owned(), "kick_member".to_owned()),
+            RESULT_TYPE.to_owned(),
+        )]));
+        ops.fail_operation("concord04", "kick_member");
+        let mut relay = FakeRelayHost::default();
+        relay.queued_events.insert(1, vec![note("e1", "x")]);
+        let mut claims = crate::InMemoryStorage::default();
+        let mut storage = crate::InMemoryStorage::default();
+        let mut log = FakeLogHost::default();
+        let mut runtime = runtime();
+        let report = runtime
+            .run_evaluated_cycle(
+                &program,
+                &checked,
+                Some("public"),
+                &mut relay,
+                &mut claims,
+                &mut storage,
+                &mut log,
+                &mut ops,
+                None,
+                EvalLimits::default(),
+            )
+            .unwrap();
+        assert_eq!(report.failures.len(), 1);
+        assert!(
+            matches!(&report.failures[0].error, RuntimeError::HandlerError { message } if message.contains("publication rejected")),
+            "{:?}",
+            report.failures
+        );
+        assert_eq!(ops.calls.len(), 1, "the attempt was recorded");
+        let audit: Vec<_> = runtime
+            .audit
+            .entries
+            .iter()
+            .filter(|e| e.operation == "handler_transaction")
+            .map(|e| e.result.as_str())
+            .collect();
+        assert_eq!(audit, ["rolled_back"]);
     }
 }
