@@ -231,6 +231,18 @@ permissions {
 image photo_url caption "A photo"
 ```
 
+Video events use the same intent shape:
+
+```nostr
+use nip71
+
+permissions {
+    video
+}
+
+video clip_url caption "A clip"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

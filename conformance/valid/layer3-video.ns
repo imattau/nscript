@@ -1,0 +1,7 @@
+use nip71
+
+permissions {
+    video
+}
+
+video "https://example.com/clip.mp4" caption "A clip"
