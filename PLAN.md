@@ -486,6 +486,9 @@ nominal `SharedSecret`, `DerivedKey`, and immutable `SignedBytes` boundaries,
 the typed `StreamMessage` shape, and capability/permission-gated derivation
 and publication operation contracts. Host implementations and CORD-01 wire
 processing remain the next steps.
+The runtime now also exposes non-empty, debug-redacted opaque wrappers for
+these three byte classes, preventing accidental key-material disclosure in
+ordinary debug output.
 
 ## Deferred
 

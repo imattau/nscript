@@ -323,6 +323,111 @@ pub struct PublishReport {
     pub outcomes: Vec<RelayOutcome>,
 }
 
+/// Opaque shared key material used by Concord protocol modules.
+///
+/// The bytes are deliberately private; callers can only borrow them for a
+/// host operation and cannot accidentally treat them as ordinary text.
+#[derive(Clone, Eq, PartialEq)]
+pub struct SharedSecret(Vec<u8>);
+
+impl SharedSecret {
+    /// Creates shared secret material, rejecting empty values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::InvalidConcordBytes`] for an empty value.
+    pub fn new(bytes: Vec<u8>) -> Result<Self, RuntimeError> {
+        if bytes.is_empty() {
+            return Err(RuntimeError::InvalidConcordBytes {
+                type_name: "SharedSecret",
+            });
+        }
+        Ok(Self(bytes))
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SharedSecret {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SharedSecret")
+            .field("length", &self.0.len())
+            .finish()
+    }
+}
+
+/// Opaque key material derived from a Concord shared secret.
+#[derive(Clone, Eq, PartialEq)]
+pub struct DerivedKey(Vec<u8>);
+
+impl DerivedKey {
+    /// Creates derived key material, rejecting empty values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::InvalidConcordBytes`] for an empty value.
+    pub fn new(bytes: Vec<u8>) -> Result<Self, RuntimeError> {
+        if bytes.is_empty() {
+            return Err(RuntimeError::InvalidConcordBytes {
+                type_name: "DerivedKey",
+            });
+        }
+        Ok(Self(bytes))
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for DerivedKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DerivedKey")
+            .field("length", &self.0.len())
+            .finish()
+    }
+}
+
+/// Immutable bytes whose exact representation must survive Concord wrapping.
+#[derive(Clone, Eq, PartialEq)]
+pub struct SignedBytes(Vec<u8>);
+
+impl SignedBytes {
+    /// Creates immutable signed bytes, rejecting empty values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::InvalidConcordBytes`] for an empty value.
+    pub fn new(bytes: Vec<u8>) -> Result<Self, RuntimeError> {
+        if bytes.is_empty() {
+            return Err(RuntimeError::InvalidConcordBytes {
+                type_name: "SignedBytes",
+            });
+        }
+        Ok(Self(bytes))
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SignedBytes {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SignedBytes")
+            .field("length", &self.0.len())
+            .finish()
+    }
+}
+
 impl PublishReport {
     #[must_use]
     pub fn accepted(&self) -> bool {
@@ -343,6 +448,7 @@ pub enum RuntimeError {
     InvalidOperationArguments { operation: String },
     PaymentLimitExceeded { amount: i64, limit: i64 },
     InvalidWasmPayload,
+    InvalidConcordBytes { type_name: &'static str },
 }
 
 /// Decodes a dispatch payload supplied by a WASM operation import.
@@ -4455,6 +4561,23 @@ impl AuditHost for RecordingAudit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concord_protocol_bytes_are_non_empty_and_debug_redacted() {
+        assert!(SharedSecret::new(Vec::new()).is_err());
+        assert!(DerivedKey::new(Vec::new()).is_err());
+        assert!(SignedBytes::new(Vec::new()).is_err());
+
+        let secret = SharedSecret::new(vec![1, 2, 3]).expect("secret accepted");
+        let key = DerivedKey::new(vec![4, 5, 6]).expect("key accepted");
+        let signed = SignedBytes::new(vec![7, 8, 9]).expect("signed bytes accepted");
+        assert_eq!(secret.as_bytes(), &[1, 2, 3]);
+        assert_eq!(key.as_bytes(), &[4, 5, 6]);
+        assert_eq!(signed.as_bytes(), &[7, 8, 9]);
+        assert!(!format!("{secret:?}").contains('1'));
+        assert!(!format!("{key:?}").contains('4'));
+        assert!(!format!("{signed:?}").contains('7'));
+    }
 
     #[test]
     fn replaceable_events_use_timestamp_then_lowest_id() {
