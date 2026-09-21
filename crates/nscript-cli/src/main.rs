@@ -49,7 +49,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
