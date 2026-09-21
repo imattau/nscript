@@ -70,6 +70,18 @@ permissions {
 search Note for "nostr scripting"
 ```
 
+Reactions are also expressed directly:
+
+```nostr
+use nip25
+
+permissions {
+    reaction
+}
+
+react "👍" to event_to_react
+```
+
 The next Layer 3 forms are deliberately syntax sugar over existing typed NIP
 modules:
 

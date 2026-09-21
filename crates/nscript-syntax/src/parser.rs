@@ -649,6 +649,59 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("react") => {
+                self.index += 1;
+                let content = self.parse_expression(0)?;
+                if !self.eat_word("to") {
+                    return None;
+                }
+                let target = self.parse_expression(0)?;
+                let span = content.span.join(target.span);
+                let reaction = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "Reaction".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "target".to_owned(),
+                                    span,
+                                },
+                                target,
+                            ),
+                            (
+                                Spanned {
+                                    value: "content".to_owned(),
+                                    span,
+                                },
+                                content,
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip25".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_reaction".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![reaction],
+                    },
+                    span,
+                })
+            }
             _ => StatementKind::Expression(self.parse_expression(0)?),
         };
         self.terminator();

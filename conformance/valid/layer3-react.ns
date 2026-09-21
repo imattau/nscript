@@ -1,0 +1,7 @@
+use nip25
+
+permissions {
+    reaction
+}
+
+react "👍" to "event-to-react"
