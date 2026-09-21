@@ -562,6 +562,15 @@ assembly where removal needs a complete set, lowest-key race winner with a
 down-only heal, and rotator authority (BAN for a Refounding, MANAGE_CHANNELS
 for a channel rekey, strict outrank, synced `vac`). NIP-44 blob decryption and
 compaction publishing remain host work; CORD-05 invites are next.
+Added CORD-05 invite logic (`invite.rs`): `CommunityInvite` validation (owner
+self-certified against `community_id`, 256-channel bound, relay truncation,
+expiry gating joins only, legacy `control_pk`), the base64url link fragment
+codec with the relay dictionary, `bundle_key`, the mergeable Invite List with
+terminal tombstones and preserved unknown fields, the Registry fold that
+decides Public/Private and flags the Refounding on retiring the last link, and
+Direct Invite (kind 3313) parsing with the `#k` index filter. The fragment
+flag bit position is assumed (the spec names it, not its bit) and must be
+confirmed against a reference implementation.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.
