@@ -1,0 +1,7 @@
+use nip32
+
+permissions {
+    label
+}
+
+label "event-to-label" as "spam"

@@ -121,6 +121,19 @@ permissions {
 report event_to_report as "spam"
 ```
 
+Labels use the `nscript` namespace by default; lower-level code can still call
+the typed NIP-32 record when a different namespace is required:
+
+```nostr
+use nip32
+
+permissions {
+    label
+}
+
+label event_to_label as "spam"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

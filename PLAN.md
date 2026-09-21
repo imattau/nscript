@@ -373,6 +373,8 @@ Implemented `comment "content" on target` lowering to
 `nip22.publish_comment` for arbitrary event targets.
 Implemented `report target as category` lowering to `nip56.publish_report`
 with an empty optional report description.
+Implemented `label target as value` lowering to `nip32.publish_label` in the
+default `nscript` namespace.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent
