@@ -150,6 +150,7 @@ mod tests {
             content: content.to_owned(),
             actor: "owner".to_owned(),
             rumor_id: id.to_owned(),
+            vac: None,
         }
     }
 

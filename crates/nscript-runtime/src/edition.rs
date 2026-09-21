@@ -34,6 +34,17 @@ pub struct Edition {
     pub actor: String,
     /// The rumor id, used only as the deterministic tie-break.
     pub rumor_id: String,
+    /// Authority citation (`vac` tag). Absent when the owner acts.
+    pub vac: Option<Vac>,
+}
+
+/// The exact Grant edition an actor claims their rank under, pinned by
+/// coordinate, version and content hash (CORD-04 §1, §5).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Vac {
+    pub grant_eid: String,
+    pub version: u64,
+    pub hash: String,
 }
 
 impl Edition {
@@ -243,6 +254,7 @@ mod tests {
             content: content.to_owned(),
             actor: "owner".to_owned(),
             rumor_id: id.to_owned(),
+            vac: None,
         }
     }
 

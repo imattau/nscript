@@ -515,6 +515,13 @@ CORD-01 rework landed: `stream` vocabulary (seal kinds 20013/20014 fixed per
 plane, `group_key` labels, channel/epoch binding check), `SealedEvent` carrying
 its kind, `StreamWrap` with ephemeral `p` and envelope validation, a
 `derive_group_key` host method, and a verbatim plaintext Control seal.
+CORD-04 authority landed (`authority.rs`): frozen permission bits, owner proven
+by `community_id`, Roles/Grants/Banlist folded to a fixed point starting at the
+owner, strict-outrank checks, `vac` citations (present, synced, hash-matching,
+resolved against the current roster), keyless `concord/grant` and
+`concord/banlist` coordinates via RFC 5869 HKDF, and `Roster::can` for
+capability-checked actions. Guestbook kicks, `control_wrap` delivery and pins
+remain.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

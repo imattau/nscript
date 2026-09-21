@@ -1,5 +1,6 @@
 //! Deterministic reference runtime and host capability contracts.
 
+pub mod authority;
 pub mod community;
 pub mod edition;
 pub mod fold;
