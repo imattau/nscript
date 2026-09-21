@@ -29,6 +29,16 @@ pub struct NostrIr {
 pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
     let dispatch_json = serde_json::to_vec(&ir.operations).expect("operations are serializable");
+    let ir_json = serde_json::to_vec(ir).expect("IR is serializable");
+    push_custom_section(&mut module, "nscript.ir", &ir_json);
+    let capabilities = ir
+        .capabilities
+        .iter()
+        .map(|capability| format!("{}:{}", capability.kind, capability.name))
+        .collect::<Vec<_>>();
+    let capability_json = serde_json::to_vec(&capabilities).expect("capabilities are serializable");
+    push_custom_section(&mut module, "nscript.capabilities", &capability_json);
+    push_custom_section(&mut module, "nscript.dispatch", &dispatch_json);
     // Type 0: capability handle, type 1: typed payload ptr/len, type 2: main.
     push_section(
         &mut module,
@@ -69,6 +79,7 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     // called in stable order; host bindings provide the real typed arguments in
     // the next lowering stage.
     push_section(&mut module, 3, &[1, 2]);
+    push_section(&mut module, 5, &[1, 0, 1]); // one memory, minimum one page
     let mut export = Vec::new();
     push_u32(&mut export, 2);
     push_name(&mut export, "nscript_main");
@@ -113,7 +124,6 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     code.extend_from_slice(&body);
     push_section(&mut module, 10, &code);
     // Dispatch payload is available to host imports through linear memory.
-    push_section(&mut module, 5, &[1, 0, 1]); // one memory, minimum one page
     let mut data = Vec::new();
     push_u32(&mut data, 1);
     data.extend_from_slice(&[0, 0x41, 0, 0x0b]); // active segment at offset 0
@@ -123,16 +133,6 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     );
     data.extend_from_slice(&dispatch_json);
     push_section(&mut module, 11, &data);
-    let ir_json = serde_json::to_vec(ir).expect("IR is serializable");
-    push_custom_section(&mut module, "nscript.ir", &ir_json);
-    let capabilities = ir
-        .capabilities
-        .iter()
-        .map(|capability| format!("{}:{}", capability.kind, capability.name))
-        .collect::<Vec<_>>();
-    let capability_json = serde_json::to_vec(&capabilities).expect("capabilities are serializable");
-    push_custom_section(&mut module, "nscript.capabilities", &capability_json);
-    push_custom_section(&mut module, "nscript.dispatch", &dispatch_json);
     module
 }
 

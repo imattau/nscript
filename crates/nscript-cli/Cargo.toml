@@ -21,3 +21,6 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+nscript-runtime = { path = "../nscript-runtime", features = ["wasm-engine"] }

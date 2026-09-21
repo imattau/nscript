@@ -376,6 +376,8 @@ callbacks to read the pointer/length dispatch payload directly.
 `run_with_dispatch_host` now binds payload imports to `WasmDispatchHost`,
 decoding memory slices and returning the host state after `nscript_main`
 completes.
+The CLI now has a feature-backed end-to-end test that compiles `hello-note.ns`,
+executes it through Wasmi, and observes all three operation callbacks.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by

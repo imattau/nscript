@@ -235,6 +235,44 @@ fn writes_wasm_artifact_for_packaging() {
 }
 
 #[test]
+fn executes_compiled_wasm_through_wasmi_dispatch_host() {
+    use nscript_runtime::{RuntimeError, WasmDispatchHost, wasmi_engine::WasmiEngine};
+    use serde_json::Value;
+    #[derive(Default)]
+    struct Host(usize);
+    impl WasmDispatchHost for Host {
+        fn dispatch(&mut self, _: u64, operation: &Value) -> Result<(), RuntimeError> {
+            if operation.is_object() {
+                self.0 += 1;
+            }
+            Ok(())
+        }
+    }
+    let output_path =
+        std::env::temp_dir().join(format!("nscript-wasmi-{}.wasm", std::process::id()));
+    let compile = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["compile", "--emit", "wasm"])
+        .arg(repository_path("conformance/valid/hello-note.ns"))
+        .args(["--output", output_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(compile.status.success());
+    let module = std::fs::read(&output_path).unwrap();
+    let imports = [
+        ("signer:account".to_owned(), false),
+        ("relayset:public".to_owned(), false),
+        ("op:0:create_event".to_owned(), true),
+        ("op:1:sign_event".to_owned(), true),
+        ("op:2:publish_event".to_owned(), true),
+    ];
+    let host = WasmiEngine::new(100_000)
+        .run_with_dispatch_host(&module, &imports, Host::default(), 1)
+        .expect("wasmi executes compiled artifact");
+    assert_eq!(host.0, 9);
+    let _ = std::fs::remove_file(output_path);
+}
+
+#[test]
 fn source_conformance_corpus_matches_expected_outcomes() {
     let valid_root = repository_path("conformance/valid");
     for entry in std::fs::read_dir(valid_root).unwrap() {
