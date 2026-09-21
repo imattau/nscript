@@ -12,6 +12,7 @@ use nscript_syntax::{
     ast::{ExprKind, Item, StatementKind},
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket, client::connect};
 
@@ -1223,6 +1224,26 @@ pub trait SignerHost {
         event: UnsignedEvent,
         signer: &str,
     ) -> Result<SignedEvent, RuntimeError>;
+}
+
+/// Capability boundary for Concord shared-secret derivation.
+///
+/// Implementations own ECDH/HKDF and must not expose intermediate key
+/// material to scripts or audit records. The reference fake host below is
+/// deterministic for tests; production hosts must provide the protocol's
+/// approved derivation algorithm.
+pub trait ConcordKeyHost {
+    /// Derive a stream key from opaque shared-secret material.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capability or key-material validation error when derivation
+    /// is denied or the secret is invalid.
+    fn derive_stream_key(
+        &mut self,
+        invocation: InvocationId,
+        secret: &SharedSecret,
+    ) -> Result<DerivedKey, RuntimeError>;
 }
 
 pub trait SignerProvisionHost {
@@ -3214,6 +3235,31 @@ pub struct FakeSignerHost {
     pub signed: Vec<SignedEvent>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FakeConcordKeyHost {
+    pub denied: bool,
+    pub derivations: usize,
+}
+
+impl ConcordKeyHost for FakeConcordKeyHost {
+    fn derive_stream_key(
+        &mut self,
+        _invocation: InvocationId,
+        secret: &SharedSecret,
+    ) -> Result<DerivedKey, RuntimeError> {
+        if self.denied {
+            return Err(RuntimeError::CapabilityDenied {
+                capability: "concord_key_derivation".to_owned(),
+            });
+        }
+        let mut digest = Sha256::new();
+        digest.update(b"nscript/concord01/test-derivation\0");
+        digest.update(secret.as_bytes());
+        self.derivations += 1;
+        DerivedKey::new(digest.finalize().to_vec())
+    }
+}
+
 impl SignerHost for FakeSignerHost {
     fn sign(
         &mut self,
@@ -4577,6 +4623,27 @@ mod tests {
         assert!(!format!("{secret:?}").contains('1'));
         assert!(!format!("{key:?}").contains('4'));
         assert!(!format!("{signed:?}").contains('7'));
+    }
+
+    #[test]
+    fn concord_key_host_is_capability_gated_and_deterministic_for_tests() {
+        let secret = SharedSecret::new(vec![1, 2, 3]).expect("secret accepted");
+        let mut host = FakeConcordKeyHost::default();
+        let first = host
+            .derive_stream_key(7, &secret)
+            .expect("derivation permitted");
+        let second = host
+            .derive_stream_key(8, &secret)
+            .expect("derivation permitted");
+        assert_eq!(first, second);
+        assert_eq!(first.as_bytes().len(), 32);
+        assert_eq!(host.derivations, 2);
+
+        host.denied = true;
+        assert!(matches!(
+            host.derive_stream_key(9, &secret),
+            Err(RuntimeError::CapabilityDenied { .. })
+        ));
     }
 
     #[test]

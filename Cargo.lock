@@ -267,6 +267,7 @@ dependencies = [
  "nscript-semantics",
  "nscript-syntax",
  "serde_json",
+ "sha2",
  "tungstenite",
  "wasmi",
 ]

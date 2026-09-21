@@ -489,6 +489,9 @@ processing remain the next steps.
 The runtime now also exposes non-empty, debug-redacted opaque wrappers for
 these three byte classes, preventing accidental key-material disclosure in
 ordinary debug output.
+Added the `ConcordKeyHost` capability boundary and deterministic
+`FakeConcordKeyHost` test double; production ECDH/HKDF remains intentionally
+behind this host contract.
 
 ## Deferred
 
