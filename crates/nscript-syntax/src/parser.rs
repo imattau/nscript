@@ -1196,6 +1196,70 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("live") => {
+                self.index += 1;
+                let identifier = self.parse_expression(0)?;
+                if !self.eat_word("titled") {
+                    return None;
+                }
+                let title = self.parse_expression(0)?;
+                if !self.eat_word("about") {
+                    return None;
+                }
+                let summary = self.parse_expression(0)?;
+                let span = identifier.span.join(summary.span);
+                let event = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "LiveEvent".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "identifier".to_owned(),
+                                    span,
+                                },
+                                identifier,
+                            ),
+                            (
+                                Spanned {
+                                    value: "title".to_owned(),
+                                    span,
+                                },
+                                title,
+                            ),
+                            (
+                                Spanned {
+                                    value: "summary".to_owned(),
+                                    span,
+                                },
+                                summary,
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip53".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_live_event".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![event],
+                    },
+                    span,
+                })
+            }
             Some("search") => {
                 self.index += 1;
                 let _event = self.parse_type()?;

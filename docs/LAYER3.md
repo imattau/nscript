@@ -207,6 +207,18 @@ permissions {
 calendar "Nostr meetup" from start_time to end_time at "Melbourne"
 ```
 
+Live events use an identifier, title, and summary:
+
+```nostr
+use nip53
+
+permissions {
+    live_event
+}
+
+live "weekly" titled "Nostr Space" about "Community discussion"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

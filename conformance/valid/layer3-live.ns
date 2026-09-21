@@ -1,0 +1,7 @@
+use nip53
+
+permissions {
+    live_event
+}
+
+live "weekly" titled "Nostr Space" about "Community discussion"
