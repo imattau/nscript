@@ -6,8 +6,8 @@ use nscript_runtime::expiry::{expiration_tag, rumor_expiration};
 use nscript_runtime::stream::GroupKeyLabel;
 use nscript_runtime::{
     ConcordKeyHost, DerivedKey, InvocationId, OperationHost, OperationValue, PublishReport,
-    RelayHost, RuntimeError, SealedEvent, SharedSecret, SignedBytes, SignedEvent, StreamWrap,
-    UnsignedEvent,
+    RelayHost, RuntimeError, SealedEvent, SharedSecret, SignedBytes, SignedEvent, StreamHandle,
+    StreamWrap, UnsignedEvent,
 };
 
 use crate::group_key::{group_key, hex, xonly_pubkey};
@@ -348,6 +348,13 @@ impl OperationHost for Nip44OperationHost {
             ) => plane(k)
                 .and_then(|p| self.wrap(&p, s))
                 .map(OperationValue::StreamWrap),
+            ("stream", [OperationValue::DerivedKey(k)]) => plane(k).map(|p| {
+                // The handle is the plane's public address only: safe to print
+                // or pass around, and it carries no key material.
+                OperationValue::StreamHandle(StreamHandle {
+                    address: hex(&p.pubkey),
+                })
+            }),
             ("unwrap_stream", [OperationValue::DerivedKey(k), OperationValue::StreamWrap(w)]) => {
                 plane(k)
                     .and_then(|p| Self::unwrap_event(&p, w))
@@ -362,6 +369,18 @@ impl OperationHost for Nip44OperationHost {
             ) if self.publisher.is_some() => plane(k)
                 .and_then(|p| self.publish_message(&p, m))
                 .map(OperationValue::PublishReport),
+            // An operation this host implements, called with the wrong
+            // arguments, is a mistake in the call and says so.
+            (
+                "seal_message"
+                | "seal_control_message"
+                | "open_message"
+                | "wrap_stream"
+                | "unwrap_stream"
+                | "stream",
+                _,
+            ) => return Err(invalid()),
+            ("publish_message", _) if self.publisher.is_some() => return Err(invalid()),
             // Deriving keys is the key host's job; without a configured
             // publisher there is nowhere to send.
             _ => {

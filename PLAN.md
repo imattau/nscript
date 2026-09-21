@@ -693,6 +693,14 @@ or calling `concord04.kick_member(alice)` with no `use concord04`, passed
 `E1101`. `ResolvedModuleGraph` gained a `known` set of every registered module
 name so a forgotten `use` can be told from an ordinary identifier; a program's
 own top-level names shadow module names.
+RFC 0002 read side started: `concord01.stream(key) -> Stream` (with a
+`StreamHandle` runtime value holding only the plane's public address), a
+checked `conformance/valid/concord-read-stream.ns`, and `ChannelReader` in
+`nscript-host-crypto`, which delivers only verified, channel-bound, unexpired,
+unbanned, de-duplicated messages in canonical order (live: 7 real events
+delivered once, 20 duplicates dropped). Blocked on the deferred handler
+evaluator, on typing `event` from its source, and on how a script obtains a
+key; the RFC's implementation notes record this.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

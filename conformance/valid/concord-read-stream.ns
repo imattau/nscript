@@ -1,0 +1,18 @@
+// Reading a Concord channel: `concord01.stream` yields a source, and the
+// ordinary `stream`/`on` forms consume it. The permissions name what is read
+// and the operation that opens it.
+use concord01
+
+permissions {
+    concord_read
+    read StreamMessage from chat
+    log
+}
+
+let chat = concord01.stream(channel_key)
+
+stream messages = select StreamMessage from chat
+
+on messages {
+    print(event.content)
+}

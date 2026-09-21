@@ -474,3 +474,30 @@ mod publishing {
         assert_eq!(recorder.0.lock().unwrap().len(), 1);
     }
 }
+
+#[test]
+fn stream_yields_a_public_address_handle_and_never_key_material() {
+    let key = plane_key(GroupKeyLabel::Channel, CHANNEL);
+    let mut host = host();
+    let handle = call(
+        &mut host,
+        "stream",
+        &[OperationValue::DerivedKey(key.clone())],
+    )
+    .unwrap();
+    let OperationValue::StreamHandle(handle) = handle else {
+        panic!("expected a stream handle")
+    };
+    let secret: [u8; 32] = key.as_bytes().try_into().unwrap();
+    let expected = hex(&nscript_host_crypto::group_key::xonly_pubkey(&secret).unwrap());
+    assert_eq!(handle.address, expected);
+    assert!(
+        !format!("{handle:?}").contains(&hex(&secret)),
+        "no secret in the handle"
+    );
+    // A wrong argument shape is refused.
+    assert!(matches!(
+        call(&mut host, "stream", &[]),
+        Err(RuntimeError::InvalidOperationArguments { .. })
+    ));
+}

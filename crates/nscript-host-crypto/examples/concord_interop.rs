@@ -6,6 +6,9 @@
 //!   operations (`unwrap_stream`, `open_message`). Read-only.
 //! * `publish` send ONE message through the real `publish_message` operation:
 //!   the runtime's policy gate, then `RealRelayPool` over TLS.
+//! * `reader`  read the public channel through `ChannelReader`: verified,
+//!   channel-bound, unexpired, unbanned, de-duplicated, in canonical order.
+//!   Read-only.
 //! * `whoami`  print the roster and what the identity in `<keyfile>` may do
 //!   (rank, permission bits, staff). Read-only.
 //! * `post`    join the Guestbook and post a few messages as a throwaway
@@ -321,6 +324,55 @@ fn publish_via_runtime(loaded: &Loaded, channel_id: &str, secret: &[u8; 32]) {
     }
 }
 
+fn reader_history(loaded: &Loaded, channel_id: &str) {
+    use nscript_host_crypto::reader::{ChannelReader, Dropped};
+    use nscript_runtime::DerivedKey;
+
+    let key = channel_key(loaded, channel_id);
+    let plane = DerivedKey::new(key.secret_bytes().to_vec()).expect("key");
+    let mut reader =
+        ChannelReader::new(&plane, channel_id, loaded.invite.root_epoch).expect("reader");
+    let banned = loaded.authority.roster().banned;
+    let (now, _) = now();
+    let mut raw = Vec::new();
+    for relay in &loaded.invite.relays {
+        let filter = json!({"kinds": [1059], "authors": [reader.address()], "limit": 200});
+        raw.extend(
+            query(relay, &filter)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|w| w.to_string()),
+        );
+    }
+    // Every relay returns the same events: the reader delivers each once.
+    let total = raw.len();
+    let mut dropped = std::collections::BTreeMap::new();
+    let mut delivered = Vec::new();
+    for wrap in &raw {
+        match reader.ingest(wrap, now, &banned) {
+            Ok(message) => delivered.push(message),
+            Err(reason) => *dropped.entry(format!("{reason:?}")).or_insert(0_u32) += 1,
+        }
+    }
+    delivered.sort_by(|a, b| (a.time_ms, &a.id).cmp(&(b.time_ms, &b.id)));
+    println!(
+        "received {total} wraps across {} relays -> delivered {}",
+        loaded.invite.relays.len(),
+        delivered.len()
+    );
+    println!("dropped by reason: {dropped:?}");
+    let _ = Dropped::Duplicate;
+    for message in &delivered {
+        println!(
+            "  [{}] kind {} {}…: {}",
+            message.time_ms,
+            message.kind,
+            short(&message.author),
+            short(&message.content.replace('\n', " "))
+        );
+    }
+}
+
 fn whoami(loaded: &Loaded, secret: &[u8; 32]) {
     let me = hex(&xonly_pubkey(secret).expect("pubkey"));
     let roster = loaded.authority.roster();
@@ -500,6 +552,7 @@ fn main() {
         "read" => {}
         "history" => print_history(&loaded, &channel_id),
         "ops" => ops_history(&loaded, &channel_id),
+        "reader" => reader_history(&loaded, &channel_id),
         "whoami" => whoami(&loaded, &identity(&args[4])),
         "publish" => {
             let secret = identity(&args[4]);

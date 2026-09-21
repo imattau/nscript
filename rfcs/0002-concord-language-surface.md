@@ -1,6 +1,6 @@
 # RFC 0002: Language surface for Concord and other module-defined protocols
 
-Status: **Draft — proposal for review; nothing here is implemented**
+Status: **Draft — read side partly implemented (see Implementation notes); scoped grants and fold queries still proposals**
 
 ## Abstract
 
@@ -141,3 +141,53 @@ Add `conformance/valid` and `conformance/invalid` fixtures mirroring the
 examples above (ungranted verb, wrong scope, unknown verb, source-typed
 `select`), extend `spec/diagnostics.md`, and add module-schema coverage in
 `spec/module-schema.ebnf` before any implementation is merged.
+
+## Implementation notes (2026-09-21)
+
+Starting on the read side showed that much of section 1 needs no language
+change, and that the real dependency is elsewhere.
+
+**Already true today.** The parser accepts `select T ... from <expression>`, and
+the checker treats `from <identifier>` as a named source, requiring the
+permission `read T from <identifier>`. So `stream messages = select
+StreamMessage from chat` and `on messages { ... }` already parse and check.
+This answers open question 1: no second kind of `from` operand is needed at the
+syntax level. What makes a value a *source* is the module operation that
+produced it, not a new grammar production.
+
+**Added.** `concord01` now declares `nominal Stream` and
+`operation stream(key: DerivedKey) -> Stream effect Relay,Decrypt permission
+concord_read`. The runtime has a matching `StreamHandle` value carrying only the
+plane's public address (no key material), and the real host implements the
+operation. `conformance/valid/concord-read-stream.ns` is the section 1 example
+as a checked program; opening a stream needs `concord_read` in addition to
+`read StreamMessage from chat`, and the negative fixture pins that.
+
+**The substance behind `on`.** `ChannelReader` (in `nscript-host-crypto`) turns
+raw wraps into what an honest client would show: events that open under the
+plane key, are bound to the Channel and epoch, have not expired (by their own
+signed tag), come from unbanned authors, are not duplicates, and are ordered by
+`(time_ms, id)`. Run against a live community it delivered all 7 real events
+once each and dropped the 20 cross-relay duplicates.
+
+**Found while doing it.** Two checker holes let a program that could not be
+checked pass silently, both now `E1101`: calling an operation an imported
+module does not declare, and calling into a module with no `use`. Malformed
+statements and leftover tokens were also being dropped silently (see
+`docs/LAYER3.md`).
+
+**Still blocking, and not language design.**
+
+- **Handler bodies are not evaluated.** `nscript run` registers subscriptions
+  and stops; `PLAN.md` lists full handler and stream evaluation as deferred.
+  Until an evaluator exists, `on chat.message { print(event.content) }` checks
+  but cannot run, however the Concord side is built.
+- **`event` is not typed by the source.** A handler over a Concord stream checks
+  as an untyped handler; `event.content` and `event.author` are not validated
+  against `StreamMessage`.
+- **Where does a script get a `DerivedKey`?** This is open question 3, and it is
+  now concrete: the language has no way to bind a host-held key to a name. The
+  `me` principal is the only host-provided value today. `concord01.stream(key)`
+  passes an undefined identifier that the checker does not resolve.
+- **Scoped grants (section 2) and fold queries (section 3)** are untouched.
+

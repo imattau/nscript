@@ -842,6 +842,16 @@ impl std::fmt::Debug for SealedEvent {
     }
 }
 
+/// A readable Concord stream, as a script sees it: the plane's public address
+/// (the `authors` a subscription filters on). It carries no key material, so it
+/// is safe to print and to pass around; reading needs the host that holds the
+/// plane key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamHandle {
+    /// 64-hex x-only public key of the plane (its stream address).
+    pub address: String,
+}
+
 /// CORD-01 private-stream envelope: a kind-1059 wrap signed by the stream
 /// key (fixed author), tagged with an ephemeral `p` key, carrying a seal.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1229,6 +1239,7 @@ pub enum OperationValue {
     SignedBytes(SignedBytes),
     SealedEvent(SealedEvent),
     StreamWrap(StreamWrap),
+    StreamHandle(StreamHandle),
     StreamMessage(StreamMessage),
     AuthenticatedRelay(AuthenticatedRelay),
     SearchRequest(SearchRequest),
@@ -4052,6 +4063,16 @@ impl OperationHost for FakeOperationHost {
                 }
                 SignedBytes::new(payload.as_bytes()[prefix.len()..].to_vec())
                     .map(OperationValue::SignedBytes)
+            }
+            ("concord01", "stream") => {
+                let [OperationValue::DerivedKey(stream)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                Ok(OperationValue::StreamHandle(StreamHandle {
+                    address: concord_test_stream_pubkey(stream),
+                }))
             }
             ("concord01", "wrap_stream") => {
                 let [

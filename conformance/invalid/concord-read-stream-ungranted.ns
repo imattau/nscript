@@ -1,0 +1,16 @@
+// error: E3001 missing-permission
+// Opening a stream needs its own grant, apart from reading its messages.
+use concord01
+
+permissions {
+    read StreamMessage from chat
+    log
+}
+
+let chat = concord01.stream(channel_key)
+
+stream messages = select StreamMessage from chat
+
+on messages {
+    print(event.content)
+}
