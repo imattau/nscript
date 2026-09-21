@@ -1990,6 +1990,15 @@ where
         log_host: &mut H,
     ) -> Result<(), RuntimeError> {
         for item in items {
+            if let Item::Let(declaration) = item {
+                let Some(value) = Self::handler_text(&declaration.value, event, bindings) else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: "handler_let".to_owned(),
+                    });
+                };
+                bindings.insert(declaration.name.value.clone(), value);
+                continue;
+            }
             let Item::Statement(statement) = item else {
                 continue;
             };
@@ -5003,6 +5012,38 @@ mod tests {
             .execute_handler_body_for_event(&checked.handlers[0], &event, &mut logs)
             .expect("event-bound condition executes");
         assert_eq!(logs.records[0].message, "matched");
+    }
+
+    #[test]
+    fn handler_body_binds_event_values_with_let() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    let message = event.content\n    print(message)\n}";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "captured".to_owned(),
+                tags: Vec::new(),
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "event-let".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut logs = FakeLogHost::default();
+        runtime
+            .execute_handler_body_for_event(&checked.handlers[0], &event, &mut logs)
+            .expect("let binding executes");
+        assert_eq!(logs.records[0].message, "captured");
     }
 
     #[test]
