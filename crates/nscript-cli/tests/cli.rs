@@ -200,6 +200,39 @@ fn package_manifest_embeds_verified_lockfile_fingerprint() {
 }
 
 #[test]
+fn package_manifest_can_hash_local_artifact() {
+    let source = repository_path("conformance/valid/hello-note.ns");
+    let artifact =
+        std::env::temp_dir().join(format!("nscript-artifact-{}.npk", std::process::id()));
+    std::fs::write(&artifact, b"artifact-bytes").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args([
+            "package",
+            "manifest",
+            "--publisher",
+            "npub1publisher",
+            "--name",
+            "hello",
+            "--version",
+            "0.1.0",
+            "--artifact",
+        ])
+        .arg(&artifact)
+        .arg("--hash-artifact")
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(manifest["sha256"].as_str().unwrap().len(), 64);
+    let _ = std::fs::remove_file(artifact);
+}
+
+#[test]
 fn generates_deterministic_module_lockfile() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["package", "lock"])

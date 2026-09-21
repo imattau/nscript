@@ -27,6 +27,8 @@ module version and canonical descriptor hash for review and reproducibility.
 
 Pass `--lock nscript.lock.json` to `package manifest` to require an up-to-date
 lockfile and embed its SHA-256 fingerprint in the NScript manifest metadata.
+Pass `--hash-artifact` to calculate the archive SHA-256 directly when the
+artifact is available locally.
 
 Keep the final archive hash in `sha256` before publishing. NScript's checked
 permissions and Nostr signer identity remain part of the source/package review

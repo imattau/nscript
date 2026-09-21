@@ -92,7 +92,25 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
         eprintln!("package manifest requires --artifact");
         return ExitCode::from(2);
     };
-    let sha256 = flag("--sha256").unwrap_or_default();
+    let sha256 = if let Some(value) = flag("--sha256") {
+        value
+    } else if arguments
+        .iter()
+        .any(|argument| argument == "--hash-artifact")
+    {
+        let Ok(contents) = fs::read(&artifact) else {
+            eprintln!("could not read artifact for hashing: {artifact}");
+            return ExitCode::from(1);
+        };
+        let digest = Sha256::digest(contents);
+        let mut fingerprint = String::with_capacity(64);
+        for byte in digest {
+            write!(&mut fingerprint, "{byte:02x}").expect("writing to a string cannot fail");
+        }
+        fingerprint
+    } else {
+        String::new()
+    };
     if !sha256.is_empty()
         && (sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()))
     {
