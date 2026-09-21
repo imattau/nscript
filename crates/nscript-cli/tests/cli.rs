@@ -433,6 +433,13 @@ fn executes_compiled_wasm_through_wasmi_dispatch_host() {
             .is_err(),
         "out-of-range payload imports must fail preflight"
     );
+    let mismatched_imports = [("op:0:wrong_event".to_owned(), true)];
+    assert!(
+        WasmiEngine::new(100_000)
+            .run_with_dispatch_host(&module, &mismatched_imports, Host::default(), 1)
+            .is_err(),
+        "mismatched payload operation names must fail preflight"
+    );
     let _ = std::fs::remove_file(output_path);
 }
 
