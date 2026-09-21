@@ -22,7 +22,7 @@ pub const MAX_WASM_OPERATIONS: usize = 1024;
 #[cfg(feature = "wasm-engine")]
 pub mod wasmi_engine {
     use super::{MAX_WASM_DISPATCH_BYTES, RuntimeError};
-    use wasmi::{Config, Engine, Linker, Module, Store};
+    use wasmi::{Caller, Config, Engine, Error, Extern, Linker, Module, Store};
 
     /// Wasmi-backed validator with deterministic fuel configuration.
     pub struct WasmiEngine {
@@ -99,6 +99,78 @@ pub mod wasmi_engine {
                 .map_err(|_| RuntimeError::InvalidWasmPayload)?
                 .call(&mut store, ())
                 .map_err(|_| RuntimeError::InvalidWasmPayload)
+        }
+
+        /// Runs `nscript_main` and routes payload imports to a dispatch host.
+        ///
+        /// # Errors
+        ///
+        /// Returns a runtime error when instantiation, memory decoding, fuel,
+        /// or host dispatch fails.
+        pub fn run_with_dispatch_host<H: super::WasmDispatchHost>(
+            &self,
+            module: &[u8],
+            imports: &[(String, bool)],
+            host: H,
+            invocation: super::InvocationId,
+        ) -> Result<H, RuntimeError> {
+            self.validate(module)?;
+            let module =
+                Module::new(&self.engine, module).map_err(|_| RuntimeError::InvalidWasmPayload)?;
+            let mut store = Store::new(&self.engine, (host, invocation));
+            store
+                .set_fuel(self.fuel)
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?;
+            let mut linker = Linker::new(&self.engine);
+            for (name, takes_payload) in imports {
+                if *takes_payload {
+                    linker
+                        .func_wrap(
+                            "nscript",
+                            name,
+                            |mut caller: Caller<'_, (H, super::InvocationId)>,
+                             ptr: i32,
+                             len: i32| {
+                                let memory = caller
+                                    .get_export("memory")
+                                    .and_then(Extern::into_memory)
+                                    .ok_or_else(|| Error::new("missing exported memory"))?;
+                                let bytes = memory.data(&caller);
+                                let pointer = u32::try_from(ptr)
+                                    .map_err(|_| Error::new("invalid pointer"))?;
+                                let length =
+                                    u32::try_from(len).map_err(|_| Error::new("invalid length"))?;
+                                let records =
+                                    super::decode_wasm_dispatch(bytes, pointer, length)
+                                        .map_err(|_| Error::new("invalid dispatch payload"))?;
+                                let invocation = caller.data().1;
+                                super::dispatch_wasm_operations(
+                                    &mut caller.data_mut().0,
+                                    invocation,
+                                    &records,
+                                )
+                                .map_err(|_| Error::new("dispatch denied"))?;
+                                Ok::<(), Error>(())
+                            },
+                        )
+                        .map_err(|_| RuntimeError::InvalidWasmPayload)?;
+                } else {
+                    linker
+                        .func_wrap("nscript", name, || {})
+                        .map_err(|_| RuntimeError::InvalidWasmPayload)?;
+                }
+            }
+            let instance = linker
+                .instantiate(&mut store, &module)
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?
+                .start(&mut store)
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?;
+            instance
+                .get_typed_func::<(), ()>(&store, "nscript_main")
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?
+                .call(&mut store, ())
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?;
+            Ok(store.into_data().0)
         }
 
         #[must_use]
