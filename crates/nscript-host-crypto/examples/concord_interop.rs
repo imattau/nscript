@@ -6,6 +6,8 @@
 //!   operations (`unwrap_stream`, `open_message`). Read-only.
 //! * `publish` send ONE message through the real `publish_message` operation:
 //!   the runtime's policy gate, then `RealRelayPool` over TLS.
+//! * `whoami`  print the roster and what the identity in `<keyfile>` may do
+//!   (rank, permission bits, staff). Read-only.
 //! * `post`    join the Guestbook and post a few messages as a throwaway
 //!   identity kept in `<keyfile>` (created if absent, never printed).
 //!
@@ -319,6 +321,34 @@ fn publish_via_runtime(loaded: &Loaded, channel_id: &str, secret: &[u8; 32]) {
     }
 }
 
+fn whoami(loaded: &Loaded, secret: &[u8; 32]) {
+    let me = hex(&xonly_pubkey(secret).expect("pubkey"));
+    let roster = loaded.authority.roster();
+    println!("identity {me}");
+    println!("owner {}", roster.owner);
+    for role in roster.roles.values() {
+        println!(
+            "role position {} permissions {} (server_scope {})",
+            role.position, role.permissions, role.server_scope
+        );
+    }
+    println!("grants held by members: {}", roster.grants.len());
+    println!("my roles: {:?}", roster.grants.get(&me).map_or(0, Vec::len));
+    let stranger = "ab".repeat(32);
+    println!(
+        "rank {} | permission bits {} | staff {}",
+        roster.rank(&me),
+        roster.permissions(&me),
+        roster.is_staff(&me)
+    );
+    println!(
+        "can kick a role-less member: {} | can ban one: {} | banned: {}",
+        roster.can(&me, nscript_runtime::authority::perm::KICK, Some(&stranger)),
+        roster.can(&me, nscript_runtime::authority::perm::BAN, Some(&stranger)),
+        roster.banned.len()
+    );
+}
+
 fn identity(path: &str) -> [u8; 32] {
     if let Ok(text) = std::fs::read_to_string(path) {
         return unhex32(text.trim());
@@ -470,6 +500,7 @@ fn main() {
         "read" => {}
         "history" => print_history(&loaded, &channel_id),
         "ops" => ops_history(&loaded, &channel_id),
+        "whoami" => whoami(&loaded, &identity(&args[4])),
         "publish" => {
             let secret = identity(&args[4]);
             publish_via_runtime(&loaded, &channel_id, &secret);

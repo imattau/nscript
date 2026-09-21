@@ -638,6 +638,25 @@ holding only member-level keys opens every published wrap and folds it through
 land). Not run against the live community: the throwaway identity has no
 authority there, so such editions would be dropped. A ban is the Banlist layer
 only; the Refounding that severs read access is still unbuilt.
+CORD-06 rekey delivery is built on both sides (`rekey.rs` in
+`nscript-host-crypto`): `build_rekey_events` wraps 72/104/136-byte blobs under
+the rotator-recipient pairwise NIP-44 key, locates them by public-key locator,
+and publishes kind-3303 events at the address derived from the prior root;
+`receive_rekey` opens them, checks continuity and caller-supplied authority,
+decrypts its own blob and adopts it, concluding removal only from a complete
+chunk set and picking the lowest base key among racing rotators. Tested in both
+directions for members, staff, removed members, missing chunks, unauthorised
+rotators, forks and channel rekeys. Spec note found while testing: 120 base
+blobs per event do not fit the envelope. Each event is NIP-44 encrypted twice
+and the wrap layer caps plaintext at 65,535 bytes; by NIP-44's padding rules 104-
+and 136-byte blobs overflow that at roughly 110 and 100 blobs, so chunk size
+shrinks until the rotation fits (72-byte channel blobs do fit 120). Worth
+raising with the CORD authors. Still unbuilt: Control Plane compaction and the
+whole-Refounding orchestration.
+On 2026-09-21 the owner granted the throwaway interop key a moderator role;
+read-only against the live Control Plane, `AuthorityFold` resolves it to rank 2,
+permission bits 568 (KICK, BAN, MANAGE_MESSAGES, MENTION_EVERYONE) and staff,
+matching the grant. No moderation action has been taken on the live community.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.
