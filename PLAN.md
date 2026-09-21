@@ -505,6 +505,9 @@ Added the generic `fold::Fold` reducer primitive: events are ordered by
 `(created_at, id)`, deduplicated, capacity-bounded, and replayed from the
 initial state so arrival order never changes the result. CORD-02/03 community
 and channel models build on it next.
+Added the `concord02` module descriptor (nominal `CommunityId`, `ChannelId`,
+`Epoch`, `Channel`) and a `community` reducer folding channel lifecycle and
+strictly increasing epochs over `Fold`. Authority checks remain CORD-04.
 
 ## Deferred
 

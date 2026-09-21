@@ -1,0 +1,25 @@
+module concord02 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/ereignishorizont/concord/blob/main/CORD-02.md"
+use concord01 @ "^0.1"
+
+nominal CommunityId from Text {
+    require length(value) > 0
+}
+
+nominal ChannelId from Text {
+    require length(value) > 0
+}
+
+nominal Epoch from Integer {
+    require value >= 0
+}
+
+record Channel {
+    field id: ChannelId
+    field name: Text
+}
+
+error CommunityError {
+    field message: Text
+}

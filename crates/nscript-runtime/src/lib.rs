@@ -1,5 +1,6 @@
 //! Deterministic reference runtime and host capability contracts.
 
+pub mod community;
 pub mod fold;
 
 use std::collections::{BTreeMap, BTreeSet};
