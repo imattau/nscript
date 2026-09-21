@@ -1057,6 +1057,70 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("assert") => {
+                self.index += 1;
+                let subject = self.parse_expression(0)?;
+                if !self.eat_word("as") {
+                    return None;
+                }
+                let kind = self.parse_expression(0)?;
+                if !self.eat_word("value") {
+                    return None;
+                }
+                let value = self.parse_expression(0)?;
+                let span = subject.span.join(value.span);
+                let assertion = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "Assertion".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "subject".to_owned(),
+                                    span,
+                                },
+                                subject,
+                            ),
+                            (
+                                Spanned {
+                                    value: "kind".to_owned(),
+                                    span,
+                                },
+                                kind,
+                            ),
+                            (
+                                Spanned {
+                                    value: "value".to_owned(),
+                                    span,
+                                },
+                                value,
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip85".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_assertion".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![assertion],
+                    },
+                    span,
+                })
+            }
             Some("search") => {
                 self.index += 1;
                 let _event = self.parse_type()?;

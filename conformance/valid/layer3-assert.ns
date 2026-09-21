@@ -1,0 +1,7 @@
+use nip85
+
+permissions {
+    assertion
+}
+
+assert "alice" as "trust" value "high"

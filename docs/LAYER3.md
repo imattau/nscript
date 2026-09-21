@@ -183,6 +183,18 @@ permissions {
 highlight "Nostr-native scripting" from article_url
 ```
 
+Trusted assertions name a subject, assertion kind, and value:
+
+```nostr
+use nip85
+
+permissions {
+    assertion
+}
+
+assert alice as "trust" value "high"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

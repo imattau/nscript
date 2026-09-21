@@ -382,6 +382,8 @@ Implemented `badge identifier as name` lowering to `nip58.publish_badge` with
 an empty optional description.
 Implemented `highlight content from source` lowering to
 `nip84.publish_highlight`.
+Implemented `assert subject as kind value value` lowering to
+`nip85.publish_assertion`.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent
