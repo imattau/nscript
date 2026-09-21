@@ -1,0 +1,7 @@
+use nip52
+
+permissions {
+    calendar
+}
+
+calendar "Nostr meetup" from 100 to 200 at "Melbourne"

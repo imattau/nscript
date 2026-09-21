@@ -1121,6 +1121,81 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("calendar") => {
+                self.index += 1;
+                let title = self.parse_expression(0)?;
+                if !self.eat_word("from") {
+                    return None;
+                }
+                let start = self.parse_expression(0)?;
+                if !self.eat_word("to") {
+                    return None;
+                }
+                let end = self.parse_expression(0)?;
+                if !self.eat_word("at") {
+                    return None;
+                }
+                let location = self.parse_expression(0)?;
+                let span = title.span.join(location.span);
+                let event = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "CalendarEvent".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "title".to_owned(),
+                                    span,
+                                },
+                                title,
+                            ),
+                            (
+                                Spanned {
+                                    value: "start".to_owned(),
+                                    span,
+                                },
+                                start,
+                            ),
+                            (
+                                Spanned {
+                                    value: "end".to_owned(),
+                                    span,
+                                },
+                                end,
+                            ),
+                            (
+                                Spanned {
+                                    value: "location".to_owned(),
+                                    span,
+                                },
+                                location,
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip52".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_calendar_event".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![event],
+                    },
+                    span,
+                })
+            }
             Some("search") => {
                 self.index += 1;
                 let _event = self.parse_type()?;

@@ -195,6 +195,18 @@ permissions {
 assert alice as "trust" value "high"
 ```
 
+Calendar events use explicit start/end timestamps and a location:
+
+```nostr
+use nip52
+
+permissions {
+    calendar
+}
+
+calendar "Nostr meetup" from start_time to end_time at "Melbourne"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr
