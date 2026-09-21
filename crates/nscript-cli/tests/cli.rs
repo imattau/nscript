@@ -384,6 +384,12 @@ fn executes_compiled_wasm_through_wasmi_dispatch_host() {
         .run_with_dispatch_host(&module, &imports, Host::default(), 1)
         .expect("wasmi executes compiled artifact");
     assert_eq!(host.0, 3);
+    assert!(
+        WasmiEngine::new(0)
+            .run_with_imports(&module, &imports)
+            .is_err(),
+        "zero fuel must reject execution"
+    );
     let _ = std::fs::remove_file(output_path);
 }
 

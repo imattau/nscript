@@ -24,5 +24,8 @@ limits, fuel, and host-call data limits explicitly.
 3. Bind only `nscript` capability and operation imports.
 4. Set fuel and memory limits before calling `nscript_main`.
 5. Route imports through `WasmDispatchHost` and existing relay/signer/storage
-   adapters.
+adapters.
 6. Keep the reference executor available for deterministic offline tests.
+
+Every Wasmi execution receives a finite fuel budget; exhaustion is surfaced as
+a runtime failure before untrusted execution can continue past its allowance.
