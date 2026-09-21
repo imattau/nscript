@@ -243,6 +243,18 @@ permissions {
 video clip_url caption "A clip"
 ```
 
+File metadata keeps URL, MIME type, and content hash explicit:
+
+```nostr
+use nip94
+
+permissions {
+    file_metadata
+}
+
+file file_url mime "image/jpeg" hash content_hash
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

@@ -1366,6 +1366,70 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("file") => {
+                self.index += 1;
+                let url = self.parse_expression(0)?;
+                if !self.eat_word("mime") {
+                    return None;
+                }
+                let mime = self.parse_expression(0)?;
+                if !self.eat_word("hash") {
+                    return None;
+                }
+                let hash = self.parse_expression(0)?;
+                let span = url.span.join(hash.span);
+                let file = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "FileMetadata".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "url".to_owned(),
+                                    span,
+                                },
+                                url,
+                            ),
+                            (
+                                Spanned {
+                                    value: "mime".to_owned(),
+                                    span,
+                                },
+                                mime,
+                            ),
+                            (
+                                Spanned {
+                                    value: "hash".to_owned(),
+                                    span,
+                                },
+                                hash,
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip94".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_file_metadata".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![file],
+                    },
+                    span,
+                })
+            }
             Some("search") => {
                 self.index += 1;
                 let _event = self.parse_type()?;

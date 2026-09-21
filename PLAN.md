@@ -390,6 +390,8 @@ Implemented `live identifier titled title about summary` lowering to
 `nip53.publish_live_event`.
 Implemented `image url caption text` lowering to `nip68.publish_image`.
 Implemented `video url caption text` lowering to `nip71.publish_video`.
+Implemented `file url mime type hash digest` lowering to
+`nip94.publish_file_metadata`.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent

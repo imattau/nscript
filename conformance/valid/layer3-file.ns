@@ -1,0 +1,7 @@
+use nip94
+
+permissions {
+    file_metadata
+}
+
+file "https://example.com/photo.jpg" mime "image/jpeg" hash "abc123"
