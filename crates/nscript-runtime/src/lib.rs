@@ -16,6 +16,8 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket, client::connect};
 
 pub type InvocationId = u64;
+pub const MAX_WASM_DISPATCH_BYTES: usize = 1 << 20;
+pub const MAX_WASM_OPERATIONS: usize = 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnsignedEvent {
@@ -125,6 +127,11 @@ pub fn decode_wasm_dispatch(
     let payload = memory
         .get(start..end)
         .ok_or(RuntimeError::InvalidWasmPayload)?;
+    if payload.len() > MAX_WASM_DISPATCH_BYTES {
+        return Err(RuntimeError::ResourceLimit {
+            resource: "wasm_dispatch_bytes".to_owned(),
+        });
+    }
     serde_json::from_slice(payload).map_err(|_| RuntimeError::InvalidWasmPayload)
 }
 
@@ -151,6 +158,11 @@ pub fn dispatch_wasm_operations<H: WasmDispatchHost>(
     records: &[Value],
 ) -> Result<usize, RuntimeError> {
     for (offset, operation) in records.iter().enumerate() {
+        if offset >= MAX_WASM_OPERATIONS {
+            return Err(RuntimeError::ResourceLimit {
+                resource: "wasm_operations".to_owned(),
+            });
+        }
         if !operation.is_object() {
             return Err(RuntimeError::InvalidWasmPayload);
         }
