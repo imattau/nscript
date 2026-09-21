@@ -360,6 +360,10 @@ the publication sequence through the signer and relay hosts.
 directly, completing the handoff into the existing npack manifest workflow.
 Reference WASM dispatch is bounded to 1 MiB of payload and 1,024 operation
 records, returning explicit resource-limit errors before host work begins.
+Engine decision: Wasmi is the planned primary backend for Draft 0.1 because
+its lightweight deterministic interpreter and built-in fuel metering fit the
+capability sandbox; Wasmtime remains an optional performance backend. See
+`docs/WASM-ENGINE.md`.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
