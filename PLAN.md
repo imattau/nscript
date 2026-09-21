@@ -492,6 +492,9 @@ ordinary debug output.
 Added the `ConcordKeyHost` capability boundary and deterministic
 `FakeConcordKeyHost` test double; production ECDH/HKDF remains intentionally
 behind this host contract.
+The fake operation host now preserves typed `SharedSecret`, `DerivedKey`, and
+`StreamMessage` boundaries for `concord01.derive_stream_key` and
+`concord01.publish_message`, providing the first executable CORD-01 path.
 
 ## Deferred
 

@@ -745,6 +745,12 @@ pub struct UserStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamMessage {
+    pub author: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthenticatedRelay {
     pub relay: String,
 }
@@ -1022,6 +1028,10 @@ pub enum OperationValue {
     Label(Label),
     Draft(Draft),
     UserStatus(UserStatus),
+    SharedSecret(SharedSecret),
+    DerivedKey(DerivedKey),
+    SignedBytes(SignedBytes),
+    StreamMessage(StreamMessage),
     AuthenticatedRelay(AuthenticatedRelay),
     SearchRequest(SearchRequest),
     SearchResults(SearchResults),
@@ -3674,6 +3684,43 @@ impl OperationHost for FakeOperationHost {
                 let (_, payload) = value.split_once(':').unwrap_or(("", value));
                 Ok(OperationValue::EncryptedText(payload.to_owned()))
             }
+            ("concord01", "derive_stream_key") => {
+                let [OperationValue::SharedSecret(secret)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                let mut digest = Sha256::new();
+                digest.update(b"nscript/concord01/test-derivation\0");
+                digest.update(secret.as_bytes());
+                DerivedKey::new(digest.finalize().to_vec()).map(OperationValue::DerivedKey)
+            }
+            ("concord01", "publish_message") => {
+                let [
+                    OperationValue::DerivedKey(stream),
+                    OperationValue::StreamMessage(message),
+                ] = arguments
+                else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if stream.as_bytes().is_empty()
+                    || message.author.is_empty()
+                    || message.content.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://concord01".to_owned(),
+                        accepted: true,
+                        detail: "stream message accepted by fake host".to_owned(),
+                    }],
+                }))
+            }
             ("nip17", "send_private") => {
                 let valid = match arguments {
                     [OperationValue::PrivateMessage(_)] => true,
@@ -4400,6 +4447,12 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             }
             _ => value.clone(),
         },
+        "StreamMessage" => match (pubkey("author"), text("content")) {
+            (Some(author), Some(content)) => {
+                OperationValue::StreamMessage(StreamMessage { author, content })
+            }
+            _ => value.clone(),
+        },
         "SearchRequest" => match text("query") {
             Some(query) => OperationValue::SearchRequest(SearchRequest { query }),
             _ => value.clone(),
@@ -4644,6 +4697,36 @@ mod tests {
             host.derive_stream_key(9, &secret),
             Err(RuntimeError::CapabilityDenied { .. })
         ));
+    }
+
+    #[test]
+    fn concord01_operations_preserve_typed_stream_boundaries() {
+        let secret = SharedSecret::new(vec![9, 8, 7]).expect("secret accepted");
+        let mut host = FakeOperationHost::default();
+        let key = host
+            .call(
+                1,
+                "concord01",
+                "derive_stream_key",
+                &[OperationValue::SharedSecret(secret)],
+            )
+            .expect("stream key derivation available");
+        let OperationValue::DerivedKey(key) = key else {
+            panic!("expected derived key");
+        };
+        let message = OperationValue::StreamMessage(StreamMessage {
+            author: "npub1author".to_owned(),
+            content: "hello concord".to_owned(),
+        });
+        let result = host
+            .call(
+                2,
+                "concord01",
+                "publish_message",
+                &[OperationValue::DerivedKey(key), message],
+            )
+            .expect("stream publication available");
+        assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
     }
 
     #[test]
