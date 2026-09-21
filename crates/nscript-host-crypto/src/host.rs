@@ -2,16 +2,17 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nscript_runtime::expiry::rumor_expiration;
+use nscript_runtime::expiry::{expiration_tag, rumor_expiration};
 use nscript_runtime::stream::GroupKeyLabel;
 use nscript_runtime::{
-    ConcordKeyHost, DerivedKey, InvocationId, OperationHost, OperationValue, RuntimeError,
-    SealedEvent, SharedSecret, SignedBytes, StreamWrap,
+    ConcordKeyHost, DerivedKey, InvocationId, OperationHost, OperationValue, PublishReport,
+    RelayHost, RuntimeError, SealedEvent, SharedSecret, SignedBytes, SignedEvent, StreamWrap,
+    UnsignedEvent,
 };
 
-use crate::group_key::{group_key, xonly_pubkey};
+use crate::group_key::{group_key, hex, xonly_pubkey};
 use crate::nip44::conversation_key;
-use crate::stream::{SealForm, build_seal, build_wrap, open_seal, open_wrap, seal_form};
+use crate::stream::{SealForm, build_seal, build_wrap, open_seal, open_wrap, rumor, seal_form};
 
 /// Derives plane keys with the protocol's approved algorithm.
 ///
@@ -85,6 +86,20 @@ pub struct Nip44OperationHost {
     author_secret: [u8; 32],
     /// Fixed clock for tests; the system clock when `None`.
     pub fixed_time: Option<u64>,
+    publisher: Option<(PublishTarget, Box<dyn RelayHost>)>,
+}
+
+/// Where `publish_message` sends: one Channel of one Community.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublishTarget {
+    /// 64-hex Channel id, committed in the rumor's `channel` tag (CORD-03 §3).
+    pub channel_id: String,
+    /// The key epoch the Channel's key was derived at (the `epoch` tag).
+    pub epoch: u64,
+    /// The Community's `message_expiration` in seconds; `None` = off (CORD-08).
+    pub timer: Option<u64>,
+    /// Relay set name reported to the relay host.
+    pub relayset: String,
 }
 
 impl std::fmt::Debug for Nip44OperationHost {
@@ -101,7 +116,25 @@ impl Nip44OperationHost {
         Self {
             author_secret,
             fixed_time: None,
+            publisher: None,
         }
+    }
+
+    /// Enables `publish_message`, sending to `target` through `relays`. The
+    /// relay host is the runtime's own (`RealRelayPool` in production).
+    #[must_use]
+    pub fn with_publisher(mut self, target: PublishTarget, relays: Box<dyn RelayHost>) -> Self {
+        self.publisher = Some((target, relays));
+        self
+    }
+
+    fn now_millis_part(&self) -> u64 {
+        if self.fixed_time.is_some() {
+            return 0;
+        }
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| u64::from(elapsed.subsec_millis()))
     }
 
     fn now(&self) -> u64 {
@@ -118,6 +151,36 @@ struct Plane {
     secret: [u8; 32],
     pubkey: [u8; 32],
     conv: [u8; 32],
+}
+
+/// Converts a serialised kind-1059 event into the runtime's [`SignedEvent`].
+fn signed_event_from_wire(wire: &str) -> Option<SignedEvent> {
+    let event: serde_json::Value = serde_json::from_str(wire).ok()?;
+    let text = |name: &str| event.get(name)?.as_str().map(str::to_owned);
+    let tags = event
+        .get("tags")?
+        .as_array()?
+        .iter()
+        .map(|tag| {
+            let tag = tag.as_array()?;
+            match tag.as_slice() {
+                [name, value] => Some((name.as_str()?.to_owned(), value.as_str()?.to_owned())),
+                _ => None,
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(SignedEvent {
+        unsigned: UnsignedEvent {
+            event_type: "StreamWrap".to_owned(),
+            kind: u16::try_from(event.get("kind")?.as_u64()?).ok()?,
+            content: text("content")?,
+            tags,
+            created_at: event.get("created_at")?.as_u64()?,
+        },
+        signer: text("pubkey")?,
+        id: text("id")?,
+        signature: text("sig")?,
+    })
 }
 
 fn plane(key: &DerivedKey) -> Option<Plane> {
@@ -169,6 +232,55 @@ impl Nip44OperationHost {
         let mut wrap = StreamWrap::from_wire(&wire).ok()?;
         wrap.sealed = Some(sealed.clone());
         Some(wrap)
+    }
+
+    /// Builds and publishes a kind-9 message. The author must be the host's
+    /// own identity: a script cannot publish as anyone else.
+    fn publish_message(
+        &mut self,
+        plane: &Plane,
+        message: &nscript_runtime::StreamMessage,
+    ) -> Option<PublishReport> {
+        let me = hex(&xonly_pubkey(&self.author_secret).ok()?);
+        if message.author != me || message.content.is_empty() {
+            return None;
+        }
+        let created_at = self.now();
+        let outer: Vec<Vec<String>> = {
+            let (target, _) = self.publisher.as_ref()?;
+            expiration_tag(9, created_at, target.timer)
+                .into_iter()
+                .collect()
+        };
+        let (target, _) = self.publisher.as_ref()?;
+        // CORD-03 §3 binding plus the sub-second `ms` tag (CORD-02 §4).
+        let mut tags = vec![
+            serde_json::json!(["channel", target.channel_id]),
+            serde_json::json!(["epoch", target.epoch.to_string()]),
+            serde_json::json!(["ms", self.now_millis_part().to_string()]),
+        ];
+        tags.extend(outer.iter().map(|tag| serde_json::json!(tag)));
+        let rumor = rumor(
+            &self.author_secret,
+            9,
+            &serde_json::Value::Array(tags),
+            &message.content,
+            created_at,
+        )
+        .ok()?;
+        let seal = build_seal(
+            &plane.conv,
+            SealForm::Encrypted,
+            &self.author_secret,
+            &rumor.to_string(),
+            created_at,
+        )
+        .ok()?;
+        let wire = build_wrap(&plane.secret, &plane.conv, &seal, &outer, created_at).ok()?;
+        let event = signed_event_from_wire(&wire)?;
+        let relayset = self.publisher.as_ref()?.0.relayset.clone();
+        let (_, relays) = self.publisher.as_mut()?;
+        relays.publish(1, &event, &relayset).ok()
     }
 
     fn unwrap_event(plane: &Plane, wrap: &StreamWrap) -> Option<SealedEvent> {
@@ -241,8 +353,17 @@ impl OperationHost for Nip44OperationHost {
                     .and_then(|p| Self::unwrap_event(&p, w))
                     .map(OperationValue::SealedEvent)
             }
-            // Deriving keys is the key host's job; publishing needs a relay
-            // host and policy, which the fake operation host models.
+            (
+                "publish_message",
+                [
+                    OperationValue::DerivedKey(k),
+                    OperationValue::StreamMessage(m),
+                ],
+            ) if self.publisher.is_some() => plane(k)
+                .and_then(|p| self.publish_message(&p, m))
+                .map(OperationValue::PublishReport),
+            // Deriving keys is the key host's job; without a configured
+            // publisher there is nowhere to send.
             _ => {
                 return Err(RuntimeError::OperationUnavailable {
                     module: module.to_owned(),

@@ -2918,6 +2918,23 @@ pub struct RealRelayHost {
     subscriptions: BTreeMap<u64, String>,
 }
 
+/// How long a relay read may block before the relay counts as unavailable.
+const RELAY_IO_TIMEOUT: Duration = Duration::from_secs(10);
+/// Frames skipped while waiting for the `OK` that answers a publish.
+const MAX_FRAMES_BEFORE_OK: usize = 64;
+
+fn set_read_timeout(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, timeout: Duration) {
+    match socket.get_mut() {
+        MaybeTlsStream::Plain(stream) => {
+            let _ = stream.set_read_timeout(Some(timeout));
+        }
+        MaybeTlsStream::Rustls(stream) => {
+            let _ = stream.get_mut().set_read_timeout(Some(timeout));
+        }
+        _ => {}
+    }
+}
+
 /// Opens a relay WebSocket, first making sure TLS has a crypto provider.
 ///
 /// tungstenite's `rustls-tls-native-roots` feature selects no provider, so a
@@ -2928,14 +2945,21 @@ fn open_socket(relay: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, Runt
         // A concurrent installer winning the race is equally fine.
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
-    connect(relay)
-        .map(|(socket, _)| socket)
-        .map_err(|_| RuntimeError::RelayUnavailable {
-            relayset: relay.to_owned(),
-        })
+    let (mut socket, _) = connect(relay).map_err(|_| RuntimeError::RelayUnavailable {
+        relayset: relay.to_owned(),
+    })?;
+    // A silent relay must not hang the program.
+    set_read_timeout(&mut socket, RELAY_IO_TIMEOUT);
+    Ok(socket)
 }
 
 impl RealRelayHost {
+    /// Bounds how long a read may block before the relay counts as
+    /// unavailable (default ten seconds).
+    pub fn set_read_timeout(&mut self, timeout: Duration) {
+        set_read_timeout(&mut self.socket, timeout);
+    }
+
     /// Connect to a relay URL.
     ///
     /// # Errors
@@ -3078,19 +3102,29 @@ impl RelayHost for RealRelayHost {
                 "sig": event.signature,
             }
         ]))?;
-        let response = self.receive_json()?;
-        let accepted = response.get(0).and_then(Value::as_str) == Some("OK")
-            && response.get(2).and_then(Value::as_bool).unwrap_or(false);
-        Ok(PublishReport {
-            outcomes: vec![RelayOutcome {
-                relay: self.relay.clone(),
-                accepted,
-                detail: response
-                    .get(3)
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            }],
+        // NIP-01: the relay answers with ["OK", <event id>, <accepted>, <message>].
+        // NOTICE, EVENT and EOSE frames may interleave and are not the answer.
+        for _ in 0..MAX_FRAMES_BEFORE_OK {
+            let response = self.receive_json()?;
+            let is_answer = response.get(0).and_then(Value::as_str) == Some("OK")
+                && response.get(1).and_then(Value::as_str) == Some(event.id.as_str());
+            if !is_answer {
+                continue;
+            }
+            return Ok(PublishReport {
+                outcomes: vec![RelayOutcome {
+                    relay: self.relay.clone(),
+                    accepted: response.get(2).and_then(Value::as_bool).unwrap_or(false),
+                    detail: response
+                        .get(3)
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                }],
+            });
+        }
+        Err(RuntimeError::RelayUnavailable {
+            relayset: self.relay.clone(),
         })
     }
 }
@@ -3231,9 +3265,18 @@ impl RelayHost for RealRelayPool {
         if let Some(relay) = self.relays.get_mut(relayset) {
             return relay.publish(invocation, event, relayset);
         }
+        // Partial publication: one failing relay is an outcome, never a reason
+        // to drop the others' results.
         let mut outcomes = Vec::new();
         for (name, relay) in &mut self.relays {
-            outcomes.extend(relay.publish(invocation, event, name)?.outcomes);
+            match relay.publish(invocation, event, name) {
+                Ok(report) => outcomes.extend(report.outcomes),
+                Err(_) => outcomes.push(RelayOutcome {
+                    relay: name.clone(),
+                    accepted: false,
+                    detail: "relay unavailable".to_owned(),
+                }),
+            }
         }
         if outcomes.is_empty() {
             return Err(RuntimeError::RelayUnavailable {
@@ -6137,6 +6180,103 @@ mod tests {
             Err(RuntimeError::RelayUnavailable { relayset })
                 if relayset == "wss://127.0.0.1:1"
         ));
+    }
+
+    /// A minimal local relay: accepts one WebSocket client and runs `script`
+    /// against it, returning the `ws://` URL to connect to.
+    fn local_relay(script: impl FnOnce(&mut WebSocket<TcpStream>) + Send + 'static) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("ws://{}", listener.local_addr().expect("addr"));
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut socket = tungstenite::accept(stream).expect("handshake");
+            script(&mut socket);
+        });
+        url
+    }
+
+    fn sample_event(id: &str) -> SignedEvent {
+        SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "hi".to_owned(),
+                tags: Vec::new(),
+                created_at: 1,
+            },
+            signer: "alice".to_owned(),
+            id: id.to_owned(),
+            signature: "sig".to_owned(),
+        }
+    }
+
+    fn send_text(socket: &mut WebSocket<TcpStream>, value: &serde_json::Value) {
+        socket
+            .send(Message::Text(value.to_string().into()))
+            .expect("relay send");
+    }
+
+    #[test]
+    fn publish_waits_for_the_ok_that_names_its_event() {
+        let url = local_relay(|socket| {
+            let _ = socket.read().expect("EVENT frame");
+            // Unrelated frames and another event's OK arrive first.
+            send_text(socket, &serde_json::json!(["NOTICE", "slow down"]));
+            send_text(socket, &serde_json::json!(["OK", "someone-else", true, ""]));
+            send_text(
+                socket,
+                &serde_json::json!(["OK", "evt-1", false, "blocked: spam"]),
+            );
+        });
+        let mut host = RealRelayHost::connect(url).expect("connect");
+        let report = host
+            .publish(1, &sample_event("evt-1"), "r")
+            .expect("report");
+        assert_eq!(report.outcomes.len(), 1);
+        assert!(!report.outcomes[0].accepted, "the matching OK said no");
+        assert_eq!(report.outcomes[0].detail, "blocked: spam");
+    }
+
+    #[test]
+    fn a_silent_relay_times_out_instead_of_hanging() {
+        let url = local_relay(|socket| {
+            let _ = socket.read();
+            thread::sleep(Duration::from_secs(2));
+        });
+        let mut host = RealRelayHost::connect(url).expect("connect");
+        host.set_read_timeout(Duration::from_millis(200));
+        let started = std::time::Instant::now();
+        let result = host.publish(1, &sample_event("evt-2"), "r");
+        assert!(matches!(result, Err(RuntimeError::RelayUnavailable { .. })));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn pool_publication_survives_a_failing_relay() {
+        let good = local_relay(|socket| {
+            let _ = socket.read().expect("EVENT frame");
+            send_text(socket, &serde_json::json!(["OK", "evt-3", true, ""]));
+        });
+        let dead = local_relay(|socket| {
+            let _ = socket.read();
+            let _ = socket.close(None);
+        });
+        let mut pool = RealRelayPool::new();
+        pool.add_relay(good.clone()).expect("good relay");
+        pool.add_relay(dead.clone()).expect("dead relay");
+        let report = pool
+            .publish(1, &sample_event("evt-3"), "community")
+            .expect("partial publication is a report, not an error");
+        assert_eq!(report.outcomes.len(), 2);
+        let accepted: Vec<_> = report.outcomes.iter().filter(|o| o.accepted).collect();
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].relay, good);
+        assert!(
+            report
+                .outcomes
+                .iter()
+                .any(|o| o.relay == dead && !o.accepted)
+        );
     }
 
     /// Regression: a `wss://` connect used to panic for want of a rustls

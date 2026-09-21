@@ -247,3 +247,230 @@ fn wrong_keys_and_unwired_wraps_are_refused_and_unsupported_ops_unavailable() {
         Err(RuntimeError::OperationUnavailable { .. })
     ));
 }
+
+mod publishing {
+    use std::sync::{Arc, Mutex};
+
+    use nscript_host_crypto::group_key::xonly_pubkey;
+    use nscript_host_crypto::host::{Nip44OperationHost, PublishTarget};
+    use nscript_host_crypto::stream::{SealForm, open_stream_event};
+    use nscript_runtime::stream::GroupKeyLabel;
+    use nscript_runtime::{
+        FakeClock, FakeSignerHost, InvocationId, OperationPolicy, OperationValue, PublishReport,
+        RecordingAudit, RelayHost, RelayOutcome, Runtime, RuntimeError, SignedEvent, StreamMessage,
+    };
+    use serde_json::{Value, json};
+
+    use super::{AUTHOR, CHANNEL, ROOT, hex, hex_to_32, plane_key};
+
+    /// Records what the host sends to the relay layer.
+    #[derive(Clone, Default)]
+    struct Recorder(Arc<Mutex<Vec<SignedEvent>>>);
+
+    impl RelayHost for Recorder {
+        fn publish(
+            &mut self,
+            _invocation: InvocationId,
+            event: &SignedEvent,
+            _relayset: &str,
+        ) -> Result<PublishReport, RuntimeError> {
+            self.0.lock().unwrap().push(event.clone());
+            Ok(PublishReport {
+                outcomes: vec![RelayOutcome {
+                    relay: "recorded".to_owned(),
+                    accepted: true,
+                    detail: String::new(),
+                }],
+            })
+        }
+    }
+
+    fn target(timer: Option<u64>) -> PublishTarget {
+        PublishTarget {
+            channel_id: CHANNEL.to_owned(),
+            epoch: 0,
+            timer,
+            relayset: "community".to_owned(),
+        }
+    }
+
+    fn host(recorder: &Recorder, timer: Option<u64>) -> Nip44OperationHost {
+        let mut host = Nip44OperationHost::new(AUTHOR)
+            .with_publisher(target(timer), Box::new(recorder.clone()));
+        host.fixed_time = Some(1_700_000_000);
+        host
+    }
+
+    fn me() -> String {
+        hex(&xonly_pubkey(&AUTHOR).unwrap())
+    }
+
+    fn message(author: &str, content: &str) -> OperationValue {
+        OperationValue::StreamMessage(StreamMessage {
+            author: author.to_owned(),
+            content: content.to_owned(),
+        })
+    }
+
+    fn wire(event: &SignedEvent) -> String {
+        json!({
+            "id": event.id, "pubkey": event.signer, "created_at": event.unsigned.created_at,
+            "kind": event.unsigned.kind, "tags": event.unsigned.wire_tags(),
+            "content": event.unsigned.content, "sig": event.signature,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn publish_message_sends_a_real_bound_expiring_stream_event() {
+        let recorder = Recorder::default();
+        let mut host = host(&recorder, Some(7_776_000));
+        let key = plane_key(GroupKeyLabel::Channel, CHANNEL);
+        let report = nscript_runtime::OperationHost::call(
+            &mut host,
+            1,
+            "concord01",
+            "publish_message",
+            &[
+                OperationValue::DerivedKey(key),
+                message(&me(), "Deployment finished"),
+            ],
+        )
+        .unwrap();
+        assert!(matches!(report, OperationValue::PublishReport(r) if r.accepted()));
+
+        let sent = recorder.0.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        let event = &sent[0];
+        assert_eq!(event.unsigned.kind, 1059);
+        assert!(
+            event
+                .unsigned
+                .tags
+                .contains(&("expiration".to_owned(), "1707776000".to_owned()))
+        );
+        assert!(!event.unsigned.content.contains("Deployment"), "encrypted");
+
+        // Any CORD-01 implementation holding the channel key can open it.
+        let channel = nscript_host_crypto::group_key::group_key(
+            "concord/channel",
+            &ROOT,
+            &hex_to_32(CHANNEL),
+            Some(0),
+        );
+        let opened = open_stream_event(
+            &channel.xonly_pubkey(),
+            &channel.conversation_key(),
+            SealForm::Encrypted,
+            &wire(event),
+        )
+        .unwrap();
+        assert_eq!(opened.author, me());
+        let rumor: Value = serde_json::from_str(&opened.rumor_json).unwrap();
+        assert_eq!(
+            (rumor["kind"].clone(), rumor["content"].clone()),
+            (json!(9), json!("Deployment finished"))
+        );
+        let tags = rumor["tags"].to_string();
+        assert!(
+            tags.contains(&format!(r#"["channel","{CHANNEL}"]"#))
+                && tags.contains(r#"["epoch","0"]"#)
+        );
+        assert!(
+            tags.contains(r#"["expiration","1707776000"]"#),
+            "rumor copy is authoritative"
+        );
+    }
+
+    #[test]
+    fn no_expiration_when_the_timer_is_off() {
+        let recorder = Recorder::default();
+        let mut host = host(&recorder, None);
+        let key = plane_key(GroupKeyLabel::Channel, CHANNEL);
+        nscript_runtime::OperationHost::call(
+            &mut host,
+            1,
+            "concord01",
+            "publish_message",
+            &[OperationValue::DerivedKey(key), message(&me(), "hello")],
+        )
+        .unwrap();
+        assert!(
+            !recorder.0.lock().unwrap()[0]
+                .unsigned
+                .tags
+                .iter()
+                .any(|(n, _)| n == "expiration")
+        );
+    }
+
+    #[test]
+    fn a_script_cannot_publish_as_someone_else_or_without_a_publisher() {
+        let recorder = Recorder::default();
+        let mut host = host(&recorder, None);
+        let key = plane_key(GroupKeyLabel::Channel, CHANNEL);
+        for bad in [message(&"ab".repeat(32), "spoof"), message(&me(), "")] {
+            let result = nscript_runtime::OperationHost::call(
+                &mut host,
+                1,
+                "concord01",
+                "publish_message",
+                &[OperationValue::DerivedKey(key.clone()), bad],
+            );
+            assert!(matches!(
+                result,
+                Err(RuntimeError::InvalidOperationArguments { .. })
+            ));
+        }
+        assert!(recorder.0.lock().unwrap().is_empty(), "nothing was sent");
+
+        let mut bare = Nip44OperationHost::new(AUTHOR);
+        let result = nscript_runtime::OperationHost::call(
+            &mut bare,
+            1,
+            "concord01",
+            "publish_message",
+            &[OperationValue::DerivedKey(key), message(&me(), "x")],
+        );
+        assert!(matches!(
+            result,
+            Err(RuntimeError::OperationUnavailable { .. })
+        ));
+    }
+
+    #[test]
+    fn the_runtime_policy_gate_applies_before_the_host_is_reached() {
+        let recorder = Recorder::default();
+        let mut host = host(&recorder, None);
+        let key = plane_key(GroupKeyLabel::Channel, CHANNEL);
+        let mut runtime = Runtime::new(
+            nscript_runtime::FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let args = [OperationValue::DerivedKey(key), message(&me(), "policy")];
+        let denied = runtime.invoke_authorized_operation(
+            &OperationPolicy::default(),
+            &mut host,
+            "concord01",
+            "publish_message",
+            &args,
+        );
+        assert!(matches!(denied, Err(RuntimeError::CapabilityDenied { .. })));
+        assert!(recorder.0.lock().unwrap().is_empty());
+        let allowed = OperationPolicy::default().allow("concord01", "publish_message");
+        assert!(
+            runtime
+                .invoke_authorized_operation(
+                    &allowed,
+                    &mut host,
+                    "concord01",
+                    "publish_message",
+                    &args
+                )
+                .is_ok()
+        );
+        assert_eq!(recorder.0.lock().unwrap().len(), 1);
+    }
+}

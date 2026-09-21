@@ -612,6 +612,17 @@ host unopened. Run against the live community's channel, the operations opened
 all 6 events with none refused. Limits: the Control Plane's split signer and
 read key need two keys and are not yet expressible through one `DerivedKey`;
 `publish_message` and `derive_stream_key` stay unavailable on the real host.
+`publish_message` is now real on `Nip44OperationHost` (`with_publisher` +
+`PublishTarget`): it builds a kind-9 rumor with the channel/epoch binding, `ms`
+and CORD-08 expiration tags, seals and wraps it, and delivers through any
+`RelayHost` (`RealRelayPool` in production). The message author must be the
+host's own identity, so a script cannot publish as anyone else. Verified live:
+a real `publish_message` call through `OperationPolicy` and `RealRelayPool` over
+TLS reached three relays and read back. That exposed and fixed three
+`RealRelayHost` defects: reads had no timeout (a silent relay hung the
+program), `publish` took the next frame as its answer instead of the `OK` naming
+its event, and `RealRelayPool::publish` aborted on the first failing relay
+instead of reporting partial publication.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

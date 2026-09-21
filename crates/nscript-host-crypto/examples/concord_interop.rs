@@ -4,6 +4,8 @@
 //! * `history` also read and decrypt the public channel's chat. Read-only.
 //! * `ops`     read the public channel through the real `concord01` host
 //!   operations (`unwrap_stream`, `open_message`). Read-only.
+//! * `publish` send ONE message through the real `publish_message` operation:
+//!   the runtime's policy gate, then `RealRelayPool` over TLS.
 //! * `post`    join the Guestbook and post a few messages as a throwaway
 //!   identity kept in `<keyfile>` (created if absent, never printed).
 //!
@@ -256,6 +258,67 @@ fn ops_history(loaded: &Loaded, channel_id: &str) {
     println!("real host operations: {opened} opened, {refused} refused");
 }
 
+/// One message via the runtime's own path: `OperationPolicy` gate, the real
+/// `Nip44OperationHost`, and `RealRelayPool` for delivery.
+fn publish_via_runtime(loaded: &Loaded, channel_id: &str, secret: &[u8; 32]) {
+    use nscript_host_crypto::host::{Nip44OperationHost, PublishTarget};
+    use nscript_runtime::{
+        DerivedKey, FakeClock, FakeRelayHost, FakeSignerHost, OperationPolicy, OperationValue,
+        RealRelayPool, RecordingAudit, Runtime, StreamMessage,
+    };
+
+    let mut pool = RealRelayPool::new();
+    for relay in &loaded.invite.relays {
+        match pool.add_relay(relay.clone()) {
+            Ok(()) => println!("connected {relay}"),
+            Err(error) => println!("could not connect {relay}: {error:?}"),
+        }
+    }
+    let target = PublishTarget {
+        channel_id: channel_id.to_owned(),
+        epoch: loaded.invite.root_epoch,
+        timer: loaded.timer,
+        relayset: "community".to_owned(),
+    };
+    let mut host = Nip44OperationHost::new(*secret).with_publisher(target, Box::new(pool));
+    let key =
+        DerivedKey::new(channel_key(loaded, channel_id).secret_bytes().to_vec()).expect("key");
+    let me = hex(&xonly_pubkey(secret).expect("pubkey"));
+    let content = "This one was sent by an NScript program, not a hand-written client:\n\nuse concord01\n\npermissions {\n    concord_publish\n}\n\nlet result = concord01.publish_message(stream, StreamMessage {\n    author: me;\n    content: \"…\";\n})\n\nThe call passed the runtime's OperationPolicy gate, the Concord host sealed and wrapped it (kind 1059, expiration mirrored onto the wrap), and the runtime's own RealRelayPool delivered it over TLS. That pool used to panic on wss:// and hang on a silent relay; both are fixed as of today.";
+
+    let mut runtime = Runtime::new(
+        FakeRelayHost::default(),
+        FakeSignerHost::default(),
+        FakeClock::default(),
+        RecordingAudit::default(),
+    );
+    let policy = OperationPolicy::default().allow("concord01", "publish_message");
+    let result = runtime.invoke_authorized_operation(
+        &policy,
+        &mut host,
+        "concord01",
+        "publish_message",
+        &[
+            OperationValue::DerivedKey(key),
+            OperationValue::StreamMessage(StreamMessage {
+                author: me,
+                content: content.to_owned(),
+            }),
+        ],
+    );
+    match result {
+        Ok(OperationValue::PublishReport(report)) => {
+            for outcome in &report.outcomes {
+                println!(
+                    "  {}: accepted={} {}",
+                    outcome.relay, outcome.accepted, outcome.detail
+                );
+            }
+        }
+        other => println!("publish failed: {other:?}"),
+    }
+}
+
 fn identity(path: &str) -> [u8; 32] {
     if let Ok(text) = std::fs::read_to_string(path) {
         return unhex32(text.trim());
@@ -407,6 +470,13 @@ fn main() {
         "read" => {}
         "history" => print_history(&loaded, &channel_id),
         "ops" => ops_history(&loaded, &channel_id),
+        "publish" => {
+            let secret = identity(&args[4]);
+            publish_via_runtime(&loaded, &channel_id, &secret);
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            println!("--- read back ---");
+            ops_history(&loaded, &channel_id);
+        }
         "post" => {
             let secret = identity(&args[4]);
             print_history(&loaded, &channel_id);
