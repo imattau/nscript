@@ -27,22 +27,39 @@ pub mod wasmi_engine {
         StoreLimitsBuilder,
     };
 
-    const MAX_WASM_MEMORY_BYTES: usize = 16 * 1024 * 1024;
+    pub const DEFAULT_WASM_MEMORY_BYTES: usize = 16 * 1024 * 1024;
 
     /// Wasmi-backed validator with deterministic fuel configuration.
     pub struct WasmiEngine {
         engine: Engine,
         fuel: u64,
+        memory_limit: usize,
+        instance_limit: usize,
+        table_limit: usize,
     }
 
     impl WasmiEngine {
         #[must_use]
         pub fn new(fuel: u64) -> Self {
+            Self::with_limits(fuel, DEFAULT_WASM_MEMORY_BYTES, 1, 1)
+        }
+
+        /// Creates an engine with explicit store resource limits.
+        #[must_use]
+        pub fn with_limits(
+            fuel: u64,
+            memory_limit: usize,
+            instance_limit: usize,
+            table_limit: usize,
+        ) -> Self {
             let mut config = Config::default();
             config.consume_fuel(true);
             Self {
                 engine: Engine::new(&config),
                 fuel,
+                memory_limit,
+                instance_limit,
+                table_limit,
             }
         }
 
@@ -79,9 +96,9 @@ pub mod wasmi_engine {
             let module =
                 Module::new(&self.engine, module).map_err(|_| RuntimeError::InvalidWasmPayload)?;
             let limits = StoreLimitsBuilder::new()
-                .memory_size(MAX_WASM_MEMORY_BYTES)
-                .instances(1)
-                .tables(1)
+                .memory_size(self.memory_limit)
+                .instances(self.instance_limit)
+                .tables(self.table_limit)
                 .build();
             let mut store = Store::new(&self.engine, ((), limits));
             store.limiter(|data| &mut data.1);
@@ -129,9 +146,9 @@ pub mod wasmi_engine {
             let module =
                 Module::new(&self.engine, module).map_err(|_| RuntimeError::InvalidWasmPayload)?;
             let limits = StoreLimitsBuilder::new()
-                .memory_size(MAX_WASM_MEMORY_BYTES)
-                .instances(1)
-                .tables(1)
+                .memory_size(self.memory_limit)
+                .instances(self.instance_limit)
+                .tables(self.table_limit)
                 .build();
             let mut store = Store::new(&self.engine, (host, invocation, limits));
             store.limiter(|data| &mut data.2);

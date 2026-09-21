@@ -390,6 +390,9 @@ fn executes_compiled_wasm_through_wasmi_dispatch_host() {
             .is_err(),
         "zero fuel must reject execution"
     );
+    WasmiEngine::with_limits(100_000, 64 * 1024, 1, 1)
+        .run_with_imports(&module, &imports)
+        .expect("a one-page artifact fits the configured memory budget");
     let _ = std::fs::remove_file(output_path);
 }
 

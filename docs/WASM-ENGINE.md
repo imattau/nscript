@@ -31,3 +31,5 @@ Every Wasmi execution receives a finite fuel budget; exhaustion is surfaced as
 a runtime failure before untrusted execution can continue past its allowance.
 The store also caps linear memory at 16 MiB and limits instance/table creation,
 so artifacts cannot grow host-managed WASM resources without bound.
+Embedding hosts may tighten these values with `WasmiEngine::with_limits`; the
+default constructor keeps the 16 MiB/one-instance/one-table policy.
