@@ -1,0 +1,9 @@
+// Layer 3: `say ... in <stream>` lowers to concord01.publish_message with the
+// program's principal as the author.
+use concord01
+
+permissions {
+    concord_publish
+}
+
+say "Deployment finished" in chat

@@ -66,7 +66,8 @@ on community.message as msg {
 An automation can be granted `concord Kick` without being granted role or
 community-metadata authority.
 
-The `stream`/`on` and `concord Kick in devs` forms above are aspirational; see
+The `kick`, `ban` and `say` Layer 3 forms are implemented (see
+[LAYER3.md](LAYER3.md#concord)). The `stream`/`on` and `concord Kick in devs` forms above are still aspirational; see
 [RFC 0002](../rfcs/0002-concord-language-surface.md) for the proposed generic
 language extensions that would support them.
 

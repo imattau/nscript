@@ -366,6 +366,67 @@ impl Parser<'_> {
         })
     }
 
+    /// Parses an expression, reporting `E1101` if it is absent. A Layer 3
+    /// statement that fails to parse is otherwise dropped without a trace, and
+    /// a moderation statement must never fail silently.
+    fn expression_or_error(&mut self, minimum: u8, expected: &str) -> Option<Expr> {
+        let before = self.diagnostics.len();
+        let parsed = self.parse_expression(minimum);
+        if parsed.is_none() && self.diagnostics.len() == before {
+            self.error(self.span(), "E1101", format!("expected {expected}"));
+        }
+        parsed
+    }
+
+    /// `module.operation(arguments)` as an expression node, the shape every
+    /// Layer 3 form lowers to.
+    fn module_call(module: &str, operation: &str, arguments: Vec<Expr>, span: Span) -> Expr {
+        Spanned {
+            value: ExprKind::Call {
+                callee: Box::new(Spanned {
+                    value: ExprKind::Member {
+                        value: Box::new(Spanned {
+                            value: ExprKind::Identifier(module.to_owned()),
+                            span,
+                        }),
+                        name: Spanned {
+                            value: operation.to_owned(),
+                            span,
+                        },
+                    },
+                    span,
+                }),
+                arguments,
+            },
+            span,
+        }
+    }
+
+    /// A record literal `Name { field: value; ... }`.
+    fn construct(name: &str, fields: Vec<(&str, Expr)>, span: Span) -> Expr {
+        Spanned {
+            value: ExprKind::Construct {
+                name: Spanned {
+                    value: name.to_owned(),
+                    span,
+                },
+                fields: fields
+                    .into_iter()
+                    .map(|(field, value)| {
+                        (
+                            Spanned {
+                                value: field.to_owned(),
+                                span,
+                            },
+                            value,
+                        )
+                    })
+                    .collect(),
+            },
+            span,
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn parse_statement(&mut self) -> Option<Statement> {
         let start = self.span();
@@ -1654,6 +1715,51 @@ impl Parser<'_> {
                     },
                     span,
                 })
+            }
+            // Concord Layer 3: moderation and stream posting intent, lowered to
+            // the typed `concord04` / `concord01` module operations.
+            Some(word @ ("kick" | "ban")) => {
+                let verb = word.to_owned();
+                let operation = if verb == "kick" {
+                    "kick_member"
+                } else {
+                    "ban_member"
+                };
+                self.index += 1;
+                let target = self.expression_or_error(0, &format!("a member to {verb}"))?;
+                let span = target.span;
+                StatementKind::Expression(Self::module_call(
+                    "concord04",
+                    operation,
+                    vec![target],
+                    span,
+                ))
+            }
+            Some("say") => {
+                self.index += 1;
+                // Above `in`'s precedence, so the separator is not swallowed
+                // as a membership test.
+                let content = self.expression_or_error(5, "the message to say")?;
+                self.expect_word("in")?;
+                let stream = self.expression_or_error(0, "the stream to say it in")?;
+                let span = content.span.join(stream.span);
+                // `me` is the program's principal; the host refuses to publish
+                // as anyone else.
+                let author = Spanned {
+                    value: ExprKind::Identifier("me".to_owned()),
+                    span,
+                };
+                let message = Self::construct(
+                    "StreamMessage",
+                    vec![("author", author), ("content", content)],
+                    span,
+                );
+                StatementKind::Expression(Self::module_call(
+                    "concord01",
+                    "publish_message",
+                    vec![stream, message],
+                    span,
+                ))
             }
             Some("zap") => {
                 self.index += 1;

@@ -264,4 +264,43 @@ mod tests {
             Err(RuntimeError::AuthorityDenied { .. })
         ));
     }
+
+    /// The whole path from Layer 3 source: `kick alice` is parsed, lowered to
+    /// `concord04.kick_member`, checked against the program's permissions, run
+    /// through the policy gate, and judged by the Roster.
+    fn run_source(
+        source: &str,
+        policy: &OperationPolicy,
+        host: &mut ModerationHost,
+    ) -> Result<Vec<OperationValue>, RuntimeError> {
+        let (program, parse_diagnostics) = nscript_syntax::parse_program(source);
+        assert!(parse_diagnostics.is_empty(), "{parse_diagnostics:?}");
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        runtime().run_operations(&checked.expect("valid"), policy, host)
+    }
+
+    #[test]
+    fn layer3_kick_and_ban_execute_from_source_under_both_gates() {
+        let kick = "use concord04\npermissions {\n    concord_kick\n}\nkick alice\n";
+        let mut host = ModerationHost::new(BOT, roster());
+        let granted = OperationPolicy::default().allow("concord04", "kick_member");
+        run_source(kick, &granted, &mut host).expect("a mod may kick a roleless member");
+        assert_eq!(
+            host.issued,
+            vec![ModerationAction::Kick {
+                target: "alice".to_owned()
+            }]
+        );
+
+        // The program was never granted `ban_member`: refused before the host.
+        let ban = "use concord04\npermissions {\n    concord_ban\n}\nban alice\n";
+        let result = run_source(ban, &granted, &mut host);
+        assert!(matches!(result, Err(RuntimeError::CapabilityDenied { .. })));
+        // Granted, the roster still refuses: the bot holds no BAN bit.
+        let both = granted.allow("concord04", "ban_member");
+        let result = run_source(ban, &both, &mut host);
+        assert!(matches!(result, Err(RuntimeError::AuthorityDenied { .. })));
+        assert_eq!(host.issued.len(), 1, "only the permitted kick took effect");
+    }
 }

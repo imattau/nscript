@@ -1,0 +1,8 @@
+// error: E1101 unknown-name
+use concord01
+
+permissions {
+    concord_publish
+}
+
+say "hi"

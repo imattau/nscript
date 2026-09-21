@@ -1,0 +1,8 @@
+// error: E3001 missing-permission
+use concord04
+
+permissions {
+    concord_kick
+}
+
+ban alice

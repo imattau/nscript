@@ -675,6 +675,12 @@ live community.
 A full status write-up of the Concord tranche, covering what was built, how it
 was verified, findings and limits, is in
 [`docs/CONCORD-STATUS.md`](docs/CONCORD-STATUS.md).
+Concord Layer 3 sugar: `kick`, `ban` and `say ... in` are parser-level forms
+lowering to `concord04.kick_member`, `concord04.ban_member` and
+`concord01.publish_message`, with conformance fixtures, lowering tests and a
+from-source execution test through the policy gate and Roster. Unlike the older
+forms they report `E1101` when incomplete rather than being dropped silently.
+The read side and scoped grants still await RFC 0002.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

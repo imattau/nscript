@@ -1,0 +1,9 @@
+// Layer 3: `kick` lowers to concord04.kick_member. The host still enforces
+// CORD-04 rank at run time.
+use concord04
+
+permissions {
+    concord_kick
+}
+
+kick alice

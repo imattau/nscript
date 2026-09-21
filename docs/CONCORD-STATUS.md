@@ -155,19 +155,23 @@ members was deliberately not done.
 - **Fake hosts remain** in the runtime for deterministic tests; production
   behaviour lives in `nscript-host-crypto`. Author signatures there come from a
   local key standing in for a NIP-46 signer.
-- **No Layer 3 sugar for Concord.** Layer 3 (`docs/LAYER3.md`) is the set of
+- **Layer 3 sugar is partial.** Layer 3 (`docs/LAYER3.md`) is the set of
   intent forms the parser recognises and lowers into typed module operations:
-  `send "hi" to alice`, `reply`, `repost`, `react`, `search`, `delete`,
-  `comment`, `report`, `label`, and the `on Note ... { }` / `publish Note { }`
-  forms. Concord has none. It is reachable only as ordinary module calls
-  (`concord04.kick_member(alice)`) plus a `permissions` block, and the target
-  forms in `docs/CONCORD.md` (`stream`, `on chat.message`,
-  `concord Kick in devs`) are aspirational. That is deliberate: this tranche
-  paused NIP-sugar expansion, and the plan keeps Concord semantics in modules
-  rather than in compiler keywords. The existing Layer 3 forms are
-  parser-level keywords, so a Concord equivalent (for example a `kick`
-  statement) would be a compiler change, not a module. RFC 0002 proposes the
-  generic route instead and awaits review.
+  `send`, `reply`, `repost`, `react`, `search` and so on. Concord now has three:
+  `kick <member>`, `ban <member>` and `say <text> in <stream>`, lowering to
+  `concord04.kick_member`, `concord04.ban_member` and
+  `concord01.publish_message`. They keep the module checks (`E3001` for an
+  ungranted operation) and run from source through the policy gate and the
+  Roster (tested end to end). Not sugar yet: reading a stream
+  (`on chat.message { }`) and scoped grants (`concord Kick in devs`); those need
+  the generic mechanisms in RFC 0002. Because these forms are parser keywords,
+  they are compiler changes, a step beyond the plan's "Concord stays in
+  modules" line, taken at the owner's request.
+- **Malformed older Layer 3 forms are silently dropped.** When any older form
+  fails to parse (`react "x"` with no target, for instance) the statement is
+  skipped with no diagnostic and `check` exits 0. The new Concord forms report
+  `E1101` instead; the older forms were left unchanged and could be fixed the
+  same way.
 - **`can_*` operations** return `Int` 0/1 and declare a `Storage` effect only
   because descriptors currently require an effect and the language has no
   boolean result; the RFC proposes fixing this.
@@ -195,9 +199,8 @@ messages as the identity in `keyfile`.
 ## Suggested next steps
 
 1. Look at the live community in an Armada client and report what renders.
-2. Review RFC 0002 and decide whether Concord gets Layer 3 sugar, and whether
-   it arrives through the generic mechanism in the RFC or as a small set of
-   dedicated forms in the style of `send` and `react`.
+2. Review RFC 0002 for the read side (`on chat.message`) and scoped grants, the
+   two Layer 3 pieces Concord still lacks.
 3. Raise the 120-blob arithmetic with the Concord authors.
 4. Decide whether to run a live moderation test using a second throwaway
    identity as the target, and whether to drive a Refounding from a ban.

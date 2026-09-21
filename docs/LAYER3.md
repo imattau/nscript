@@ -294,6 +294,58 @@ zap alice amount 1000
 This creates a typed zap request/payment intent; it does not silently authorize
 or execute a payment.
 
+## Concord
+
+Three intent forms lower to the typed Concord modules. They are ordinary
+Layer 3 sugar: each becomes a `module.operation(...)` call and keeps the same
+permission, effect and capability checks as writing that call by hand.
+
+```nostr
+use concord04
+
+permissions {
+    concord_kick
+}
+
+kick alice
+```
+
+`kick <member>` lowers to `concord04.kick_member(<member>)` and
+`ban <member>` to `concord04.ban_member(<member>)`. A program granted only
+`concord_kick` that writes `ban alice` is rejected with `E3001` at check time.
+The permission is the *program's* grant; the host still applies the CORD-04
+rule at run time, so the acting identity must hold the permission bit and
+strictly outrank its target. A `ban` publishes the Banlist layer only; the
+Refounding that cuts read access is a separate step.
+
+```nostr
+use concord01
+
+permissions {
+    concord_publish
+}
+
+say "Deployment finished" in chat
+```
+
+`say <text> in <stream>` lowers to
+`concord01.publish_message(<stream>, StreamMessage { author: me; content: <text> })`.
+`me` is the program's principal, and the host refuses to publish as anyone
+else. The text is parsed above the precedence of `in`, so the separator is not
+mistaken for a membership test (`say "a" + "b" in chat` says `"a" + "b"`).
+
+Unlike some older forms, an incomplete Concord statement is an error, not a
+silent no-op: `kick` with no member, `say "hi"` with no `in <stream>` and the
+like report `E1101`. A moderation statement that vanishes without a diagnostic
+would be a dangerous failure.
+
+The words `kick`, `ban` and `say` are recognised only at the start of a
+statement; they remain ordinary names elsewhere (`let ban = 1`).
+
+Not yet sugar: reading a stream (`on chat.message { }`) and scoped grants
+(`concord Kick in devs`). Those need the generic mechanisms proposed in
+[RFC 0002](../rfcs/0002-concord-language-surface.md), not another keyword.
+
 The next Layer 3 forms are deliberately syntax sugar over existing typed NIP
 modules:
 

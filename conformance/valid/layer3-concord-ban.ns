@@ -1,0 +1,8 @@
+// Layer 3: `ban` lowers to concord04.ban_member.
+use concord04
+
+permissions {
+    concord_ban
+}
+
+ban alice

@@ -469,7 +469,42 @@ fn block_end(tokens: &[Token], start: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use super::ast::{ExprKind, Item, StatementKind};
     use super::{RuntimeProfile, TokenKind, lex, parse_program};
+
+    /// Renders an expression compactly so a lowering can be asserted exactly.
+    fn render(expr: &super::ast::Expr) -> String {
+        match &expr.value {
+            ExprKind::Identifier(name) => name.clone(),
+            ExprKind::Text(text) => format!("{text:?}"),
+            ExprKind::Member { value, name } => format!("{}.{}", render(value), name.value),
+            ExprKind::Call { callee, arguments } => {
+                let arguments: Vec<_> = arguments.iter().map(render).collect();
+                format!("{}({})", render(callee), arguments.join(", "))
+            }
+            ExprKind::Construct { name, fields } => {
+                let fields: Vec<_> = fields
+                    .iter()
+                    .map(|(field, value)| format!("{}: {}", field.value, render(value)))
+                    .collect();
+                format!("{} {{ {} }}", name.value, fields.join("; "))
+            }
+            other => format!("{other:?}"),
+        }
+    }
+
+    /// The lowering of the first top-level statement of `source`.
+    fn lowered(source: &str) -> String {
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        match &program.ast.items[0] {
+            Item::Statement(statement) => match &statement.value {
+                StatementKind::Expression(expr) => render(expr),
+                other => panic!("not an expression statement: {other:?}"),
+            },
+            other => panic!("not a statement: {other:?}"),
+        }
+    }
 
     #[test]
     fn lexes_unicode_xid_identifiers() {
@@ -515,5 +550,59 @@ publish Note { content: "hello" }
         assert!(diagnostics.is_empty());
         assert_eq!(program.imports[0].path, "community::moderation");
         assert_eq!(program.imports[0].requirement.as_deref(), Some("^2"));
+    }
+
+    #[test]
+    fn concord_layer3_forms_lower_to_typed_module_operations() {
+        assert_eq!(lowered("kick alice\n"), "concord04.kick_member(alice)");
+        assert_eq!(lowered("ban alice\n"), "concord04.ban_member(alice)");
+        assert_eq!(
+            lowered("say \"hi\" in chat\n"),
+            "concord01.publish_message(chat, StreamMessage { author: me; content: \"hi\" })"
+        );
+    }
+
+    #[test]
+    fn say_keeps_compound_content_and_stops_at_in() {
+        // `in` is a membership operator elsewhere; here it is the separator.
+        let (program, diagnostics) = parse_program("say \"a\" + \"b\" in chat\n");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let Item::Statement(statement) = &program.ast.items[0] else {
+            panic!("statement");
+        };
+        let StatementKind::Expression(expr) = &statement.value else {
+            panic!("expression");
+        };
+        let ExprKind::Call { arguments, .. } = &expr.value else {
+            panic!("call");
+        };
+        assert_eq!(
+            render(&arguments[0]),
+            "chat",
+            "the stream is what follows `in`"
+        );
+        let ExprKind::Construct { fields, .. } = &arguments[1].value else {
+            panic!("message record");
+        };
+        assert!(
+            format!("{:?}", fields[1].1.value).contains("Binary"),
+            "the content is the whole `\"a\" + \"b\"` expression"
+        );
+    }
+
+    #[test]
+    fn incomplete_concord_forms_are_diagnosed_not_guessed() {
+        // `say` needs its stream, and `kick` its target.
+        for source in ["say \"hi\"\n", "kick\n", "ban\n"] {
+            let (_, diagnostics) = parse_program(source);
+            assert!(!diagnostics.is_empty(), "{source:?} should not parse");
+        }
+    }
+
+    #[test]
+    fn concord_words_stay_ordinary_names_outside_statement_position() {
+        let (program, diagnostics) = parse_program("let ban = 1\nlet kick = ban\nprint(kick)\n");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(program.ast.items.len(), 3);
     }
 }
