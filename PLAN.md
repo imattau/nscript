@@ -554,6 +554,14 @@ Drafted [RFC 0002](rfcs/0002-concord-language-surface.md) proposing generic
 module-provided stream sources, scoped permissions and fold queries so the
 `docs/CONCORD.md` sugar can be expressed without Concord-specific compiler
 support. It is a proposal only and awaits review.
+Added CORD-06 receive-side logic (`rekey.rs`) on fakes: rekey tag and blob-list
+parsing, fixed-width blob forms (72/104/136 bytes) with scope and epoch bound
+inside the ciphertext, staff `control_root`-derives-to-`control_pk` check,
+recipient locators, epoch-key continuity (extends / missed / fork), chunk
+assembly where removal needs a complete set, lowest-key race winner with a
+down-only heal, and rotator authority (BAN for a Refounding, MANAGE_CHANNELS
+for a channel rekey, strict outrank, synced `vac`). NIP-44 blob decryption and
+compaction publishing remain host work; CORD-05 invites are next.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

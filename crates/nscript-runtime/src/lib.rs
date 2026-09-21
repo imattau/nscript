@@ -7,6 +7,7 @@ pub mod expiry;
 pub mod fold;
 pub mod guestbook;
 pub mod moderation;
+pub mod rekey;
 pub mod stream;
 pub mod wire;
 

@@ -52,14 +52,14 @@ fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
 }
 
 /// CORD-02 A.1 HKDF-SHA256 with empty salt and a single 32-byte block.
-fn hkdf32(ikm: &[u8], info: &[u8]) -> [u8; 32] {
+pub(crate) fn hkdf32(ikm: &[u8], info: &[u8]) -> [u8; 32] {
     let prk = hmac_sha256(&[0_u8; 32], ikm);
     let mut expand = info.to_vec();
     expand.push(1);
     hmac_sha256(&prk, &expand)
 }
 
-fn hex_to_bytes32(value: &str) -> Option<[u8; 32]> {
+pub(crate) fn hex_to_bytes32(value: &str) -> Option<[u8; 32]> {
     if !is_hex32(value) {
         return None;
     }
@@ -70,7 +70,7 @@ fn hex_to_bytes32(value: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-fn bytes_to_hex(bytes: &[u8]) -> String {
+pub(crate) fn bytes_to_hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes.iter().fold(String::new(), |mut out, byte| {
         let _ = write!(out, "{byte:02x}");
