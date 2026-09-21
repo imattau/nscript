@@ -466,6 +466,21 @@ hardened-agent profile rejects forbidden effects exposed transitively by
 imported module operations, and replaceable-event selection now uses the
 NIP-01 timestamp/lowest-id tie-break rule.
 
+## Next strategic tranche: Concord protocol extensibility
+
+Concord is the next major protocol target, with Armada serving as an
+interoperability/testing client rather than a core language module. The full
+rationale, protocol mapping, runtime requirements, examples, and staged CORD
+roadmap are preserved in [`docs/CONCORD.md`](docs/CONCORD.md).
+
+This tranche intentionally pauses broad NIP-sugar expansion and makes NScript
+a typed execution environment for external Nostr protocols. The planned order
+is: immutable `SignedBytes` plus `SharedSecret`/`DerivedKey`; capability-gated
+ECDH/HKDF; CORD-01 private streams; deterministic state folds; CORD-02/03
+community and channel models; CORD-04 authority and roles with a constrained
+moderation bot; Armada interoperability; then CORD-05/06 key-management,
+CORD-07 host/service integration, and CORD-08 disappearing-message timers.
+
 ## Deferred
 
 Module operation dispatch, full handler/stream evaluation,
