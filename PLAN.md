@@ -349,6 +349,8 @@ their NScript metadata.
 for npack handoff.
 `package manifest --canonical` emits compact deterministic JSON as stable input
 for future package signatures.
+Documented the versioned `nscript-ir/0.1` interchange contract shared by JSON
+IR output and the WASM custom sections.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent
