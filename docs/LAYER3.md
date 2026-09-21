@@ -255,6 +255,18 @@ permissions {
 file file_url mime "image/jpeg" hash content_hash
 ```
 
+Blossom uploads make transport, hash, and size explicit:
+
+```nostr
+use nipb7
+
+permissions {
+    blossom
+}
+
+upload file_url hash content_hash size 1024
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

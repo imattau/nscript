@@ -1,0 +1,7 @@
+use nipb7
+
+permissions {
+    blossom
+}
+
+upload "file://photo.jpg" hash "abc123" size 1024

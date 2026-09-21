@@ -1430,6 +1430,70 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("upload") => {
+                self.index += 1;
+                let url = self.parse_expression(0)?;
+                if !self.eat_word("hash") {
+                    return None;
+                }
+                let hash = self.parse_expression(0)?;
+                if !self.eat_word("size") {
+                    return None;
+                }
+                let size = self.parse_expression(0)?;
+                let span = url.span.join(size.span);
+                let upload = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "BlobUpload".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "url".to_owned(),
+                                    span,
+                                },
+                                url,
+                            ),
+                            (
+                                Spanned {
+                                    value: "hash".to_owned(),
+                                    span,
+                                },
+                                hash,
+                            ),
+                            (
+                                Spanned {
+                                    value: "size".to_owned(),
+                                    span,
+                                },
+                                size,
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nipb7".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "upload_blob".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![upload],
+                    },
+                    span,
+                })
+            }
             Some("search") => {
                 self.index += 1;
                 let _event = self.parse_type()?;
