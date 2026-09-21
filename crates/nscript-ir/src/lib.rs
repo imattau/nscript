@@ -25,6 +25,7 @@ pub struct NostrIr {
 /// Panics only if the in-memory IR exceeds WASM's 32-bit section limits or
 /// cannot be serialized, neither of which can occur for a checked program.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     let mut module = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
     let dispatch_json = serde_json::to_vec(&ir.operations).expect("operations are serializable");
@@ -69,7 +70,7 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
     // the next lowering stage.
     push_section(&mut module, 3, &[1, 2]);
     let mut export = Vec::new();
-    push_u32(&mut export, 1);
+    push_u32(&mut export, 2);
     push_name(&mut export, "nscript_main");
     export.push(0);
     push_u32(
@@ -77,6 +78,9 @@ pub fn emit_wasm(ir: &NostrIr) -> Vec<u8> {
         u32::try_from(ir.capabilities.len() + operation_imports.len())
             .expect("import count fits WASM"),
     );
+    push_name(&mut export, "memory");
+    export.push(2); // memory export
+    push_u32(&mut export, 0);
     push_section(&mut module, 7, &export);
     let mut body = vec![0];
     for index in 0..ir.capabilities.len() {
@@ -392,6 +396,11 @@ mod tests {
             bytes
                 .windows(b"nscript.dispatch".len())
                 .any(|window| window == b"nscript.dispatch")
+        );
+        assert!(
+            bytes
+                .windows(b"memory".len())
+                .any(|window| window == b"memory")
         );
     }
 }
