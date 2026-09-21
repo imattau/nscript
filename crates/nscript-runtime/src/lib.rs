@@ -3,6 +3,7 @@
 pub mod authority;
 pub mod community;
 pub mod edition;
+pub mod expiry;
 pub mod fold;
 pub mod guestbook;
 pub mod moderation;

@@ -544,6 +544,12 @@ rumor decoding (`ms` tag, dropped when out of range), per-npub coalescing by
 bit, strict outrank and a synced `vac`, refounder-only snapshots that lose to
 newer first-hand entries, and the Complete Memberlist with forward-only
 observation and Banlist removal.
+Added CORD-08 disappearing messages (`expiry.rs`): the `message_expiration`
+metadata field (off when absent, zero or malformed), NIP-40 tag computation
+with the delete, timer-notice and ephemeral exemptions, enforcement by the
+signed rumor's own tag (refuse at ingest, hide, sweep), and timer notices
+believed only from `MANAGE_METADATA` holders. Wiring the sweep to `TimerHost`
+and tagging the outer wrap are host work.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

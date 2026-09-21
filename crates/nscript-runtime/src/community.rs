@@ -25,6 +25,9 @@ pub struct CommunityMetadata {
     pub name: String,
     pub description: Option<String>,
     pub relays: Vec<String>,
+    /// CORD-08 disappearing-message timer in seconds. `None` means off: the
+    /// field is absent, `0`, or malformed (never guessed from garbage).
+    pub message_expiration: Option<u64>,
 }
 
 /// Parses a channel metadata edition's content. Returns `None` for content a
@@ -76,10 +79,15 @@ pub fn parse_community_metadata(content: &str) -> Option<CommunityMetadata> {
                 .collect()
         })
         .unwrap_or_default();
+    let message_expiration = value
+        .get("message_expiration")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|seconds| *seconds > 0);
     Some(CommunityMetadata {
         name: name.to_owned(),
         description,
         relays,
+        message_expiration,
     })
 }
 
