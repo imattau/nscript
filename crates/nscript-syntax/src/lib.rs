@@ -469,7 +469,7 @@ fn block_end(tokens: &[Token], start: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::ast::{ExprKind, Item, StatementKind};
+    use super::ast::{ExprKind, Item, PatternKind, StatementKind};
     use super::{RuntimeProfile, TokenKind, lex, parse_program};
 
     /// Renders an expression compactly so a lowering can be asserted exactly.
@@ -695,5 +695,196 @@ publish Note { content: "hello" }
             let (_, diagnostics) = parse_program(source);
             assert!(diagnostics.is_empty(), "{source:?}: {diagnostics:?}");
         }
+    }
+
+    /// The arms of the first `match` in `let x = match ... { ... }`.
+    fn arms(patterns: &str) -> Vec<super::ast::MatchArm> {
+        let source = format!("let r = match subject {{\n{patterns}\n}}\n");
+        let (program, diagnostics) = parse_program(&source);
+        assert!(diagnostics.is_empty(), "{patterns:?}: {diagnostics:?}");
+        let Item::Let(declaration) = &program.ast.items[0] else {
+            panic!("let");
+        };
+        let ExprKind::Match { arms, .. } = &declaration.value.value else {
+            panic!("match");
+        };
+        arms.clone()
+    }
+
+    fn pattern(source: &str) -> PatternKind {
+        arms(&format!("{source} => 1"))[0].pattern.value.clone()
+    }
+
+    #[test]
+    fn literal_patterns_cover_every_literal_the_language_has() {
+        for (source, expected) in [
+            ("1", ExprKind::Integer(1)),
+            ("-1", ExprKind::Integer(-1)),
+            ("\"a\"", ExprKind::Text("a".to_owned())),
+            ("true", ExprKind::Bool(true)),
+            ("false", ExprKind::Bool(false)),
+            ("none", ExprKind::None),
+            ("1.5", ExprKind::Decimal("1.5".to_owned())),
+            ("-2.5", ExprKind::Decimal("-2.5".to_owned())),
+            (
+                "5s",
+                ExprKind::Duration {
+                    value: 5,
+                    unit: "s".to_owned(),
+                },
+            ),
+            ("50%", ExprKind::Percentage(50)),
+        ] {
+            assert_eq!(pattern(source), PatternKind::Literal(expected), "{source}");
+        }
+    }
+
+    #[test]
+    fn record_patterns_take_shorthand_and_nested_fields() {
+        let PatternKind::Record { name, fields } = pattern("Note { author, content: c }") else {
+            panic!("record")
+        };
+        assert_eq!(name, "Note");
+        assert_eq!(
+            fields[0],
+            ("author".to_owned(), None),
+            "shorthand binds the field"
+        );
+        assert_eq!(fields[1].0, "content");
+        assert_eq!(
+            fields[1].1.as_ref().unwrap().value,
+            PatternKind::Binding("c".to_owned())
+        );
+        // Empty, trailing comma, and one field per line.
+        assert_eq!(
+            pattern("Note {}"),
+            PatternKind::Record {
+                name: "Note".to_owned(),
+                fields: vec![]
+            }
+        );
+        let PatternKind::Record { fields, .. } = pattern("Note { author, }") else {
+            panic!("record")
+        };
+        assert_eq!(fields.len(), 1);
+        let PatternKind::Record { fields, .. } = pattern("Note {\n    author,\n    content\n}")
+        else {
+            panic!("record")
+        };
+        assert_eq!(fields.len(), 2);
+        // A field can hold any pattern, including a literal or a variant.
+        let PatternKind::Record { fields, .. } = pattern("Note { kind: 1, author: Ok(a) }") else {
+            panic!("record")
+        };
+        assert!(matches!(
+            fields[0].1.as_ref().unwrap().value,
+            PatternKind::Literal(_)
+        ));
+        assert!(matches!(
+            fields[1].1.as_ref().unwrap().value,
+            PatternKind::Variant { .. }
+        ));
+    }
+
+    #[test]
+    fn guards_parse_up_to_the_arrow_and_may_use_any_condition() {
+        let guarded = arms("x if x > 5 => 1\ny if y > 1 and y < 4 => 2\n_ => 3");
+        assert!(
+            guarded[0].guard.is_some() && guarded[1].guard.is_some() && guarded[2].guard.is_none()
+        );
+        assert!(
+            matches!(guarded[0].guard.as_ref().unwrap().value, ExprKind::Binary { ref operator, .. } if operator == ">")
+        );
+        assert!(
+            matches!(guarded[1].guard.as_ref().unwrap().value, ExprKind::Binary { ref operator, .. } if operator == "and")
+        );
+        // The arrow was not read as part of the guard: each arm has its value.
+        assert!(matches!(guarded[0].value.value, ExprKind::Integer(1)));
+        // A guard on a record or variant pattern.
+        let arms = arms("Ok(v) if v == 3 => 1\nNote { author } if author == \"a\" => 2");
+        assert!(arms.iter().all(|arm| arm.guard.is_some()));
+    }
+
+    #[test]
+    fn bindings_wildcards_and_variants_are_unchanged_and_capitalised_bare_names_are_unit_variants()
+    {
+        assert_eq!(pattern("x"), PatternKind::Binding("x".to_owned()));
+        assert_eq!(pattern("_"), PatternKind::Wildcard);
+        assert!(
+            matches!(pattern("Ok(v)"), PatternKind::Variant { ref name, ref values } if name == "Ok" && values.len() == 1)
+        );
+        assert!(matches!(pattern("Ok(Err(e))"), PatternKind::Variant { .. }));
+        // `None` used to parse as a binding, silently matching everything.
+        assert_eq!(
+            pattern("None"),
+            PatternKind::Variant {
+                name: "None".to_owned(),
+                values: vec![]
+            }
+        );
+        assert!(
+            matches!(pattern("Ok(1)"), PatternKind::Variant { ref values, .. } if matches!(values[0].value, PatternKind::Literal(_)))
+        );
+    }
+
+    #[test]
+    fn malformed_patterns_are_errors_not_silent() {
+        for source in [
+            "let r = match s {\nNote { author, => 1\n}\n", // unclosed record pattern
+            "let r = match s {\n- x => 1\n}\n",            // only a number can be negated
+            "let r = match s {\n- \"a\" => 1\n}\n",
+            "let r = match s {\nx if => 1\n}\n", // a guard needs a condition
+            "let r = match s {\n1 => \n}\n",     // an arm needs a value
+        ] {
+            let (_, diagnostics) = parse_program(source);
+            assert!(!diagnostics.is_empty(), "{source:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn a_newline_ends_an_arms_value_so_a_negative_literal_starts_the_next_arm() {
+        // `print("one")` then `-3 => ..` used to parse as `print("one") - 3`.
+        let parsed = arms("1 => print(\"one\")\n-3 => print(\"neg\")\n_ => print(\"other\")");
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(
+            parsed[1].pattern.value,
+            PatternKind::Literal(ExprKind::Integer(-3))
+        );
+        assert!(matches!(parsed[0].value.value, ExprKind::Call { .. }));
+    }
+
+    #[test]
+    fn brackets_inside_an_arm_may_still_span_lines() {
+        let parsed = arms(
+            "Ok(v) => print(\n    \"a\",\n    v + 1\n)\nErr(e) => [\n    1,\n    2\n]\n_ => (1\n + 2)",
+        );
+        assert_eq!(parsed.len(), 3);
+        assert!(
+            matches!(&parsed[0].value.value, ExprKind::Call { arguments, .. } if arguments.len() == 2)
+        );
+        assert!(matches!(&parsed[1].value.value, ExprKind::List(items) if items.len() == 2));
+        assert!(
+            matches!(&parsed[2].value.value, ExprKind::Binary { operator, .. } if operator == "+")
+        );
+    }
+
+    #[test]
+    fn a_continuation_line_that_starts_with_an_operator_is_an_error_not_a_silent_join() {
+        // The arm ended at its line, so `+ 2` cannot continue it.
+        let (_, diagnostics) = parse_program("let r = match s {\n_ => 1\n + 2\n}\n");
+        assert!(!diagnostics.is_empty());
+    }
+
+    #[test]
+    fn newlines_still_continue_expressions_outside_match_arms() {
+        // The rule is scoped to arm values; ordinary expressions are unchanged.
+        let (program, diagnostics) = parse_program("let total = 1\n    + 2\n    + 3\n");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let Item::Let(declaration) = &program.ast.items[0] else {
+            panic!("let")
+        };
+        assert!(
+            matches!(&declaration.value.value, ExprKind::Binary { operator, .. } if operator == "+")
+        );
     }
 }

@@ -116,11 +116,38 @@ match concord04.kick_member(event.author) {
 answer that operation with a recoverable error, so the `Err` path can be
 exercised: `--fail concord04.kick_member`. Without it the simulator never fails.
 
-**Parser gap.** The parser accepts only bindings, `_` and variant patterns
-(`Ok(v)`, `Err(e)`). Literal patterns, record patterns such as
-`Note { author }`, and guards (`x if x > 5`) do not parse, although the spec's
-section 10 uses them and the AST has nodes for them. The evaluator handles those
-nodes, tested on hand-built AST, so they will work when the parser produces them.
+### Patterns
+
+`match` takes every pattern form in the grammar (`spec/grammar.ebnf`):
+
+| Pattern | Matches |
+|---|---|
+| `_` | anything |
+| `x` (lowercase) | anything, binding it to `x` |
+| `1`, `-1`, `"a"`, `true`, `none`, `1.5`, `5s`, `50%` | a value equal to the literal |
+| `Ok(p)`, `Err(p)` | a result whose payload matches `p` (nested) |
+| `None` | `none` (a capitalised name with no payload is a unit variant) |
+| `Note { author, content: c }` | a record of that type; `author` binds the field to its own name, `content: c` matches the field against a pattern (any pattern, including a literal) |
+
+An arm may add a guard, `pattern if condition => value`. A guard is evaluated
+with the pattern's bindings, and an arm whose guard is false is skipped.
+
+An event is a record named by its type, so `match event { Note { author, content }
+if content contains "spam" => .. }` selects on the event's type and fields. Its
+fields are `id`, `author` (also `pubkey`), `content`, `kind`, `created_at` and
+`tags`.
+
+An arm's value ends at its line, so the next line can start a new arm (`-3 => ..`
+is a pattern, not a subtraction from the previous value). Inside brackets, a
+value may still span lines.
+
+The checker treats a guarded arm as one that may not match: it is not a catch-all
+(so the arm after it is reachable), and it does not cover its variant, so a
+`Result` match that handles `Ok` only under a guard is `E1301`. A variant whose
+payload tests a literal (`Ok(1)`) covers only that value.
+
+**Not supported.** The grammar allows an arm's value to be a block; the syntax
+tree has no block expression, so an arm's value is an expression.
 
 ## Subscription cycles
 

@@ -1,0 +1,8 @@
+// error: E1301 non-exhaustive-match
+// `Ok(1)` covers only one value, so it does not cover `Ok`.
+fn describe(r: Result<Int, Text>) -> Int {
+    match r {
+        Ok(1) => 1
+        Err(e) => 2
+    }
+}

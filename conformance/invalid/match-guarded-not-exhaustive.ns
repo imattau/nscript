@@ -1,0 +1,9 @@
+// error: E1301 non-exhaustive-match
+// `Ok` is only covered when the guard holds, so a Result match that handles
+// `Ok` only under a guard is not exhaustive.
+fn describe(r: Result<Int, Text>) -> Int {
+    match r {
+        Ok(v) if v > 1 => 1
+        Err(e) => 2
+    }
+}

@@ -724,3 +724,46 @@ fn run_rejects_a_malformed_fail_option() {
         "{stderr}"
     );
 }
+
+#[test]
+fn run_evaluates_record_guard_and_literal_patterns_from_source() {
+    let path = repository_path("examples/concord-spam-filter.ns");
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(&path)
+        .args([
+            "--event",
+            r#"{"id":"a","content":"buy spam now","signer":"mallory"}"#,
+        ])
+        .args([
+            "--event",
+            r#"{"id":"b","content":"hello","signer":"alice"}"#,
+        ])
+        .args([
+            "--event",
+            r#"{"id":"c","content":"hi","signer":"eve","kind":7}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let after_a = stdout.split("event b").next().unwrap();
+    // The guarded record pattern selects the spam and destructures its author.
+    assert!(
+        after_a.contains(r#"operation concord04.kick_member(PubKey("mallory"))"#),
+        "{stdout}"
+    );
+    // The unguarded record pattern handles the rest, and the literal `kind: 7`
+    // pattern picks out the reaction before it.
+    assert!(stdout.contains("log info: ok from alice"), "{stdout}");
+    assert!(stdout.contains("log info: ignoring a reaction"), "{stdout}");
+    assert_eq!(
+        stdout.matches("kick_member").count(),
+        1,
+        "only the spam was kicked: {stdout}"
+    );
+}

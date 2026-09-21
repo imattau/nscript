@@ -729,9 +729,19 @@ a bad argument still aborts; `?` returns the error from the enclosing function o
 handler; `match` works on results; and a handler that ends with an `Err` rolls
 back. `nscript run --fail module.operation` exercises the `Err` path in the
 simulator. Proved against the real Roster: a kick of the owner is refused and
-reaches the script as an `Err` it can read. Found on the way: the parser accepts
-only binding, wildcard and variant patterns, so literal and record patterns and
-guards (used by spec section 10) do not parse although the AST has them.
+reaches the script as an `Err` it can read. Found on the way: the parser accepted only binding, wildcard and variant
+patterns (fixed next).
+The parser now accepts every pattern form in the grammar: literals of every kind
+(with a leading minus on numbers), record patterns (`Note { author, content: c }`),
+and guards, which had been swallowing the `=` of `=>` as an assignment. A
+capitalised name with no payload is a unit variant, so `None` no longer parses as
+a catch-all binding. A match arm's value now ends at its line, so `-3 => ..` starts
+a pattern instead of subtracting from the previous arm; brackets inside an arm
+still span lines. The checker is guard-aware: a guarded arm is not a catch-all, and
+does not cover its variant, so a Result match handling `Ok` only under a guard is
+`E1301`, as is `Ok(1)` standing in for `Ok`. The evaluator's pattern tests moved
+from hand-built AST to real source. Not supported: an arm whose value is a block
+(the grammar allows it; the syntax tree has no block expression).
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

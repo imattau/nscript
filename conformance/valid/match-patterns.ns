@@ -1,0 +1,31 @@
+// Every pattern form in the grammar: literals, bindings, variants, records,
+// nested payloads, unit variants, and guards.
+permissions {
+    log
+}
+
+fn describe(n: Int) -> Text {
+    match n {
+        0 => "zero"
+        -1 => "minus one"
+        x if x > 100 => "huge"
+        x if x > 10 and x < 100 => "big"
+        _ => "small"
+    }
+}
+
+fn label(r: Result<Int, Text>) -> Int {
+    match r {
+        Ok(1) => 1
+        Ok(n) => n
+        Err(e) => 0
+    }
+}
+
+on Note {
+    match event {
+        Note { author, content } if content contains "spam" => print(author)
+        Note { kind: 1, content: c } => print(c)
+        _ => print("other")
+    }
+}

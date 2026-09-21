@@ -700,6 +700,8 @@ fn pattern_matches(
             _ => false,
         },
         PatternKind::Variant { name, values } => match (name.as_str(), value, values.as_slice()) {
+            // `none` evaluates to unit, so the `None` pattern matches it.
+            ("None", Value::Unit, []) => true,
             ("Ok", Value::ResultOk(inner), [pattern])
             | ("Err", Value::ResultErr(inner), [pattern]) => {
                 pattern_matches(&pattern.value, inner, bindings)
@@ -2233,139 +2235,45 @@ mod tests {
         assert_eq!(host.printed, ["3", "deep", "Err(1)"]);
     }
 
-    fn pat(kind: PatternKind) -> nscript_syntax::ast::Pattern {
-        nscript_syntax::ast::Spanned {
-            value: kind,
-            span: nscript_syntax::Span::default(),
-        }
-    }
-
-    /// The parser does not yet produce literal, record or guarded patterns
-    /// (the spec's section 10 uses them), but the AST has them, so the evaluator
-    /// must handle them correctly for when it does. Tested on hand-built AST.
     #[test]
-    fn literal_and_record_patterns_are_handled_though_the_parser_cannot_yet_produce_them() {
-        let mut bound = BTreeMap::new();
-        let matches = |kind: &PatternKind, value: &Value, bound: &mut BTreeMap<String, Value>| {
-            pattern_matches(kind, value, bound)
-        };
-        assert!(matches(
-            &PatternKind::Literal(ExprKind::Integer(1)),
-            &Value::Int(1),
-            &mut bound
-        ));
-        assert!(!matches(
-            &PatternKind::Literal(ExprKind::Integer(1)),
-            &Value::Int(2),
-            &mut bound
-        ));
-        assert!(matches(
-            &PatternKind::Literal(ExprKind::Text("a".into())),
-            &Value::PubKey("a".into()),
-            &mut bound
-        ));
-        assert!(matches(
-            &PatternKind::Literal(ExprKind::Bool(true)),
-            &Value::Bool(true),
-            &mut bound
-        ));
-        assert!(!matches(
-            &PatternKind::Literal(ExprKind::Text("a".into())),
-            &Value::Int(1),
-            &mut bound
-        ));
-
-        let message = Value::Record {
-            name: "Note".into(),
-            fields: vec![
-                ("author".into(), Value::PubKey("alice".into())),
-                ("content".into(), Value::Text("hi".into())),
-            ],
-        };
-        // `Note { author, content: c }`: shorthand binds the field's own name.
-        let record = PatternKind::Record {
-            name: "Note".into(),
-            fields: vec![
-                ("author".into(), None),
-                (
-                    "content".into(),
-                    Some(pat(PatternKind::Binding("c".into()))),
-                ),
-            ],
-        };
-        assert!(matches(&record, &message, &mut bound));
-        assert_eq!(bound["author"], Value::PubKey("alice".into()));
-        assert_eq!(bound["c"], Value::Text("hi".into()));
-        let wrong_name = PatternKind::Record {
-            name: "Other".into(),
-            fields: vec![],
-        };
-        assert!(!matches(&wrong_name, &message, &mut BTreeMap::new()));
-        let missing_field = PatternKind::Record {
-            name: "Note".into(),
-            fields: vec![("nope".into(), None)],
-        };
-        assert!(!matches(&missing_field, &message, &mut BTreeMap::new()));
-    }
-
-    /// A guard picks between arms that share a pattern.
-    #[test]
-    fn a_guard_picks_between_arms_though_the_parser_cannot_yet_produce_one() {
-        let (program, _) = parse_program("on m {\n}\n");
+    fn match_selects_on_literals_of_every_kind() {
+        let source = "on m {\n    let n = 7\n    match n {\n        1 => print(\"one\")\n        -3 => print(\"neg\")\n        7 => print(\"seven\")\n        _ => print(\"other\")\n    }\n    let s = \"b\"\n    match s {\n        \"a\" => print(\"a\")\n        \"b\" => print(\"b!\")\n    }\n    let t = true\n    match t {\n        false => print(\"f\")\n        true => print(\"t\")\n    }\n    let d = -3\n    match d {\n        -3 => print(\"minus three\")\n        _ => print(\"no\")\n    }\n}\n";
         let mut host = Scripted::default();
-        let mut interpreter = Interpreter {
-            host: &mut host,
-            functions: BTreeMap::new(),
-            modules: BTreeSet::new(),
-            scopes: vec![BTreeMap::new()],
-            limits: EvalLimits::default(),
-            steps: 0,
-            depth: 0,
-        };
-        let _ = &program;
-        let text = |value: &str| nscript_syntax::ast::Spanned {
-            value: ExprKind::Text(value.to_owned()),
-            span: nscript_syntax::Span::default(),
-        };
-        let name = |value: &str| nscript_syntax::ast::Spanned {
-            value: ExprKind::Identifier(value.to_owned()),
-            span: nscript_syntax::Span::default(),
-        };
-        let greater = nscript_syntax::ast::Spanned {
-            value: ExprKind::Binary {
-                operator: ">".to_owned(),
-                left: Box::new(name("n")),
-                right: Box::new(nscript_syntax::ast::Spanned {
-                    value: ExprKind::Integer(5),
-                    span: nscript_syntax::Span::default(),
-                }),
-            },
-            span: nscript_syntax::Span::default(),
-        };
-        let arms = [
-            MatchArm {
-                pattern: pat(PatternKind::Binding("n".into())),
-                guard: Some(greater),
-                value: text("big"),
-            },
-            MatchArm {
-                pattern: pat(PatternKind::Wildcard),
-                guard: None,
-                value: text("small"),
-            },
-        ];
-        let subject = |n: i64| nscript_syntax::ast::Spanned {
-            value: ExprKind::Integer(n),
-            span: nscript_syntax::Span::default(),
-        };
+        run_scripted(source, &mut host).unwrap();
+        assert_eq!(host.printed, ["seven", "b!", "t", "minus three"]);
+    }
+
+    #[test]
+    fn match_guards_pick_between_arms_that_share_a_pattern() {
+        let source = "on m {\n    let n = 9\n    match n {\n        x if x > 5 and x < 8 => print(\"mid\")\n        x if x > 5 => print(x)\n        _ => print(\"small\")\n    }\n    let k = 2\n    match k {\n        x if x > 5 => print(\"big\")\n        _ => print(\"small\")\n    }\n}\n";
+        let mut host = Scripted::default();
+        run_scripted(source, &mut host).unwrap();
+        assert_eq!(host.printed, ["9", "small"]);
+    }
+
+    #[test]
+    fn record_patterns_destructure_the_event_and_select_on_its_type_and_fields() {
+        let source = "on m {\n    match event {\n        StreamMessage { author, content } if content contains \"x\" => print(author + \":\" + content)\n        _ => print(\"no\")\n    }\n    match event {\n        StreamMessage { kind: 9, content: c } => print(\"kind nine \" + c)\n        _ => print(\"other\")\n    }\n    match event {\n        Other { author } => print(\"wrong type\")\n        _ => print(\"not Other\")\n    }\n    match event {\n        StreamMessage { pubkey: p } => print(p)\n    }\n    match event {\n        StreamMessage { nope } => print(\"has nope\")\n        _ => print(\"no such field\")\n    }\n}\n";
+        let mut host = Scripted::default();
+        run_scripted(source, &mut host).unwrap();
         assert_eq!(
-            interpreter.match_expression(&subject(9), &arms).ok(),
-            Some(Value::Text("big".into()))
+            host.printed,
+            [
+                "author-key:x",
+                "kind nine x",
+                "not Other",
+                "author-key",
+                "no such field"
+            ]
         );
-        assert_eq!(
-            interpreter.match_expression(&subject(2), &arms).ok(),
-            Some(Value::Text("small".into()))
-        );
+    }
+
+    #[test]
+    fn variant_payloads_may_test_literals_and_none_matches_none() {
+        let source = "on m {\n    match Ok(2) {\n        Ok(1) => print(\"one\")\n        Ok(n) => print(n)\n        Err(e) => print(\"e\")\n    }\n    let nothing = none\n    match nothing {\n        None => print(\"none\")\n        _ => print(\"some\")\n    }\n    match 1 {\n        None => print(\"none\")\n        _ => print(\"some\")\n    }\n}\n";
+        let mut host = Scripted::default();
+        run_scripted(source, &mut host).unwrap();
+        assert_eq!(host.printed, ["2", "none", "some"]);
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub(crate) fn parse(tokens: &[Token]) -> (AstProgram, Vec<Diagnostic>) {
         tokens,
         index: 0,
         diagnostics: Vec::new(),
+        newline_ends_expression: false,
     };
     let items = parser.parse_items(None);
     (AstProgram { items }, parser.diagnostics)
@@ -52,6 +53,11 @@ struct Parser<'a> {
     tokens: &'a [Token],
     index: usize,
     diagnostics: Vec<Diagnostic>,
+    /// While parsing a `match` arm's value, a newline ends the expression, so
+    /// the next line can start a new arm (`-3 => ..` is a pattern, not a
+    /// subtraction from the previous value). Reset inside brackets, where a
+    /// newline is just whitespace.
+    newline_ends_expression: bool,
 }
 
 impl Parser<'_> {
@@ -1933,7 +1939,10 @@ impl Parser<'_> {
         self.skip_expression_newlines();
         let mut left = self.parse_prefix()?;
         loop {
-            self.skip_expression_newlines();
+            let crossed_newline = self.skip_expression_newlines_noting();
+            if crossed_newline && self.newline_ends_expression {
+                break;
+            }
             if self.at_symbol('(') {
                 let arguments = self.parse_arguments()?;
                 let span = left.span.join(self.previous_span());
@@ -2100,7 +2109,8 @@ impl Parser<'_> {
             return self.parse_match(start);
         }
         if self.eat_symbol('(') {
-            let value = self.parse_expression(0)?;
+            let value =
+                self.with_newline_ends_expression(false, |parser| parser.parse_expression(0))?;
             self.expect_symbol(')')?;
             return Some(value);
         }
@@ -2240,14 +2250,17 @@ impl Parser<'_> {
         let mut arms = Vec::new();
         while !self.at_symbol('}') && !self.at_end() {
             let pattern = self.parse_pattern()?;
+            // Above assignment's precedence: the `=` of `=>` must not be read as
+            // an assignment operator inside the guard.
             let guard = if self.eat_word("if") {
-                self.parse_expression(0)
+                Some(self.expression_or_error(2, "a guard condition")?)
             } else {
                 None
             };
             self.expect_symbol('=')?;
             self.expect_symbol('>')?;
-            let arm_value = self.parse_expression(0)?;
+            let arm_value =
+                self.with_newline_ends_expression(true, |parser| parser.parse_expression(0))?;
             arms.push(MatchArm {
                 pattern,
                 guard,
@@ -2266,7 +2279,78 @@ impl Parser<'_> {
         })
     }
 
+    /// Whether the next tokens start a literal pattern: a string, a number, a
+    /// negative number, `true`, `false` or `none`.
+    fn at_literal_pattern(&self) -> bool {
+        matches!(self.word(), Some("true" | "false" | "none"))
+            || matches!(
+                self.tokens.get(self.index).map(|token| &token.kind),
+                Some(TokenKind::String(_) | TokenKind::Number(_))
+            )
+            || (self.at_symbol('-')
+                && matches!(
+                    self.tokens.get(self.index + 1).map(|token| &token.kind),
+                    Some(TokenKind::Number(_))
+                ))
+    }
+
+    /// A literal pattern: any literal the language has (string, integer,
+    /// decimal, duration, percentage, `true`, `false`, `none`), read by the
+    /// expression parser so the two cannot disagree, with an optional leading
+    /// minus on a number.
+    fn parse_literal_pattern(&mut self) -> Option<Pattern> {
+        let start = self.span();
+        let negative = self.eat_symbol('-');
+        let literal = self.parse_prefix()?;
+        let value = match (negative, literal.value) {
+            (false, value) => value,
+            (true, ExprKind::Integer(number)) => ExprKind::Integer(number.checked_neg()?),
+            (true, ExprKind::Decimal(text)) => ExprKind::Decimal(format!("-{text}")),
+            (true, _) => {
+                self.error(
+                    start,
+                    "E1101",
+                    "only an integer or decimal can be negated in a pattern",
+                );
+                return None;
+            }
+        };
+        Some(Spanned {
+            value: PatternKind::Literal(value),
+            span: start.join(self.previous_span()),
+        })
+    }
+
+    /// `pattern_fields` of a record pattern: `{ author, content: c }`.
+    fn parse_pattern_fields(&mut self) -> Option<Vec<(String, Option<Pattern>)>> {
+        let mut fields = Vec::new();
+        self.skip_expression_newlines();
+        while !self.at_symbol('}') && !self.at_end() {
+            let field = self.take_name()?;
+            let pattern = if self.eat_symbol(':') {
+                Some(self.parse_pattern()?)
+            } else {
+                None
+            };
+            fields.push((field.value, pattern));
+            self.skip_expression_newlines();
+            if !self.eat_symbol(',') && !self.at_terminator() {
+                break;
+            }
+            self.skip_terminators();
+        }
+        self.expect_symbol('}')?;
+        Some(fields)
+    }
+
+    /// The patterns of the language (`spec/grammar.ebnf`): `_`, a literal, a
+    /// binding, a variant `Ok(x)`, or a record `Note { author, content: c }`.
+    /// A capitalised name with no payload (`None`) is a unit variant, not a
+    /// binding: bindings are lowercase, as types are capitalised.
     fn parse_pattern(&mut self) -> Option<Pattern> {
+        if self.at_literal_pattern() {
+            return self.parse_literal_pattern();
+        }
         let start = self.span();
         let name = self.take_name()?;
         if name.value == "_" {
@@ -2292,6 +2376,25 @@ impl Parser<'_> {
                 span: start.join(self.previous_span()),
             });
         }
+        if self.eat_symbol('{') {
+            let fields = self.parse_pattern_fields()?;
+            return Some(Spanned {
+                value: PatternKind::Record {
+                    name: name.value,
+                    fields,
+                },
+                span: start.join(self.previous_span()),
+            });
+        }
+        if name.value.chars().next().is_some_and(char::is_uppercase) {
+            return Some(Spanned {
+                value: PatternKind::Variant {
+                    name: name.value,
+                    values: Vec::new(),
+                },
+                span: name.span,
+            });
+        }
         Some(Spanned {
             value: PatternKind::Binding(name.value),
             span: name.span,
@@ -2304,6 +2407,12 @@ impl Parser<'_> {
     }
 
     fn parse_comma_expressions(&mut self, closing: char) -> Option<Vec<Expr>> {
+        self.with_newline_ends_expression(false, |parser| {
+            parser.parse_comma_expressions_inner(closing)
+        })
+    }
+
+    fn parse_comma_expressions_inner(&mut self, closing: char) -> Option<Vec<Expr>> {
         let mut values = Vec::new();
         self.skip_expression_newlines();
         while !self.at_symbol(closing) && !self.at_end() {
@@ -2319,6 +2428,10 @@ impl Parser<'_> {
     }
 
     fn parse_fields(&mut self) -> Option<Vec<(Spanned<String>, Expr)>> {
+        self.with_newline_ends_expression(false, Self::parse_fields_inner)
+    }
+
+    fn parse_fields_inner(&mut self) -> Option<Vec<(Spanned<String>, Expr)>> {
         let mut fields = Vec::new();
         self.skip_expression_newlines();
         while !self.at_symbol('}') && !self.at_end() {
@@ -2554,12 +2667,32 @@ impl Parser<'_> {
         }
     }
     fn skip_expression_newlines(&mut self) {
+        self.skip_expression_newlines_noting();
+    }
+
+    /// Skips newlines, reporting whether there were any.
+    fn skip_expression_newlines_noting(&mut self) -> bool {
+        let start = self.index;
         while matches!(
             self.tokens.get(self.index).map(|t| &t.kind),
             Some(TokenKind::Newline)
         ) {
             self.index += 1;
         }
+        self.index > start
+    }
+
+    /// Runs `parse` with newlines ending expressions (or not). A `match` arm's
+    /// value ends at its line; brackets inside it turn that back off.
+    fn with_newline_ends_expression<T>(
+        &mut self,
+        ends: bool,
+        parse: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let saved = std::mem::replace(&mut self.newline_ends_expression, ends);
+        let result = parse(self);
+        self.newline_ends_expression = saved;
+        result
     }
     /// Whether the statement just parsed ended cleanly: at the end of input, a
     /// terminator, the enclosing block's closing symbol, or right after a

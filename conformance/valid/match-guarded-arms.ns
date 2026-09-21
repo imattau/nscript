@@ -1,0 +1,16 @@
+// A guarded arm may not match, so it is not a catch-all: the arm after it is
+// reachable, and a variant with a guarded arm still needs an unguarded one.
+fn size(n: Int) -> Text {
+    match n {
+        x if x > 5 => "big"
+        _ => "small"
+    }
+}
+
+fn describe(r: Result<Int, Text>) -> Int {
+    match r {
+        Ok(v) if v > 1 => 1
+        Ok(v) => 2
+        Err(e) => 3
+    }
+}

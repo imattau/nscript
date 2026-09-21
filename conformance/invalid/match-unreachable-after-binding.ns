@@ -1,0 +1,8 @@
+// error: E1302 unreachable-pattern
+// An unguarded binding matches everything, so the arm after it is unreachable.
+fn size(n: Int) -> Text {
+    match n {
+        x => "any"
+        0 => "zero"
+    }
+}

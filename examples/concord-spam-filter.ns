@@ -1,0 +1,24 @@
+// A spam filter that reads the event with patterns.
+//
+//   nscript run examples/concord-spam-filter.ns \
+//       --event '{"content": "buy spam now", "signer": "mallory"}' \
+//       --event '{"content": "hello", "signer": "alice"}' \
+//       --event '{"content": "hi", "signer": "eve", "kind": 7}'
+//
+// A record pattern destructures the event (`Note { author, content }`), a guard
+// narrows an arm (`if content contains "spam"`), and a literal pattern selects on
+// a field (`kind: 7`). Each arm's value is an expression, so the kick is a call.
+use concord04
+
+permissions {
+    concord_kick
+    log
+}
+
+on Note {
+    match event {
+        Note { author, content } if content contains "spam" => concord04.kick_member(author)
+        Note { kind: 7 } => print("ignoring a reaction")
+        Note { author } => print("ok from " + author)
+    }
+}

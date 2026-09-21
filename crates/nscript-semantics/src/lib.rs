@@ -614,6 +614,21 @@ fn validate_expr_calls(
     }
 }
 
+/// Whether a pattern compares against a literal anywhere inside it, and so
+/// matches only some values of its type.
+fn tests_a_literal(pattern: &PatternKind) -> bool {
+    match pattern {
+        PatternKind::Literal(_) => true,
+        PatternKind::Variant { values, .. } => {
+            values.iter().any(|value| tests_a_literal(&value.value))
+        }
+        PatternKind::Record { fields, .. } => fields
+            .iter()
+            .any(|(_, sub)| sub.as_ref().is_some_and(|sub| tests_a_literal(&sub.value))),
+        PatternKind::Wildcard | PatternKind::Binding(_) => false,
+    }
+}
+
 fn expression_path(expression: &Expr) -> Option<String> {
     match &expression.value {
         ExprKind::Identifier(name) => Some(name.clone()),
@@ -1258,9 +1273,19 @@ impl<'a> Checker<'a> {
                 });
                 break;
             }
+            // A guarded arm may not match, so it neither ends the match (a
+            // catch-all) nor covers its variant. A variant whose payload tests a
+            // literal (`Ok(1)`) covers only that value, so it does not count
+            // either.
+            let unconditional = arm.guard.is_none();
             match &arm.pattern.value {
-                PatternKind::Wildcard | PatternKind::Binding(_) => wildcard = true,
-                PatternKind::Variant { name, .. } => {
+                PatternKind::Wildcard | PatternKind::Binding(_) if unconditional => {
+                    wildcard = true;
+                }
+                PatternKind::Variant { name, values }
+                    if unconditional
+                        && !values.iter().any(|value| tests_a_literal(&value.value)) =>
+                {
                     variants.insert(name.clone());
                 }
                 _ => {}
