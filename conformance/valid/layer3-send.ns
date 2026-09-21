@@ -1,0 +1,7 @@
+use nip17
+
+permissions {
+    private_message
+}
+
+send "Hello from Layer 3" to alice

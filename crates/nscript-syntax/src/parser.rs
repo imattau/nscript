@@ -366,6 +366,7 @@ impl Parser<'_> {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn parse_statement(&mut self) -> Option<Statement> {
         let start = self.span();
         let value = match self.word() {
@@ -447,6 +448,56 @@ impl Parser<'_> {
             Some("send") => {
                 self.index += 1;
                 let value = self.parse_expression(0)?;
+                let value = if self.eat_word("to") {
+                    let recipient = self.parse_expression(0)?;
+                    let span = value.span.join(recipient.span);
+                    let message = Spanned {
+                        value: ExprKind::Construct {
+                            name: Spanned {
+                                value: "PrivateMessage".to_owned(),
+                                span,
+                            },
+                            fields: vec![
+                                (
+                                    Spanned {
+                                        value: "content".to_owned(),
+                                        span,
+                                    },
+                                    value,
+                                ),
+                                (
+                                    Spanned {
+                                        value: "recipient".to_owned(),
+                                        span,
+                                    },
+                                    recipient,
+                                ),
+                            ],
+                        },
+                        span,
+                    };
+                    Spanned {
+                        value: ExprKind::Call {
+                            callee: Box::new(Spanned {
+                                value: ExprKind::Member {
+                                    value: Box::new(Spanned {
+                                        value: ExprKind::Identifier("nip17".to_owned()),
+                                        span,
+                                    }),
+                                    name: Spanned {
+                                        value: "send_private".to_owned(),
+                                        span,
+                                    },
+                                },
+                                span,
+                            }),
+                            arguments: vec![message],
+                        },
+                        span,
+                    }
+                } else {
+                    value
+                };
                 let signer = if self.eat_word("with") {
                     self.parse_expression(0)
                 } else {

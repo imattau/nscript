@@ -22,6 +22,18 @@ publish Note {
 The compiler lowers these forms into typed subscriptions, publication traces,
 signing capabilities, relay effects, and bounded handler execution.
 
+Private messaging sugar is now lowered directly into the typed NIP-17 module:
+
+```nostr
+use nip17
+
+permissions {
+    private_message
+}
+
+send "Hello" to alice
+```
+
 The next Layer 3 forms are deliberately syntax sugar over existing typed NIP
 modules:
 
