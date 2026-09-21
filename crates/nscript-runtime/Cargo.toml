@@ -11,6 +11,11 @@ nscript-semantics = { path = "../nscript-semantics" }
 nscript-syntax = { path = "../nscript-syntax" }
 serde_json.workspace = true
 tungstenite.workspace = true
+wasmi = { version = "0.38", optional = true }
+
+[features]
+default = []
+wasm-engine = ["dep:wasmi"]
 
 [lints]
 workspace = true

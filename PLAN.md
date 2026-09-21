@@ -364,6 +364,9 @@ Engine decision: Wasmi is the planned primary backend for Draft 0.1 because
 its lightweight deterministic interpreter and built-in fuel metering fit the
 capability sandbox; Wasmtime remains an optional performance backend. See
 `docs/WASM-ENGINE.md`.
+The runtime now declares Wasmi behind the opt-in `wasm-engine` feature; the
+default build remains engine-free while the dependency is locked for
+reproducible integration work.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
