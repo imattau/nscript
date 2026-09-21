@@ -253,9 +253,8 @@ remain staged until successful completion.
 
 ## Status
 
-NScript is an early design. Syntax and semantics are not stable yet. The first
-reference implementation is intended to be a Rust tree-walk interpreter; WASM
-is the primary sandbox target after the language semantics have been validated.
+NScript is an early Draft 0.1 implementation. Syntax and semantics remain
+evolving, with a Rust reference runtime and an opt-in Wasmi sandbox backend.
 
 ## Design principles
 

@@ -258,8 +258,11 @@ are execution quality rather than protocol breadth:
    transactional storage, timers, and effects.
 3. Add minimal real relay, NIP-46 signer, and SQLite storage hosts.
 4. Expose inspectable permission manifests and dry-run execution.
-5. Formalize signed package manifests and dependency locking.
+5. Formalize signed package manifests and dependency locking. (Lockfiles and
+   npack-compatible metadata are implemented; signing/distribution remain.)
 6. Add WASM only after runtime semantics and real-host behavior stabilize.
+   (Reference emission and Wasmi execution are implemented; production hosts
+   remain.)
 
 The `nscript inspect [--json]` command is the first security-UX slice: it
 reports the checked profile, inferred effects, operation capabilities,
@@ -413,5 +416,5 @@ NIP-01 timestamp/lowest-id tie-break rule.
 ## Deferred
 
 Module operation dispatch, full handler/stream evaluation,
-cryptographic signing, NIP-44/NIP-59/NIP-46 host implementations, WASM,
+cryptographic signing, NIP-44/NIP-59/NIP-46 host implementations, signed
 package distribution, and a stable IR interchange format remain later phases.
