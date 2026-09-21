@@ -21,6 +21,20 @@ fn checks_program_with_builtin_imports() {
 }
 
 #[test]
+fn layer3_example_checks_and_inspects() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("examples/layer3-bot.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["publications"], 1);
+    assert_eq!(value["handlers"][0]["event"], "Note");
+    assert_eq!(value["handlers"][0]["tags"][0][1], "nscript");
+}
+
+#[test]
 fn inspects_program_permissions_as_json() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["inspect", "--json"])

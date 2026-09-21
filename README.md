@@ -256,6 +256,12 @@ remain staged until successful completion.
 NScript is an early Draft 0.1 implementation. Syntax and semantics remain
 evolving, with a Rust reference runtime and an opt-in Wasmi sandbox backend.
 
+The runnable [`examples/layer3-bot.ns`](examples/layer3-bot.ns) demonstrates
+the current language-facing Layer 3 surface: typed event patterns, native
+publication syntax, local event bindings, conditions, logging, and early
+returns. It uses Nostr capabilities without manually constructing wire tags or
+JSON.
+
 ## Design principles
 
 1. Nostr is the environment, not a library.

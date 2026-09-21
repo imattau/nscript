@@ -1,0 +1,28 @@
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    read Note from public
+    publish Note to public
+    sign Note with account
+    relay public
+    log
+}
+
+on Note where tags.t contains "nscript" {
+    let message = event.content
+
+    if message contains "help" {
+        print(message)
+        return
+    }
+
+    print(message)
+}
+
+publish Note {
+    content: "Layer 3 intent from NScript",
+} to public with account

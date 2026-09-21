@@ -351,6 +351,9 @@ for npack handoff.
 for future package signatures.
 Documented the versioned `nscript-ir/0.1` interchange contract shared by JSON
 IR output and the WASM custom sections.
+Added `examples/layer3-bot.ns` as a runnable Layer 3 showcase combining native
+publication syntax, typed event predicates, local bindings, conditions, logs,
+and early returns.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent
