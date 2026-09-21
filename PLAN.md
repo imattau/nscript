@@ -294,6 +294,8 @@ for use in handler expressions, while keeping iteration bounded by the
 delivered event.
 Handler bodies can now bind event-derived text with local `let` declarations
 and reuse those bindings in subsequent effects.
+Handler `return` statements now stop the current body, including nested `if`
+and `for` blocks, without being treated as unsupported syntax.
 Runtime dispatch now also performs deterministic type/kind/author matching on
 delivered signed events before body execution.
 Signed-event values now carry typed `(tag, value)` pairs, allowing lowered tag

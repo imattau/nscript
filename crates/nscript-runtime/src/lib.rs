@@ -1406,6 +1406,12 @@ pub struct Runtime<R, S, C, A> {
     max_subscription_batch: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HandlerFlow {
+    Continue,
+    Return,
+}
+
 impl<R, S, C, A> Runtime<R, S, C, A>
 where
     R: RelayHost,
@@ -2038,6 +2044,7 @@ where
         log_host: &mut H,
     ) -> Result<(), RuntimeError> {
         self.execute_handler_items(&handler.body, None, &mut BTreeMap::new(), log_host)
+            .map(|_| ())
     }
 
     /// Execute a handler body with the delivered event available to conditions.
@@ -2055,6 +2062,7 @@ where
         log_host: &mut H,
     ) -> Result<(), RuntimeError> {
         self.execute_handler_items(&handler.body, Some(event), &mut BTreeMap::new(), log_host)
+            .map(|_| ())
     }
 
     fn execute_handler_items<H: LogHost>(
@@ -2063,7 +2071,7 @@ where
         event: Option<&SignedEvent>,
         bindings: &mut BTreeMap<String, String>,
         log_host: &mut H,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<HandlerFlow, RuntimeError> {
         for item in items {
             if let Item::Let(declaration) = item {
                 let Some(value) = Self::handler_text(&declaration.value, event, bindings) else {
@@ -2078,6 +2086,7 @@ where
                 continue;
             };
             match &statement.value {
+                StatementKind::Return(_) => return Ok(HandlerFlow::Return),
                 StatementKind::Expression(expression) => {
                     let ExprKind::Call { callee, arguments } = &expression.value else {
                         return Err(RuntimeError::OperationUnavailable {
@@ -2112,9 +2121,15 @@ where
                     else_body,
                 } => {
                     if Self::evaluate_handler_condition(condition, event, bindings)? {
-                        self.execute_handler_items(then_body, event, bindings, log_host)?;
-                    } else {
-                        self.execute_handler_items(else_body, event, bindings, log_host)?;
+                        if self.execute_handler_items(then_body, event, bindings, log_host)?
+                            == HandlerFlow::Return
+                        {
+                            return Ok(HandlerFlow::Return);
+                        }
+                    } else if self.execute_handler_items(else_body, event, bindings, log_host)?
+                        == HandlerFlow::Return
+                    {
+                        return Ok(HandlerFlow::Return);
                     }
                 }
                 StatementKind::For {
@@ -2126,7 +2141,11 @@ where
                     for (name, value) in &event.unsigned.tags {
                         let previous =
                             bindings.insert(binding.value.clone(), format!("{name}={value}"));
-                        self.execute_handler_items(body, Some(event), bindings, log_host)?;
+                        if self.execute_handler_items(body, Some(event), bindings, log_host)?
+                            == HandlerFlow::Return
+                        {
+                            return Ok(HandlerFlow::Return);
+                        }
                         if let Some(previous) = previous {
                             bindings.insert(binding.value.clone(), previous);
                         } else {
@@ -2142,7 +2161,7 @@ where
                 }
             }
         }
-        Ok(())
+        Ok(HandlerFlow::Continue)
     }
 
     fn evaluate_handler_condition(
@@ -5119,6 +5138,27 @@ mod tests {
             .execute_handler_body_for_event(&checked.handlers[0], &event, &mut logs)
             .expect("let binding executes");
         assert_eq!(logs.records[0].message, "captured");
+    }
+
+    #[test]
+    fn handler_body_return_stops_remaining_statements() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    print(\"before\")\n    return\n    print(\"after\")\n}";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut logs = FakeLogHost::default();
+        runtime
+            .execute_handler_body(&checked.handlers[0], &mut logs)
+            .expect("return executes");
+        assert_eq!(logs.records.len(), 1);
+        assert_eq!(logs.records[0].message, "before");
     }
 
     #[test]
