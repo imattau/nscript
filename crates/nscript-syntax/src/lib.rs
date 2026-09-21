@@ -605,4 +605,51 @@ publish Note { content: "hello" }
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(program.ast.items.len(), 3);
     }
+
+    #[test]
+    fn every_incomplete_layer3_form_is_diagnosed() {
+        // A bare keyword is the smallest incomplete statement of each form.
+        for form in crate::parser::LAYER3_FORMS {
+            let (_, diagnostics) = parse_program(&format!("{form}\n"));
+            assert!(
+                diagnostics.iter().any(|d| d.code == "E1101"),
+                "`{form}` alone was accepted silently: {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn older_forms_missing_a_required_part_are_diagnosed() {
+        // `send "hi"` alone is a valid form (it lowers a bare value), so only
+        // forms that truly need a second part belong here.
+        for source in ["react \"x\"\n", "zap alice\n", "report event_target\n"] {
+            let (_, diagnostics) = parse_program(source);
+            assert!(
+                diagnostics.iter().any(|d| d.code == "E1101"),
+                "{source:?} accepted silently"
+            );
+        }
+    }
+
+    #[test]
+    fn complete_layer3_forms_still_parse_without_diagnostics() {
+        for source in [
+            "send \"hi\" to alice\n",
+            "react \"x\" to event_target\n",
+            "repost event_to_repost\n",
+            "zap alice amount 1000\n",
+            "search Note for \"nostr\"\n",
+            "kick alice\n",
+            "say \"hi\" in chat\n",
+        ] {
+            let (_, diagnostics) = parse_program(source);
+            assert!(diagnostics.is_empty(), "{source:?}: {diagnostics:?}");
+        }
+    }
+
+    #[test]
+    fn a_form_that_already_explains_itself_is_not_reported_twice() {
+        let (_, diagnostics) = parse_program("say \"hi\"\n");
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    }
 }

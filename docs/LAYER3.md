@@ -334,10 +334,12 @@ say "Deployment finished" in chat
 else. The text is parsed above the precedence of `in`, so the separator is not
 mistaken for a membership test (`say "a" + "b" in chat` says `"a" + "b"`).
 
-Unlike some older forms, an incomplete Concord statement is an error, not a
-silent no-op: `kick` with no member, `say "hi"` with no `in <stream>` and the
-like report `E1101`. A moderation statement that vanishes without a diagnostic
-would be a dangerous failure.
+An incomplete Layer 3 statement is an error, never a silent no-op: `kick` with
+no member, `say "hi"` with no `in <stream>`, `react "x"` with no target and the
+like report `E1101`. A statement that vanishes without a diagnostic would let a
+script check clean and do nothing, which for moderation is a dangerous failure.
+The rule covers every Layer 3 keyword (the `LAYER3_FORMS` list in the parser),
+so a new form is covered by adding its keyword there.
 
 The words `kick`, `ban` and `say` are recognised only at the start of a
 statement; they remain ordinary names elsewhere (`let ban = 1`).

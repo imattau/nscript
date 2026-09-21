@@ -18,6 +18,36 @@ pub(crate) fn parse(tokens: &[Token]) -> (AstProgram, Vec<Diagnostic>) {
     (AstProgram { items }, parser.diagnostics)
 }
 
+/// Statement keywords that introduce a Layer 3 intent form (`docs/LAYER3.md`).
+pub(crate) const LAYER3_FORMS: [&str; 26] = [
+    "send",
+    "reply",
+    "repost",
+    "delete",
+    "comment",
+    "report",
+    "label",
+    "status",
+    "draft",
+    "badge",
+    "highlight",
+    "assert",
+    "calendar",
+    "live",
+    "image",
+    "video",
+    "file",
+    "upload",
+    "handler",
+    "search",
+    "react",
+    "say",
+    "zap",
+    "kick",
+    "ban",
+    "on",
+];
+
 struct Parser<'a> {
     tokens: &'a [Token],
     index: usize,
@@ -427,8 +457,28 @@ impl Parser<'_> {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    /// Parses a statement. A Layer 3 form that fails to parse must say so: the
+    /// item loop discards a `None` without a trace, which would let a script
+    /// that means to `kick`, `send` or `zap` check clean and do nothing.
     fn parse_statement(&mut self) -> Option<Statement> {
+        let form = self
+            .word()
+            .and_then(|word| LAYER3_FORMS.iter().find(|form| **form == word))
+            .copied();
+        let start = self.span();
+        let before = self.diagnostics.len();
+        let parsed = self.parse_statement_inner();
+        if let Some(form) = form
+            && parsed.is_none()
+            && self.diagnostics.len() == before
+        {
+            self.error(start, "E1101", format!("incomplete `{form}` statement"));
+        }
+        parsed
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn parse_statement_inner(&mut self) -> Option<Statement> {
         let start = self.span();
         let value = match self.word() {
             Some("return") => {

@@ -167,11 +167,13 @@ members was deliberately not done.
   the generic mechanisms in RFC 0002. Because these forms are parser keywords,
   they are compiler changes, a step beyond the plan's "Concord stays in
   modules" line, taken at the owner's request.
-- **Malformed older Layer 3 forms are silently dropped.** When any older form
-  fails to parse (`react "x"` with no target, for instance) the statement is
-  skipped with no diagnostic and `check` exits 0. The new Concord forms report
-  `E1101` instead; the older forms were left unchanged and could be fixed the
-  same way.
+- **Malformed Layer 3 forms used to be dropped silently.** Any Layer 3 form that
+  failed to parse (`react "x"` with no target, `kick` with no member) was
+  skipped with no diagnostic and `check` exited 0. A wrapper around
+  `parse_statement` now reports `E1101` for every Layer 3 keyword whose
+  statement fails without saying why; forms that already explain themselves are
+  not reported twice. No existing valid program was affected. Statements that do
+  not start with a Layer 3 keyword are not covered by this rule.
 - **`can_*` operations** return `Int` 0/1 and declare a `Storage` effect only
   because descriptors currently require an effect and the language has no
   boolean result; the RFC proposes fixing this.

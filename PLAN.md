@@ -678,8 +678,9 @@ was verified, findings and limits, is in
 Concord Layer 3 sugar: `kick`, `ban` and `say ... in` are parser-level forms
 lowering to `concord04.kick_member`, `concord04.ban_member` and
 `concord01.publish_message`, with conformance fixtures, lowering tests and a
-from-source execution test through the policy gate and Roster. Unlike the older
-forms they report `E1101` when incomplete rather than being dropped silently.
+from-source execution test through the policy gate and Roster. Every Layer 3
+form now reports `E1101` when incomplete rather than being dropped silently (a
+wrapper over `parse_statement` and the `LAYER3_FORMS` list).
 The read side and scoped grants still await RFC 0002.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
