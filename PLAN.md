@@ -533,6 +533,11 @@ Added `wire.rs`: kind-3308 rumor decoding into editions (tag encoding rules,
 author-equals-seal check, verbatim content, NIP-01 rumor id), with the
 concrete payloads from `docs/cord/examples.md` run through the parsers as
 vectors. Live Armada interop is still untested.
+Concord conformance now uses ordinary source programs (`module.operation(...)`
+with record literals and a `permissions` block), including a negative fixture
+showing a kick-only bot cannot call `ban_member` (E3001). The `stream` /
+`on chat.message` / `concord Kick in devs` sugar from `docs/CONCORD.md` is not
+implemented and would need a language RFC.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

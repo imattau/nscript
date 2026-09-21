@@ -24,6 +24,7 @@ against deterministic host fakes.
 | Timers | `timer.ns` | Runtime timer validation | Timer overlap |
 | HTTP origin policy | Example only | Dedicated HTTP host test | Redirect denial |
 | Partial relay publication | `hello-note.ns` | Runtime partial-publication test | Partial publication |
+| Concord module operations | `concord01-publish.ns`, `concord04-moderation.ns` | `concord04-ungranted-ban.ns` | Moderation host rank and grant tests |
 | Package resolution | Resolver transitive-version tests | Missing/incompatible package tests | Resolver version-selection vector |
 
 The Draft 0.1 release-blocker cells are covered by executable vectors or

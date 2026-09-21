@@ -1,0 +1,9 @@
+// A moderation bot holds only the operations it is granted; the host still
+// applies CORD-04 rank at run time.
+use concord04
+
+permissions {
+    concord_kick
+}
+
+let result = concord04.kick_member(alice)

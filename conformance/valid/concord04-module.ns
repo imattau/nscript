@@ -1,6 +1,0 @@
-use concord04
-
-permissions {
-    concord_can
-    concord_kick
-}

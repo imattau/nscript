@@ -1,0 +1,11 @@
+// A typed stream message published to a Concord private stream.
+use concord01
+
+permissions {
+    concord_publish
+}
+
+let result = concord01.publish_message(stream, StreamMessage {
+    author: alice;
+    content: "Deployment finished";
+})
