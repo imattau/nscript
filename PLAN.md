@@ -657,6 +657,21 @@ On 2026-09-21 the owner granted the throwaway interop key a moderator role;
 read-only against the live Control Plane, `AuthorityFold` resolves it to rank 2,
 permission bits 568 (KICK, BAN, MANAGE_MESSAGES, MENTION_EVERYONE) and staff,
 matching the grant. No moderation action has been taken on the live community.
+The Refounding is built (`refound.rs` in `nscript-host-crypto`):
+`plan_refounding` authorizes the rotator (BAN, strict outrank of every removed
+target, synced citation), archives-and-rewraps every current Control head
+verbatim (plaintext seals keep the original authors' signatures; a head with
+no archived seal aborts the whole Refounding rather than dropping authority),
+rolls `community_root` and `control_root` through rekey blobs, rekeys private
+channels under the *prior* root, and seeds the new Guestbook with a refounder
+snapshot. `Refounding::execute` publishes in the mandated order and stops if the
+root roll is not confirmed, so no compaction leaks out; every step is
+idempotent so a failed run can be repeated. Proved on a self-made community: a
+remaining member follows the rotation and folds the compacted plane to the same
+roster, banlist and metadata with authors intact; staff receive the control
+secret; the removed member is cut off and cannot open the new plane. Not yet
+done: driving a Refounding from `ban_member`, and running any of this against a
+live community.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

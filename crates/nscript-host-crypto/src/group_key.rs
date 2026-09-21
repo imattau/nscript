@@ -139,6 +139,11 @@ pub fn xonly_pubkey(secret: &[u8; 32]) -> Result<[u8; 32], CryptoError> {
     Ok(xonly(&key.public_key()))
 }
 
+/// 32 fresh random bytes as lowercase hex (ids such as a snapshot id).
+pub(crate) fn random32_hex() -> Result<String, CryptoError> {
+    Ok(hex(&crate::random32()?))
+}
+
 pub(crate) fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     bytes.iter().fold(String::new(), |mut out, byte| {
