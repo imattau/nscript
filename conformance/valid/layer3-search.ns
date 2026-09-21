@@ -1,0 +1,7 @@
+use nip50
+
+permissions {
+    search
+}
+
+search Note for "nostr scripting"

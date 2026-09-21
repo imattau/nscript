@@ -58,6 +58,18 @@ permissions {
 repost event_to_repost
 ```
 
+Relay-backed search is expressed as intent rather than a raw request record:
+
+```nostr
+use nip50
+
+permissions {
+    search
+}
+
+search Note for "nostr scripting"
+```
+
 The next Layer 3 forms are deliberately syntax sugar over existing typed NIP
 modules:
 

@@ -605,6 +605,50 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("search") => {
+                self.index += 1;
+                let _event = self.parse_type()?;
+                if !self.eat_word("for") {
+                    return None;
+                }
+                let query = self.parse_expression(0)?;
+                let span = query.span;
+                let request = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "SearchRequest".to_owned(),
+                            span,
+                        },
+                        fields: vec![(
+                            Spanned {
+                                value: "query".to_owned(),
+                                span,
+                            },
+                            query,
+                        )],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip50".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "search_events".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![request],
+                    },
+                    span,
+                })
+            }
             _ => StatementKind::Expression(self.parse_expression(0)?),
         };
         self.terminator();
