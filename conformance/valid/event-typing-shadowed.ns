@@ -1,0 +1,19 @@
+// A body that rebinds `event` is left alone: `event.x` no longer names the
+// delivered event.
+use concord01
+use concord04
+
+permissions {
+    concord_read
+    concord_kick
+    read StreamMessage from chat
+    log
+}
+
+let chat = concord01.stream(channel_key)
+stream messages = select StreamMessage from chat
+
+on messages {
+    let event = 1
+    print(event.anything)
+}

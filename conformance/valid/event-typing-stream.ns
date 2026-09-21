@@ -1,0 +1,23 @@
+// A stream handler's `event` is the stream's element type, so its fields are
+// checked: StreamMessage has author and content, plus the signed event's own.
+use concord01
+use concord04
+
+permissions {
+    concord_read
+    concord_kick
+    read StreamMessage from chat
+    log
+}
+
+let chat = concord01.stream(channel_key)
+stream messages = select StreamMessage from chat
+
+on messages {
+    let who = event.author
+    match event {
+        StreamMessage { author, content } if content contains "spam" => concord04.kick_member(author)
+        StreamMessage { kind: 9 } => print(event.content)
+        _ => concord04.kick_member(who)
+    }
+}

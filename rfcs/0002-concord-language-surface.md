@@ -183,9 +183,11 @@ that reads a real encrypted channel and kicks a spammer
 (`nscript-host-crypto/tests/handler.rs`). It is wired into `nscript run --event`, which simulates
 with fake hosts. What remains:
 
-- **`event` is not typed by the source.** A handler over a Concord stream checks
-  as an untyped handler; `event.content` and `event.author` are checked at run
-  time, not against `StreamMessage`.
+- **`event` is now typed by the source** (see `docs/HANDLERS.md`): `on messages`
+  over `select StreamMessage` gives `event` the type `StreamMessage`, its fields
+  are checked, and its values are checked against operation parameters. A stream
+  handler's event type is also the element type now, so a received
+  `StreamMessage` matches it.
 - **Where does a script get a `DerivedKey`?** This is open question 3, and it is
   now concrete: the language has no way to bind a host-held key to a name. The
   `me` principal is the only host-provided value today. `concord01.stream(key)`

@@ -1,0 +1,19 @@
+// error: E1001 nominal-type-mismatch
+// The type follows a `let`: `who` is a Text because `event.content` is.
+use concord01
+use concord04
+
+permissions {
+    concord_read
+    concord_kick
+    read StreamMessage from chat
+    log
+}
+
+let chat = concord01.stream(channel_key)
+stream messages = select StreamMessage from chat
+
+on messages {
+    let who = event.content
+    concord04.kick_member(who)
+}

@@ -1,0 +1,21 @@
+// error: E1101 unknown-name
+// A record pattern on the event may name only fields the event has.
+use concord01
+use concord04
+
+permissions {
+    concord_read
+    concord_kick
+    read StreamMessage from chat
+    log
+}
+
+let chat = concord01.stream(channel_key)
+stream messages = select StreamMessage from chat
+
+on messages {
+    match event {
+        StreamMessage { authr } => print(1)
+        _ => print(2)
+    }
+}

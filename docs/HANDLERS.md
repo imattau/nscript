@@ -58,8 +58,9 @@ event sim-event (Note, kind 1)
 | `--as <key>` | the value of `me`; a handler that uses `me` without it fails, and says so |
 
 An event is a JSON object; every field is optional. `event_type` (default
-`Note`) must equal the handler's event type, which for a stream handler is the
-stream's name. `signer` (or `author`), `content`, `kind`, `tags` (an array of
+must equal the handler's event type. For `on Note` that is `Note`; for a stream
+handler it is the stream's element type, so `stream messages = select
+StreamMessage from chat` gives `on messages` the type `StreamMessage`. `signer` (or `author`), `content`, `kind`, `tags` (an array of
 `[name, value]`), `created_at`, `id` and `signature` fill in the rest.
 
 - **Matching** uses the same rule as a real subscription: event type, plus the
@@ -74,6 +75,34 @@ stream's name. `signer` (or `author`), `content`, `kind`, `tags` (an array of
 - **Startup does not run handler or function bodies.** Only top-level operation
   calls run at startup. Before this, a handler's `kick event.author` was run once
   at startup with its argument dropped, and the whole run failed.
+
+## Typing `event`
+
+A handler's `event` has the type of what it listens to: the named event type for
+`on Note`, or the element type of the stream for `on messages` (found through
+`stream messages = select StreamMessage from chat`). Its fields are the signed
+event's own (`id`, `author`, `pubkey`, `content`, `kind`, `created_at`, `tags`)
+plus whatever the type declares in its module (`record StreamMessage { author:
+PubKey, content: Text }`, `event Note { content: Text, .. }`) or in the program's
+own `event` declaration.
+
+With that, `nscript check` catches, before a script runs:
+
+- **an unknown field**, `event.contnet`, or a record pattern that names one,
+  `StreamMessage { authr }`: `E1101`, listing the fields the type has;
+- **a wrong argument type**: `kick event.content` passes a `Text` where
+  `kick_member` needs a `PubKey`, `E1001`. The type follows a `let`
+  (`let who = event.content` makes `who` a `Text`), and `me` is a `PubKey`.
+
+Only certain types are compared, and only plain scalars (`Text`, `Int`, `Bool`,
+`PubKey`, `EventId`), so a value whose type the checker cannot tell is never
+rejected. A type nothing defines (`on Note` without `use nip01`) is not checked,
+and a body that rebinds `event` (`let event = ..`) is left alone.
+
+A field's declared type is what the module says, which is not always what the
+evaluator holds: a `Metadata` event declares its `content` as a record, but the
+evaluator has the raw JSON text. Access below the first level (`event.content.name`)
+is therefore not checked.
 
 ## Results
 
@@ -188,8 +217,6 @@ An unsupported construct is a stable `OperationUnavailable` or
 - **Not evaluated:** `select`, `fetch`, `latest`, `publish`, `sign`, decimals,
   durations, nested `on`/`every`/`at`/`once`, and `Send`. Publication
   from inside a handler is the largest missing piece.
-- **`event` is not statically typed by its source**, so `event.content` is
-  checked at run time, not by `nscript check`.
 - **The older interpreter** (`Runtime::execute_handler_body*`, and through it
   `run_handler_cycle_with_event_body`) is a separate, text-only path kept for its
   existing callers. It cannot call a module operation. New code should use

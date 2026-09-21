@@ -742,6 +742,18 @@ does not cover its variant, so a Result match handling `Ok` only under a guard i
 `E1301`, as is `Ok(1)` standing in for `Ok`. The evaluator's pattern tests moved
 from hand-built AST to real source. Not supported: an arm whose value is a block
 (the grammar allows it; the syntax tree has no block expression).
+A handler's `event` is now typed from its source (`crates/nscript-semantics/src/events.rs`).
+For `on Note` the type is the named event; for a stream handler it is the stream's
+element type (`stream messages = select StreamMessage from chat` makes `on messages`
+a `StreamMessage`), which also means a received `StreamMessage` now matches the
+handler, where before the handler's type was the stream's name and nothing could
+match it. Fields come from the module descriptors or the program's own `event`
+declarations, plus the signed event's own. `nscript check` now reports an unknown
+`event.field` or record-pattern field (`E1101`, listing the fields) and an argument
+whose known type differs from the operation's parameter (`E1001`: `kick
+event.content` passes a `Text` for a `PubKey`), following `let` bindings. Only plain
+scalars are compared and an undefined type or a rebound `event` is left alone, so a
+value the checker cannot type is never rejected.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

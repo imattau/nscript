@@ -3,6 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nscript_modules::ResolvedModuleGraph;
+
+mod events;
 use nscript_syntax::{
     Diagnostic, Program, RuntimeProfile, Span,
     ast::{Expr, ExprKind, Item, PatternKind, Permission, StatementKind, TypeRef},
@@ -157,6 +159,7 @@ pub fn analyze(program: &Program) -> Vec<Diagnostic> {
 pub fn analyze_with_modules(program: &Program, graph: &ResolvedModuleGraph) -> Vec<Diagnostic> {
     let mut diagnostics = analyze(program);
     diagnostics.extend(validate_module_symbols(program, graph));
+    diagnostics.extend(events::validate(program, graph));
     diagnostics.sort_by_key(|diagnostic| (diagnostic.span.start, diagnostic.code));
     diagnostics
 }
@@ -750,14 +753,6 @@ fn schedule_value(expression: &Expr, every: bool) -> Option<u64> {
     }
 }
 
-fn handler_event_type(expression: &Expr) -> Option<String> {
-    match &expression.value {
-        ExprKind::Identifier(name) => Some(name.clone()),
-        ExprKind::Construct { name, .. } => Some(name.value.clone()),
-        _ => None,
-    }
-}
-
 fn handler_predicate_filters(expression: Option<&Expr>) -> (Option<String>, Vec<(String, String)>) {
     let Some(expression) = expression else {
         return (None, Vec::new());
@@ -990,7 +985,7 @@ impl<'a> Checker<'a> {
                 if let Some(predicate) = predicate {
                     self.check_expr(predicate, locals);
                 }
-                if let Some(event_type) = handler_event_type(source) {
+                if let Some(event_type) = events::handler_event_type(source, self.program) {
                     let (author, tag_equals) = handler_predicate_filters(predicate.as_ref());
                     self.handlers.push(CheckedHandler {
                         event_type,
@@ -1012,7 +1007,11 @@ impl<'a> Checker<'a> {
                 handler.insert(
                     "event".to_owned(),
                     TypeRef {
-                        name: "Signed<Event>".to_owned(),
+                        name: format!(
+                            "Signed<{}>",
+                            events::handler_event_type(source, self.program)
+                                .unwrap_or_else(|| "Event".to_owned())
+                        ),
                         arguments: Vec::new(),
                         span,
                     },

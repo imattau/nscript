@@ -397,3 +397,90 @@ fn a_script_branches_on_a_kick_the_roster_refuses() {
         "only the permitted kick was published"
     );
 }
+
+const STREAM_BOT: &str = r#"
+use concord01
+use concord04
+
+permissions {
+    concord_read
+    concord_kick
+    read StreamMessage from chat
+    log
+}
+
+let chat = concord01.stream(channel_key)
+stream messages = select StreamMessage from chat
+
+on messages {
+    if event.content contains "spam" {
+        print("kicking " + event.author)
+        kick event.author
+    }
+}
+"#;
+
+#[test]
+fn a_stream_handler_receives_the_messages_the_reader_delivers() {
+    use nscript_runtime::eval::policy_for;
+
+    let (program, diagnostics) = nscript_syntax::parse_program(STREAM_BOT);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let (checked, diagnostics) = nscript_semantics::check(&program);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let checked = checked.unwrap();
+    // The handler's event type is the stream's element type, not the stream's
+    // name, so a received StreamMessage matches it. (It used to be `messages`,
+    // which no received message could ever match.)
+    assert_eq!(checked.handlers[0].event_type, "StreamMessage");
+
+    let plane = DerivedKey::new(
+        group_key("concord/channel", &ROOT, &unhex32(CHANNEL), Some(0))
+            .secret_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    let mut reader = ChannelReader::new(&plane, CHANNEL, 0).unwrap();
+    let wraps = [
+        channel_wrap(&ALICE, "hello everyone", 100),
+        channel_wrap(&SPAMMER, "buy spam now", 200),
+    ];
+    let messages = reader.ingest_all(wraps.iter().map(String::as_str), NOW, &BTreeSet::new());
+
+    let recorder = Recorder::default();
+    let (mut moderation, _) = moderation_host(&recorder);
+    let mut runtime = Runtime::new(
+        FakeRelayHost::default(),
+        FakeSignerHost::default(),
+        FakeClock::default(),
+        RecordingAudit::default(),
+    );
+    let mut log = FakeLogHost::default();
+    let policy = policy_for(&checked);
+    for message in &messages {
+        // Ordinary event matching: no special-casing of the event's type.
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &message.to_signed_event(),
+            &policy,
+            &mut moderation,
+            &mut log,
+            Some(&pk(&BOT)),
+            EvalLimits::default(),
+        );
+        assert_eq!(
+            outcomes.len(),
+            1,
+            "the stream handler matched the received message"
+        );
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+    }
+    assert_eq!(log.records.len(), 1);
+    assert_eq!(log.records[0].message, format!("kicking {}", pk(&SPAMMER)));
+    assert_eq!(
+        recorder.0.lock().unwrap().len(),
+        1,
+        "one real Guestbook kick was published"
+    );
+}

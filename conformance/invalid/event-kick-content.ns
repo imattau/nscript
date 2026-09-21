@@ -1,0 +1,18 @@
+// error: E1001 nominal-type-mismatch
+// `event.content` is a Text; `kick_member` needs a PubKey.
+use concord01
+use concord04
+
+permissions {
+    concord_read
+    concord_kick
+    read StreamMessage from chat
+    log
+}
+
+let chat = concord01.stream(channel_key)
+stream messages = select StreamMessage from chat
+
+on messages {
+    concord04.kick_member(event.content)
+}

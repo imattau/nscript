@@ -168,8 +168,9 @@ members was deliberately not done.
   `ChannelReader` supplies verified messages, and handler bodies now run under a
   bounded evaluator (`docs/HANDLERS.md`). A moderation bot that reads a real
   encrypted channel and issues a real kick is tested end to end. `nscript run --event` delivers
-  events to handlers in the simulator. `event` is not statically
-  typed from its source, and a script has no way yet to bind a host-held key.
+  events to handlers in the simulator. `event` is typed from its
+  source (a stream handler's `event` is its `StreamMessage`, with its fields and
+  argument types checked), and a script has no way yet to bind a host-held key.
   Scoped grants (`concord Kick in devs`) are not started. See RFC 0002's
   implementation notes. Because these forms are parser keywords,
   they are compiler changes, a step beyond the plan's "Concord stays in

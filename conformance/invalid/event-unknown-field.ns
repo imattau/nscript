@@ -1,0 +1,18 @@
+// error: E1101 unknown-name
+// `StreamMessage` has `content`, not `contnet`.
+use concord01
+use concord04
+
+permissions {
+    concord_read
+    concord_kick
+    read StreamMessage from chat
+    log
+}
+
+let chat = concord01.stream(channel_key)
+stream messages = select StreamMessage from chat
+
+on messages {
+    print(event.contnet)
+}
