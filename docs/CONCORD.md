@@ -66,6 +66,10 @@ on community.message as msg {
 An automation can be granted `concord Kick` without being granted role or
 community-metadata authority.
 
+The `stream`/`on` and `concord Kick in devs` forms above are aspirational; see
+[RFC 0002](../rfcs/0002-concord-language-surface.md) for the proposed generic
+language extensions that would support them.
+
 ## Module boundary
 
 Concord semantics must remain modules, not compiler primitives:

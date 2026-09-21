@@ -550,6 +550,10 @@ with the delete, timer-notice and ephemeral exemptions, enforcement by the
 signed rumor's own tag (refuse at ingest, hide, sweep), and timer notices
 believed only from `MANAGE_METADATA` holders. Wiring the sweep to `TimerHost`
 and tagging the outer wrap are host work.
+Drafted [RFC 0002](rfcs/0002-concord-language-surface.md) proposing generic
+module-provided stream sources, scoped permissions and fold queries so the
+`docs/CONCORD.md` sugar can be expressed without Concord-specific compiler
+support. It is a proposal only and awaits review.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.
