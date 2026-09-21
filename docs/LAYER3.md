@@ -97,6 +97,18 @@ delete event_to_delete
 The runtime publishes a typed deletion request; it does not claim that every
 relay will remove the original event.
 
+Comments can target arbitrary event kinds through NIP-22:
+
+```nostr
+use nip22
+
+permissions {
+    comment
+}
+
+comment "A useful comment" on event_target
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

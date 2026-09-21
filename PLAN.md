@@ -369,6 +369,8 @@ Implemented `zap recipient amount value` lowering to
 `nip57.create_zap_request`; payment execution remains an explicit host effect.
 Implemented `delete target` lowering to `nip09.request_deletion` with an empty
 reason, preserving NIP-09's request semantics and deletion permission check.
+Implemented `comment "content" on target` lowering to
+`nip22.publish_comment` for arbitrary event targets.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent

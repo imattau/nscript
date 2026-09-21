@@ -1,0 +1,7 @@
+use nip22
+
+permissions {
+    comment
+}
+
+comment "A useful comment" on "event-target"

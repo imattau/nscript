@@ -657,6 +657,59 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("comment") => {
+                self.index += 1;
+                let content = self.parse_expression(0)?;
+                if !self.eat_word("on") {
+                    return None;
+                }
+                let target = self.parse_expression(0)?;
+                let span = content.span.join(target.span);
+                let comment = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "Comment".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "target".to_owned(),
+                                    span,
+                                },
+                                target,
+                            ),
+                            (
+                                Spanned {
+                                    value: "content".to_owned(),
+                                    span,
+                                },
+                                content,
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip22".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_comment".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![comment],
+                    },
+                    span,
+                })
+            }
             Some("search") => {
                 self.index += 1;
                 let _event = self.parse_type()?;
