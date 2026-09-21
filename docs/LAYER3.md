@@ -109,6 +109,18 @@ permissions {
 comment "A useful comment" on event_target
 ```
 
+Moderation reports use an explicit category:
+
+```nostr
+use nip56
+
+permissions {
+    report
+}
+
+report event_to_report as "spam"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

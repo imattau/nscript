@@ -1,0 +1,7 @@
+use nip56
+
+permissions {
+    report
+}
+
+report "event-to-report" as "spam"

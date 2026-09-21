@@ -371,6 +371,8 @@ Implemented `delete target` lowering to `nip09.request_deletion` with an empty
 reason, preserving NIP-09's request semantics and deletion permission check.
 Implemented `comment "content" on target` lowering to
 `nip22.publish_comment` for arbitrary event targets.
+Implemented `report target as category` lowering to `nip56.publish_report`
+with an empty optional report description.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent
