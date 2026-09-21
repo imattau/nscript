@@ -353,6 +353,9 @@ the existing relay and signer hosts, preserving result handles and typed event
 boundaries.
 The CLI conformance suite now compiles a real `hello-note.ns` source artifact
 and verifies the embedded dispatch markers for create, sign, and publish.
+`execute_nscript_wasm` provides the deterministic reference executor: it
+validates the WASM header, extracts `nscript.dispatch`, decodes it, and routes
+the publication sequence through the signer and relay hosts.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by

@@ -247,6 +247,83 @@ pub fn execute_wasm_publications<R: RelayHost, S: SignerHost>(
     Ok(reports)
 }
 
+/// Executes the `NScript` dispatch section embedded in a compiled WASM artifact.
+///
+/// This is the deterministic reference path used when no general WASM engine
+/// is available; an engine-backed adapter can reuse the same host functions.
+///
+/// # Errors
+///
+/// Returns [`RuntimeError::InvalidWasmPayload`] for malformed modules or
+/// propagates signer and relay host failures.
+pub fn execute_nscript_wasm<R: RelayHost, S: SignerHost>(
+    module: &[u8],
+    relay: &mut R,
+    signer: &mut S,
+    invocation: InvocationId,
+) -> Result<Vec<PublishReport>, RuntimeError> {
+    if module.get(..8) != Some(b"\0asm\x01\0\0\0") {
+        return Err(RuntimeError::InvalidWasmPayload);
+    }
+    let mut cursor = 8;
+    while cursor < module.len() {
+        let section_id = *module.get(cursor).ok_or(RuntimeError::InvalidWasmPayload)?;
+        cursor += 1;
+        let (section_len, consumed) = read_leb_u32(&module[cursor..])?;
+        cursor += consumed;
+        let end = cursor
+            .checked_add(
+                usize::try_from(section_len).map_err(|_| RuntimeError::InvalidWasmPayload)?,
+            )
+            .ok_or(RuntimeError::InvalidWasmPayload)?;
+        let payload = module
+            .get(cursor..end)
+            .ok_or(RuntimeError::InvalidWasmPayload)?;
+        cursor = end;
+        if section_id != 0 {
+            continue;
+        }
+        let (name_len, name_bytes) = read_name(payload)?;
+        if name_bytes != b"nscript.dispatch" {
+            continue;
+        }
+        let data_start = name_len;
+        let records = decode_wasm_dispatch(
+            &payload[data_start..],
+            0,
+            u32::try_from(payload.len() - data_start)
+                .map_err(|_| RuntimeError::InvalidWasmPayload)?,
+        )?;
+        return execute_wasm_publications(relay, signer, invocation, &records);
+    }
+    Err(RuntimeError::InvalidWasmPayload)
+}
+
+fn read_leb_u32(bytes: &[u8]) -> Result<(u32, usize), RuntimeError> {
+    let mut value = 0u32;
+    for (index, byte) in bytes.iter().copied().enumerate().take(5) {
+        value |= u32::from(byte & 0x7f) << (index * 7);
+        if byte & 0x80 == 0 {
+            return Ok((value, index + 1));
+        }
+    }
+    Err(RuntimeError::InvalidWasmPayload)
+}
+
+fn read_name(bytes: &[u8]) -> Result<(usize, &[u8]), RuntimeError> {
+    let (length, consumed) = read_leb_u32(bytes)?;
+    let length = usize::try_from(length).map_err(|_| RuntimeError::InvalidWasmPayload)?;
+    let end = consumed
+        .checked_add(length)
+        .ok_or(RuntimeError::InvalidWasmPayload)?;
+    Ok((
+        end,
+        bytes
+            .get(consumed..end)
+            .ok_or(RuntimeError::InvalidWasmPayload)?,
+    ))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrivateMessage {
     pub content: String,
@@ -4165,6 +4242,29 @@ mod tests {
         assert_eq!(reports.len(), 1);
         assert_eq!(signer.signed.len(), 1);
         assert_eq!(relay.published.len(), 1);
+    }
+
+    #[test]
+    fn reference_wasm_executor_reads_dispatch_section() {
+        let dispatch = br#"[{"op":"create_event","result":"%0","event":"Note","kind":1,"content":"hello"},{"op":"sign_event","result":"%1","event":"%0","signer":"account"},{"op":"publish_event","event":"%1","relayset":"public"}]"#;
+        let name = b"nscript.dispatch";
+        let mut payload = vec![u8::try_from(name.len()).expect("test name fits")];
+        payload.extend_from_slice(name);
+        payload.extend_from_slice(dispatch);
+        let mut module = b"\0asm\x01\0\0\0".to_vec();
+        module.push(0);
+        let payload_len = u32::try_from(payload.len()).expect("test payload fits");
+        module.push(u8::try_from(payload_len & 0x7f).expect("length byte fits") | 0x80);
+        module.push(u8::try_from(payload_len >> 7).expect("length continuation fits"));
+        module.extend_from_slice(&payload);
+        let mut relay = FakeRelayHost {
+            relays: [("public".to_owned(), true)].into_iter().collect(),
+            ..FakeRelayHost::default()
+        };
+        let mut signer = FakeSignerHost::default();
+        let reports =
+            execute_nscript_wasm(&module, &mut relay, &mut signer, 1).expect("executes dispatch");
+        assert_eq!(reports.len(), 1);
     }
 
     #[test]
