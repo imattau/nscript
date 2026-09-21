@@ -498,6 +498,9 @@ The fake operation host now preserves typed `SharedSecret`, `DerivedKey`, and
 Added the `SealedEvent` boundary and deterministic seal/open operation
 contracts; the fake host round-trip proves exact `SignedBytes` preservation
 without exposing or reserialising the payload.
+Added kind-1059 `StreamWrap` wrap/unwrap operations with stream-pubkey
+validation, completing the CORD-01 wire path against the fake host; the
+deterministic state-fold primitive is the next stage.
 
 ## Deferred
 

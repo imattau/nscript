@@ -784,6 +784,26 @@ impl std::fmt::Debug for SealedEvent {
     }
 }
 
+/// CORD-01 private-stream envelope: a kind-1059 wrap addressed to the stream
+/// public key and carrying an opaque sealed payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StreamWrap {
+    pub kind: u16,
+    pub stream_pubkey: String,
+    pub sealed: SealedEvent,
+}
+
+fn concord_test_stream_pubkey(stream: &DerivedKey) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"nscript/concord01/test-stream-pubkey\0");
+    digest.update(stream.as_bytes());
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthenticatedRelay {
     pub relay: String,
@@ -1066,6 +1086,7 @@ pub enum OperationValue {
     DerivedKey(DerivedKey),
     SignedBytes(SignedBytes),
     SealedEvent(SealedEvent),
+    StreamWrap(StreamWrap),
     StreamMessage(StreamMessage),
     AuthenticatedRelay(AuthenticatedRelay),
     SearchRequest(SearchRequest),
@@ -3768,6 +3789,39 @@ impl OperationHost for FakeOperationHost {
                 SignedBytes::new(payload.as_bytes()[prefix.len()..].to_vec())
                     .map(OperationValue::SignedBytes)
             }
+            ("concord01", "wrap_stream") => {
+                let [
+                    OperationValue::DerivedKey(stream),
+                    OperationValue::SealedEvent(sealed),
+                ] = arguments
+                else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                Ok(OperationValue::StreamWrap(StreamWrap {
+                    kind: 1059,
+                    stream_pubkey: concord_test_stream_pubkey(stream),
+                    sealed: sealed.clone(),
+                }))
+            }
+            ("concord01", "unwrap_stream") => {
+                let [
+                    OperationValue::DerivedKey(stream),
+                    OperationValue::StreamWrap(wrap),
+                ] = arguments
+                else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if wrap.kind != 1059 || wrap.stream_pubkey != concord_test_stream_pubkey(stream) {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::SealedEvent(wrap.sealed.clone()))
+            }
             ("concord01", "publish_message") => {
                 let [
                     OperationValue::DerivedKey(stream),
@@ -4833,6 +4887,47 @@ mod tests {
             )
             .expect("open available");
         assert_eq!(opened, OperationValue::SignedBytes(payload));
+    }
+
+    #[test]
+    fn concord01_stream_wrap_round_trips_and_rejects_wrong_stream() {
+        let key = DerivedKey::new(vec![1, 2, 3]).expect("key accepted");
+        let other = DerivedKey::new(vec![9, 9]).expect("key accepted");
+        let sealed = SealedEvent::new(vec![7, 0, 255]).expect("sealed accepted");
+        let mut host = FakeOperationHost::default();
+        let wrap = host
+            .call(
+                1,
+                "concord01",
+                "wrap_stream",
+                &[
+                    OperationValue::DerivedKey(key.clone()),
+                    OperationValue::SealedEvent(sealed.clone()),
+                ],
+            )
+            .expect("wrap available");
+        let OperationValue::StreamWrap(inner) = &wrap else {
+            panic!("expected stream wrap");
+        };
+        assert_eq!(inner.kind, 1059);
+        let opened = host
+            .call(
+                2,
+                "concord01",
+                "unwrap_stream",
+                &[OperationValue::DerivedKey(key), wrap.clone()],
+            )
+            .expect("unwrap available");
+        assert_eq!(opened, OperationValue::SealedEvent(sealed));
+        assert!(
+            host.call(
+                3,
+                "concord01",
+                "unwrap_stream",
+                &[OperationValue::DerivedKey(other), wrap],
+            )
+            .is_err()
+        );
     }
 
     #[test]
