@@ -6,6 +6,7 @@ pub mod edition;
 pub mod fold;
 pub mod moderation;
 pub mod stream;
+pub mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
