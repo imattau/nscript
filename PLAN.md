@@ -506,8 +506,11 @@ Added the generic `fold::Fold` reducer primitive: events are ordered by
 initial state so arrival order never changes the result. CORD-02/03 community
 and channel models build on it next.
 Added the `concord02` module descriptor (nominal `CommunityId`, `ChannelId`,
-`Epoch`, `Channel`) and a `community` reducer folding channel lifecycle and
-strictly increasing epochs over `Fold`. Authority checks remain CORD-04.
+`Epoch`, `Channel`). Community state is now read from CORD-04 versioned
+editions: `edition::EditionFold` implements the spec hash chain, refuse-
+downgrade, authority-then-lowest-id tie-break, and tracking vs fresh-joiner
+gap handling; `community::CommunityView` interprets community and channel
+metadata (terminal deletion, 64-byte name cap, ignore-invalid-content).
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

@@ -18,6 +18,7 @@ nominal Epoch from Integer {
 record Channel {
     field id: ChannelId
     field name: Text
+    field private: Bool
 }
 
 error CommunityError {
