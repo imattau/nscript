@@ -354,6 +354,8 @@ IR output and the WASM custom sections.
 Added `examples/layer3-bot.ns` as a runnable Layer 3 showcase combining native
 publication syntax, typed event predicates, local bindings, conditions, logs,
 and early returns.
+Documented the Layer 3 lowering contract and queued `send`, `reply`, `repost`,
+and `search` as syntax sugar over existing typed NIP modules.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent
