@@ -3,4 +3,6 @@ use concord01
 permissions {
     concord_key_derivation
     concord_publish
+    concord_seal
+    concord_open
 }

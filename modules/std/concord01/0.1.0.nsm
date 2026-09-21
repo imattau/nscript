@@ -16,6 +16,10 @@ nominal SignedBytes from Bytes {
     require length(value) > 0
 }
 
+nominal SealedEvent from Bytes {
+    require length(value) > 0
+}
+
 record StreamMessage {
     field author: PubKey
     field content: Text
@@ -29,5 +33,11 @@ error StreamMessageError {
     field message: Text
 }
 
+error ConcordSealError {
+    field message: Text
+}
+
 operation derive_stream_key(secret: SharedSecret) -> Result<DerivedKey,ConcordKeyError> effect Encrypt permission concord_key_derivation
 operation publish_message(stream: DerivedKey, message: StreamMessage) -> Result<PublishReport,StreamMessageError> effect Encrypt,Sign,Relay permission concord_publish
+operation seal_message(stream: DerivedKey, payload: SignedBytes) -> Result<SealedEvent,ConcordSealError> effect Encrypt permission concord_seal
+operation open_message(stream: DerivedKey, payload: SealedEvent) -> Result<SignedBytes,ConcordSealError> effect Decrypt permission concord_open

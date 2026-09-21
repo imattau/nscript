@@ -19,6 +19,7 @@ use tungstenite::{Message, WebSocket, client::connect};
 pub type InvocationId = u64;
 pub const MAX_WASM_DISPATCH_BYTES: usize = 1 << 20;
 pub const MAX_WASM_OPERATIONS: usize = 1024;
+const CONCORD_TEST_SEAL_PREFIX: &[u8] = b"nscript/concord01/test-seal\0";
 
 #[cfg(feature = "wasm-engine")]
 pub mod wasmi_engine {
@@ -750,6 +751,39 @@ pub struct StreamMessage {
     pub content: String,
 }
 
+#[derive(Clone, Eq, PartialEq)]
+pub struct SealedEvent(Vec<u8>);
+
+impl SealedEvent {
+    /// Creates an opaque sealed event, rejecting empty values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::InvalidConcordBytes`] for an empty value.
+    pub fn new(bytes: Vec<u8>) -> Result<Self, RuntimeError> {
+        if bytes.is_empty() {
+            return Err(RuntimeError::InvalidConcordBytes {
+                type_name: "SealedEvent",
+            });
+        }
+        Ok(Self(bytes))
+    }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SealedEvent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SealedEvent")
+            .field("length", &self.0.len())
+            .finish()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthenticatedRelay {
     pub relay: String,
@@ -1031,6 +1065,7 @@ pub enum OperationValue {
     SharedSecret(SharedSecret),
     DerivedKey(DerivedKey),
     SignedBytes(SignedBytes),
+    SealedEvent(SealedEvent),
     StreamMessage(StreamMessage),
     AuthenticatedRelay(AuthenticatedRelay),
     SearchRequest(SearchRequest),
@@ -3695,6 +3730,44 @@ impl OperationHost for FakeOperationHost {
                 digest.update(secret.as_bytes());
                 DerivedKey::new(digest.finalize().to_vec()).map(OperationValue::DerivedKey)
             }
+            ("concord01", "seal_message") => {
+                let [
+                    OperationValue::DerivedKey(stream),
+                    OperationValue::SignedBytes(payload),
+                ] = arguments
+                else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if stream.as_bytes().is_empty() || payload.as_bytes().is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                let mut sealed = CONCORD_TEST_SEAL_PREFIX.to_vec();
+                sealed.extend_from_slice(payload.as_bytes());
+                SealedEvent::new(sealed).map(OperationValue::SealedEvent)
+            }
+            ("concord01", "open_message") => {
+                let [
+                    OperationValue::DerivedKey(stream),
+                    OperationValue::SealedEvent(payload),
+                ] = arguments
+                else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                let prefix = CONCORD_TEST_SEAL_PREFIX;
+                if stream.as_bytes().is_empty() || !payload.as_bytes().starts_with(prefix) {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                SignedBytes::new(payload.as_bytes()[prefix.len()..].to_vec())
+                    .map(OperationValue::SignedBytes)
+            }
             ("concord01", "publish_message") => {
                 let [
                     OperationValue::DerivedKey(stream),
@@ -4727,6 +4800,39 @@ mod tests {
             )
             .expect("stream publication available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn concord01_seal_round_trip_preserves_exact_signed_bytes() {
+        let key = DerivedKey::new(vec![1, 2, 3]).expect("key accepted");
+        let payload = SignedBytes::new(vec![0, 1, 255, 2]).expect("payload accepted");
+        let mut host = FakeOperationHost::default();
+        let sealed = host
+            .call(
+                1,
+                "concord01",
+                "seal_message",
+                &[
+                    OperationValue::DerivedKey(key.clone()),
+                    OperationValue::SignedBytes(payload.clone()),
+                ],
+            )
+            .expect("seal available");
+        let OperationValue::SealedEvent(sealed) = sealed else {
+            panic!("expected sealed event");
+        };
+        let opened = host
+            .call(
+                2,
+                "concord01",
+                "open_message",
+                &[
+                    OperationValue::DerivedKey(key),
+                    OperationValue::SealedEvent(sealed),
+                ],
+            )
+            .expect("open available");
+        assert_eq!(opened, OperationValue::SignedBytes(payload));
     }
 
     #[test]

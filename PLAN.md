@@ -495,6 +495,9 @@ behind this host contract.
 The fake operation host now preserves typed `SharedSecret`, `DerivedKey`, and
 `StreamMessage` boundaries for `concord01.derive_stream_key` and
 `concord01.publish_message`, providing the first executable CORD-01 path.
+Added the `SealedEvent` boundary and deterministic seal/open operation
+contracts; the fake host round-trip proves exact `SignedBytes` preservation
+without exposing or reserialising the payload.
 
 ## Deferred
 
