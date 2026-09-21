@@ -216,12 +216,24 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
             "permissions_reviewed": true
         }
     });
-    let rendered = serde_json::to_string_pretty(&manifest).expect("manifest is serializable");
+    let canonical = arguments.iter().any(|argument| argument == "--canonical");
+    let rendered = if canonical {
+        serde_json::to_string(&manifest).expect("manifest is serializable")
+    } else {
+        serde_json::to_string_pretty(&manifest).expect("manifest is serializable")
+    };
     if let Some(output) = flag("--output") {
-        if fs::write(&output, format!("{rendered}\n")).is_err() {
+        let contents = if canonical {
+            rendered.clone()
+        } else {
+            format!("{rendered}\n")
+        };
+        if fs::write(&output, contents).is_err() {
             eprintln!("could not write manifest: {output}");
             return ExitCode::from(1);
         }
+    } else if canonical {
+        print!("{rendered}");
     } else {
         println!("{rendered}");
     }

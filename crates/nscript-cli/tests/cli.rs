@@ -150,6 +150,30 @@ fn generates_npack_compatible_manifest() {
 }
 
 #[test]
+fn canonical_manifest_output_is_compact_json() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args([
+            "package",
+            "manifest",
+            "--publisher",
+            "npub1publisher",
+            "--name",
+            "hello",
+            "--version",
+            "0.1.0",
+            "--artifact",
+            "hello.npk",
+            "--canonical",
+        ])
+        .arg(repository_path("conformance/valid/hello-note.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!output.stdout.contains(&b'\n'));
+    let _: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+}
+
+#[test]
 fn package_manifest_embeds_verified_lockfile_fingerprint() {
     let source = repository_path("conformance/valid/hello-note.ns");
     let lock_path =

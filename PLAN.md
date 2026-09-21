@@ -347,6 +347,8 @@ Manifests also expose the complete resolved module set with canonical hashes in
 their NScript metadata.
 `package manifest --hash-artifact` can compute the local archive digest directly
 for npack handoff.
+`package manifest --canonical` emits compact deterministic JSON as stable input
+for future package signatures.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent
