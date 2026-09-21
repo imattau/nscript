@@ -164,6 +164,17 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
             )
         })
         .collect::<Vec<_>>();
+    let resolved_modules = graph
+        .modules
+        .values()
+        .map(|module| {
+            serde_json::json!({
+                "name": module.descriptor.id.name,
+                "version": module.descriptor.id.version.to_string(),
+                "sha256": hash_hex(&module.descriptor.canonical_hash)
+            })
+        })
+        .collect::<Vec<_>>();
     let manifest = serde_json::json!({
         "publisher": publisher,
         "name": name,
@@ -182,6 +193,7 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
         "nscript": {
             "source": source,
             "lockfile": lock_metadata,
+            "resolved_modules": resolved_modules,
             "effects": checked.effects.iter().map(|effect| format!("{effect:?}").to_lowercase()).collect::<Vec<_>>(),
             "permissions_reviewed": true
         }

@@ -139,6 +139,14 @@ fn generates_npack_compatible_manifest() {
     assert_eq!(manifest["runtime_requires"][0], "nscript-runtime >=0.1");
     assert_eq!(manifest["nscript"]["permissions_reviewed"], true);
     assert_eq!(manifest["dependencies"][0], "nip01 *");
+    assert!(
+        manifest["nscript"]["resolved_modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|module| module["name"] == "nip01"
+                && module["sha256"].as_str().unwrap().len() == 64)
+    );
 }
 
 #[test]

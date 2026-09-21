@@ -22,6 +22,8 @@ distribution.
 The top-level `dependencies` field is populated from the script's resolved root
 module requirements, so the package metadata does not silently omit NIP module
 dependencies.
+The `nscript.resolved_modules` metadata additionally records every selected
+module version and canonical descriptor hash for review and reproducibility.
 
 Pass `--lock nscript.lock.json` to `package manifest` to require an up-to-date
 lockfile and embed its SHA-256 fingerprint in the NScript manifest metadata.

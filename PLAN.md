@@ -334,6 +334,8 @@ a committed lockfile before packaging.
 fingerprint in the generated package metadata.
 Package manifests now also carry the script's resolved root module requirements
 in the npack dependency field.
+Manifests also expose the complete resolved module set with canonical hashes in
+their NScript metadata.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent
