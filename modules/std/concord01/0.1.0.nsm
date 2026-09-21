@@ -1,6 +1,6 @@
 module concord01 @ 0.1.0
 language ">=0.1.0 <0.2.0"
-reference "https://github.com/ereignishorizont/concord/blob/main/CORD-01.md"
+reference "https://github.com/concord-protocol/concord/blob/main/01.md"
 use nip44 @ "^0.1"
 use nip59 @ "^0.1"
 

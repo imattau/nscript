@@ -508,6 +508,9 @@ and channel models build on it next.
 Added the `concord02` module descriptor (nominal `CommunityId`, `ChannelId`,
 `Epoch`, `Channel`) and a `community` reducer folding channel lifecycle and
 strictly increasing epochs over `Fold`. Authority checks remain CORD-04.
+Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
+the CORD-01 seal kinds and the CORD-02 community model need rework before
+CORD-04: state is versioned editions, not ad-hoc events.
 
 ## Deferred
 

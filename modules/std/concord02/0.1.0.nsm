@@ -1,6 +1,6 @@
 module concord02 @ 0.1.0
 language ">=0.1.0 <0.2.0"
-reference "https://github.com/ereignishorizont/concord/blob/main/CORD-02.md"
+reference "https://github.com/concord-protocol/concord/blob/main/02.md"
 use concord01 @ "^0.1"
 
 nominal CommunityId from Text {
