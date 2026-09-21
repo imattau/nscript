@@ -360,6 +360,7 @@ Implemented `send "..." to recipient` lowering to `nip17.send_private` with
 the existing typed permission and operation checks.
 Implemented `reply "..." to target` lowering to `nip10.publish_reply`, with
 the target used as both root and reply reference for the shorthand form.
+Implemented `repost target` lowering to `nip18.publish_repost`.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent

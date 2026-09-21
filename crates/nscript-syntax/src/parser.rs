@@ -565,6 +565,46 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("repost") => {
+                self.index += 1;
+                let target = self.parse_expression(0)?;
+                let span = target.span;
+                let repost = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "Repost".to_owned(),
+                            span,
+                        },
+                        fields: vec![(
+                            Spanned {
+                                value: "target".to_owned(),
+                                span,
+                            },
+                            target,
+                        )],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip18".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_repost".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![repost],
+                    },
+                    span,
+                })
+            }
             _ => StatementKind::Expression(self.parse_expression(0)?),
         };
         self.terminator();

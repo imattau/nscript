@@ -46,6 +46,18 @@ permissions {
 reply "Agreed" to event_target
 ```
 
+Reposts use a direct intent form as well:
+
+```nostr
+use nip18
+
+permissions {
+    repost
+}
+
+repost event_to_repost
+```
+
 The next Layer 3 forms are deliberately syntax sugar over existing typed NIP
 modules:
 

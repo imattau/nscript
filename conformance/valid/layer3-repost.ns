@@ -1,0 +1,7 @@
+use nip18
+
+permissions {
+    repost
+}
+
+repost "event-to-repost"
