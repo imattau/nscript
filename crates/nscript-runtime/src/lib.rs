@@ -4,6 +4,7 @@ pub mod authority;
 pub mod community;
 pub mod edition;
 pub mod fold;
+pub mod moderation;
 pub mod stream;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -445,18 +446,41 @@ impl PublishReport {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeError {
-    CapabilityDenied { capability: String },
-    SignerDenied { signer: String },
-    RelayUnavailable { relayset: String },
+    CapabilityDenied {
+        capability: String,
+    },
+    SignerDenied {
+        signer: String,
+    },
+    RelayUnavailable {
+        relayset: String,
+    },
     PublicationRejected,
     StoreConflict,
     Cancelled,
-    ResourceLimit { resource: String },
-    OperationUnavailable { module: String, operation: String },
-    InvalidOperationArguments { operation: String },
-    PaymentLimitExceeded { amount: i64, limit: i64 },
+    ResourceLimit {
+        resource: String,
+    },
+    OperationUnavailable {
+        module: String,
+        operation: String,
+    },
+    InvalidOperationArguments {
+        operation: String,
+    },
+    PaymentLimitExceeded {
+        amount: i64,
+        limit: i64,
+    },
     InvalidWasmPayload,
-    InvalidConcordBytes { type_name: &'static str },
+    InvalidConcordBytes {
+        type_name: &'static str,
+    },
+    /// The acting identity lacks the rank or permission bit for the action.
+    AuthorityDenied {
+        actor: String,
+        action: String,
+    },
 }
 
 /// Decodes a dispatch payload supplied by a WASM operation import.

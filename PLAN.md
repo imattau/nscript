@@ -522,6 +522,13 @@ resolved against the current roster), keyless `concord/grant` and
 `concord/banlist` coordinates via RFC 5869 HKDF, and `Roster::can` for
 capability-checked actions. Guestbook kicks, `control_wrap` delivery and pins
 remain.
+Added the `concord04` module and `moderation::ModerationHost`, the constrained
+moderation bot boundary: the program's `OperationPolicy` decides which
+operations a script may call (a kick-only bot cannot ban), and the host
+separately enforces the CORD-04 bit plus strict-outrank rule against the live
+Roster, so revocation takes effect on the next re-fold. Kick and ban currently
+record directives; composing them into Grant/Banlist editions and the
+Refounding is later host work.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

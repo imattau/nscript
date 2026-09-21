@@ -1,0 +1,13 @@
+module concord04 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/concord-protocol/concord/blob/main/04.md"
+use concord02 @ "^0.1"
+
+error ModerationError {
+    field message: Text
+}
+
+operation can_kick(target: PubKey) -> Result<Int,ModerationError> effect Storage permission concord_can
+operation can_ban(target: PubKey) -> Result<Int,ModerationError> effect Storage permission concord_can
+operation kick_member(target: PubKey) -> Result<PublishReport,ModerationError> effect Sign,Relay permission concord_kick
+operation ban_member(target: PubKey) -> Result<PublishReport,ModerationError> effect Sign,Relay permission concord_ban
