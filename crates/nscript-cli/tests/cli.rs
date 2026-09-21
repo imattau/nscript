@@ -220,6 +220,21 @@ fn compiles_wasm_artifact_with_magic_header() {
 }
 
 #[test]
+fn writes_wasm_artifact_for_packaging() {
+    let output_path = std::env::temp_dir().join(format!("nscript-cli-{}.wasm", std::process::id()));
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["compile", "--emit", "wasm"])
+        .arg(repository_path("conformance/valid/hello-note.ns"))
+        .args(["--output", output_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let bytes = std::fs::read(&output_path).unwrap();
+    assert_eq!(&bytes[..8], b"\0asm\x01\0\0\0");
+    let _ = std::fs::remove_file(output_path);
+}
+
+#[test]
 fn source_conformance_corpus_matches_expected_outcomes() {
     let valid_root = repository_path("conformance/valid");
     for entry in std::fs::read_dir(valid_root).unwrap() {

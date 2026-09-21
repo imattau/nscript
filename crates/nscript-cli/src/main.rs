@@ -42,7 +42,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript compile --emit ir|wasm [-M <directory>]... <file>\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -289,7 +289,23 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
 }
 
 fn compile_program(arguments: &[String], wasm: bool) -> ExitCode {
-    let Ok((path, program, graph, mut diagnostics)) = load_program(arguments) else {
+    let mut source_arguments = Vec::new();
+    let mut output = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        if arguments[index] == "--output" {
+            index += 1;
+            if index >= arguments.len() {
+                eprintln!("compile --output requires a path");
+                return ExitCode::from(2);
+            }
+            output = Some(arguments[index].clone());
+        } else {
+            source_arguments.push(arguments[index].clone());
+        }
+        index += 1;
+    }
+    let Ok((path, program, graph, mut diagnostics)) = load_program(&source_arguments) else {
         return ExitCode::from(2);
     };
     diagnostics.extend(analyze_with_modules(&program, &graph));
@@ -306,10 +322,16 @@ fn compile_program(arguments: &[String], wasm: bool) -> ExitCode {
         &graph,
     );
     if wasm {
-        use std::io::Write;
         let bytes = nscript_ir::emit_wasm(&ir);
-        if std::io::stdout().write_all(&bytes).is_err() {
-            return ExitCode::from(1);
+        if let Some(output) = output {
+            if fs::write(output, bytes).is_err() {
+                return ExitCode::from(1);
+            }
+        } else {
+            use std::io::Write;
+            if std::io::stdout().write_all(&bytes).is_err() {
+                return ExitCode::from(1);
+            }
         }
     } else {
         println!(

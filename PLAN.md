@@ -356,6 +356,8 @@ and verifies the embedded dispatch markers for create, sign, and publish.
 `execute_nscript_wasm` provides the deterministic reference executor: it
 validates the WASM header, extracts `nscript.dispatch`, decodes it, and routes
 the publication sequence through the signer and relay hosts.
+`nscript compile --emit wasm --output <file>` now writes a packageable artifact
+directly, completing the handoff into the existing npack manifest workflow.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
