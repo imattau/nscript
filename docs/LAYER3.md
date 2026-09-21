@@ -171,6 +171,18 @@ permissions {
 badge "contributor" as "Contributor"
 ```
 
+Highlights pair quoted content with its source:
+
+```nostr
+use nip84
+
+permissions {
+    highlight
+}
+
+highlight "Nostr-native scripting" from article_url
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

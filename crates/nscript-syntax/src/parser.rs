@@ -1004,6 +1004,59 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("highlight") => {
+                self.index += 1;
+                let content = self.parse_expression(0)?;
+                if !self.eat_word("from") {
+                    return None;
+                }
+                let source = self.parse_expression(0)?;
+                let span = content.span.join(source.span);
+                let highlight = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "Highlight".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "source".to_owned(),
+                                    span,
+                                },
+                                source,
+                            ),
+                            (
+                                Spanned {
+                                    value: "content".to_owned(),
+                                    span,
+                                },
+                                content,
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip84".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_highlight".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![highlight],
+                    },
+                    span,
+                })
+            }
             Some("search") => {
                 self.index += 1;
                 let _event = self.parse_type()?;

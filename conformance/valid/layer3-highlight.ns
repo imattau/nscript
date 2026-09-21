@@ -1,0 +1,7 @@
+use nip84
+
+permissions {
+    highlight
+}
+
+highlight "Nostr-native scripting" from "https://example.com/article"
