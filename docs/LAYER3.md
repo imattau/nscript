@@ -146,6 +146,18 @@ permissions {
 status "working"
 ```
 
+Drafts use an identifier and content expression:
+
+```nostr
+use nip37
+
+permissions {
+    draft
+}
+
+draft "welcome" with "A draft note"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

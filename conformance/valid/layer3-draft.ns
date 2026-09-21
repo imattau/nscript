@@ -1,0 +1,7 @@
+use nip37
+
+permissions {
+    draft
+}
+
+draft "welcome" with "A draft note"

@@ -377,6 +377,7 @@ Implemented `label target as value` lowering to `nip32.publish_label` in the
 default `nscript` namespace.
 Implemented `status value` lowering to `nip38.publish_status` with an empty
 optional status description.
+Implemented `draft identifier with content` lowering to `nip37.save_draft`.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent
