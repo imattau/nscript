@@ -397,6 +397,8 @@ Wasmi stores now also apply a fixed 16 MiB linear-memory ceiling and bounded
 instance/table counts for each execution.
 Hosts can override those limits through `WasmiEngine::with_limits` while the
 default constructor retains the safe bounded policy.
+Payload imports are preflight-validated as unique `op:<index>:<name>` bindings
+before Wasmi instantiation.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by

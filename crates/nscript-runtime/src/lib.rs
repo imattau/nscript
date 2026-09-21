@@ -21,6 +21,8 @@ pub const MAX_WASM_OPERATIONS: usize = 1024;
 
 #[cfg(feature = "wasm-engine")]
 pub mod wasmi_engine {
+    use std::collections::BTreeSet;
+
     use super::{MAX_WASM_DISPATCH_BYTES, RuntimeError};
     use wasmi::{
         Caller, Config, Engine, Error, Extern, Linker, Module, Store, StoreLimits,
@@ -106,8 +108,15 @@ pub mod wasmi_engine {
                 .set_fuel(self.fuel)
                 .map_err(|_| RuntimeError::InvalidWasmPayload)?;
             let mut linker = Linker::new(&self.engine);
+            let mut operation_indices = BTreeSet::new();
             for (name, takes_payload) in imports {
                 if *takes_payload {
+                    let Some(operation_index) = operation_index(name) else {
+                        return Err(RuntimeError::InvalidWasmPayload);
+                    };
+                    if !operation_indices.insert(operation_index) {
+                        return Err(RuntimeError::InvalidWasmPayload);
+                    }
                     linker
                         .func_wrap("nscript", name, |_: i32, _: i32| {})
                         .map_err(|_| RuntimeError::InvalidWasmPayload)?;
@@ -156,12 +165,15 @@ pub mod wasmi_engine {
                 .set_fuel(self.fuel)
                 .map_err(|_| RuntimeError::InvalidWasmPayload)?;
             let mut linker = Linker::new(&self.engine);
+            let mut operation_indices = BTreeSet::new();
             for (name, takes_payload) in imports {
                 if *takes_payload {
-                    let operation_index = name
-                        .strip_prefix("op:")
-                        .and_then(|value| value.split(':').next())
-                        .and_then(|value| value.parse::<usize>().ok());
+                    let Some(operation_index) = operation_index(name) else {
+                        return Err(RuntimeError::InvalidWasmPayload);
+                    };
+                    if !operation_indices.insert(operation_index) {
+                        return Err(RuntimeError::InvalidWasmPayload);
+                    }
                     linker
                         .func_wrap(
                             "nscript",
@@ -181,8 +193,7 @@ pub mod wasmi_engine {
                                 let records =
                                     super::decode_wasm_dispatch(bytes, pointer, length)
                                         .map_err(|_| Error::new("invalid dispatch payload"))?;
-                                let index = operation_index
-                                    .ok_or_else(|| Error::new("invalid operation import"))?;
+                                let index = operation_index;
                                 let record = records
                                     .get(index)
                                     .ok_or_else(|| Error::new("operation index out of bounds"))?;
@@ -220,6 +231,12 @@ pub mod wasmi_engine {
         pub fn fuel(&self) -> u64 {
             self.fuel
         }
+    }
+
+    fn operation_index(name: &str) -> Option<usize> {
+        name.strip_prefix("op:")
+            .and_then(|value| value.split(':').next())
+            .and_then(|value| value.parse::<usize>().ok())
     }
 }
 
