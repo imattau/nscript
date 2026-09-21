@@ -599,7 +599,9 @@ rumor and wrap; all were accepted by the relays and read back and verified.
 yet confirmed: rendering in an Armada client. Found on the way: tungstenite's
 `rustls-tls-native-roots` feature selects no crypto provider, so any `wss://`
 connect panics until one is installed; the runtime's `RealRelayHost` has this
-gap for production relays.
+gap for production relays. Fixed: `RealRelayHost` now opens sockets through
+`open_socket`, which installs the `ring` rustls provider when the host has not
+installed one, verified by an opt-in real TLS handshake test.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

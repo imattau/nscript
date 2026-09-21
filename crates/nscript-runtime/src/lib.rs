@@ -2872,6 +2872,23 @@ pub struct RealRelayHost {
     subscriptions: BTreeMap<u64, String>,
 }
 
+/// Opens a relay WebSocket, first making sure TLS has a crypto provider.
+///
+/// tungstenite's `rustls-tls-native-roots` feature selects no provider, so a
+/// `wss://` connect panics until one is installed. A provider the host
+/// application already installed is left untouched.
+fn open_socket(relay: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, RuntimeError> {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        // A concurrent installer winning the race is equally fine.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+    connect(relay)
+        .map(|(socket, _)| socket)
+        .map_err(|_| RuntimeError::RelayUnavailable {
+            relayset: relay.to_owned(),
+        })
+}
+
 impl RealRelayHost {
     /// Connect to a relay URL.
     ///
@@ -2880,9 +2897,7 @@ impl RealRelayHost {
     /// Returns `RelayUnavailable` when the URL cannot be opened.
     pub fn connect(relay: impl Into<String>) -> Result<Self, RuntimeError> {
         let relay = relay.into();
-        let (socket, _) = connect(relay.as_str()).map_err(|_| RuntimeError::RelayUnavailable {
-            relayset: relay.clone(),
-        })?;
+        let socket = open_socket(&relay)?;
         Ok(Self {
             relay,
             socket,
@@ -2942,11 +2957,7 @@ impl RealRelayHost {
     }
 
     fn connect_socket(relay: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, RuntimeError> {
-        connect(relay)
-            .map(|(socket, _)| socket)
-            .map_err(|_| RuntimeError::RelayUnavailable {
-                relayset: relay.to_owned(),
-            })
+        open_socket(relay)
     }
 
     fn send_json(&mut self, value: &Value) -> Result<(), RuntimeError> {
@@ -6054,6 +6065,26 @@ mod tests {
             Err(RuntimeError::RelayUnavailable { relayset })
                 if relayset == "wss://127.0.0.1:1"
         ));
+    }
+
+    /// Regression: a `wss://` connect used to panic for want of a rustls
+    /// crypto provider. Runs against a real relay, so it is opt-in:
+    /// `cargo test -p nscript-runtime -- --ignored real_relay_tls`.
+    #[test]
+    #[ignore = "needs network access"]
+    fn real_relay_tls_handshake_succeeds_against_a_public_relay() {
+        let mut host = RealRelayHost::connect("wss://relay.ditto.pub")
+            .expect("TLS handshake and WebSocket upgrade succeed");
+        // The session is live: a request round-trips through the socket.
+        host.send_json(&serde_json::json!(["REQ", "t", {"kinds": [1], "limit": 1}]))
+            .expect("frame sent over TLS");
+    }
+
+    #[test]
+    fn opening_a_secure_socket_installs_a_tls_provider_without_panicking() {
+        // Refused before any handshake, but the provider must already be set.
+        assert!(RealRelayHost::connect("wss://127.0.0.1:1").is_err());
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
     }
 
     #[test]

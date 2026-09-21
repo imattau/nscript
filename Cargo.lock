@@ -440,6 +440,7 @@ version = "0.1.0"
 dependencies = [
  "nscript-semantics",
  "nscript-syntax",
+ "rustls",
  "serde_json",
  "sha2",
  "tungstenite",
