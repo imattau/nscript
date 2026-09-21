@@ -538,6 +538,12 @@ with record literals and a `permissions` block), including a negative fixture
 showing a kick-only bot cannot call `ban_member` (E3001). The `stream` /
 `on chat.message` / `concord Kick in devs` sugar from `docs/CONCORD.md` is not
 implemented and would need a language RFC.
+Added the CORD-02 §5 Guestbook fold (`guestbook.rs`): join/leave/kick/snapshot
+rumor decoding (`ms` tag, dropped when out of range), per-npub coalescing by
+`(time, lowest rumor id)`, the one-hour future limit, kicks gated by the KICK
+bit, strict outrank and a synced `vac`, refounder-only snapshots that lose to
+newer first-hand entries, and the Complete Memberlist with forward-only
+observation and Banlist removal.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

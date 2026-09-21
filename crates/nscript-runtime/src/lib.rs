@@ -4,6 +4,7 @@ pub mod authority;
 pub mod community;
 pub mod edition;
 pub mod fold;
+pub mod guestbook;
 pub mod moderation;
 pub mod stream;
 pub mod wire;

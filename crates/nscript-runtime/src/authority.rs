@@ -514,6 +514,25 @@ impl AuthorityFold {
         roster
     }
 
+    /// Checks an authority citation (present, naming the actor's own Grant,
+    /// synced, hash-matching) without judging rank. The owner needs none.
+    #[must_use]
+    pub fn check_citation(&self, actor: &str, vac: Option<&Vac>) -> Verdict {
+        if actor == self.owner {
+            return Verdict::Honored;
+        }
+        let roster = Roster::new(&self.owner);
+        let by_hash = self.by_hash();
+        let judge = Judge {
+            community_id: &self.community_id,
+            roster: &roster,
+            by_hash: &by_hash,
+        };
+        judge
+            .citation(actor, vac)
+            .map_or_else(|verdict| verdict, |()| Verdict::Honored)
+    }
+
     /// Judges one edition against the settled Roster.
     #[must_use]
     pub fn verdict(&self, edition: &Edition) -> Verdict {

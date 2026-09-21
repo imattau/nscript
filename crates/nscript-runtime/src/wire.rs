@@ -25,7 +25,7 @@ pub enum WireError {
     MalformedTag(&'static str),
 }
 
-fn tag_values<'a>(tags: &'a [Value], name: &str) -> Option<Vec<&'a str>> {
+pub(crate) fn tag_values<'a>(tags: &'a [Value], name: &str) -> Option<Vec<&'a str>> {
     let tag = tags
         .iter()
         .filter_map(Value::as_array)
@@ -34,7 +34,7 @@ fn tag_values<'a>(tags: &'a [Value], name: &str) -> Option<Vec<&'a str>> {
 }
 
 /// A number tag is its decimal form with no leading zeros and no sign.
-fn decimal_u64(text: &str) -> Option<u64> {
+pub(crate) fn decimal_u64(text: &str) -> Option<u64> {
     if text.is_empty() || (text.len() > 1 && text.starts_with('0')) {
         return None;
     }
