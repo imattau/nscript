@@ -138,6 +138,7 @@ fn generates_npack_compatible_manifest() {
     assert_eq!(manifest["name"], "hello");
     assert_eq!(manifest["runtime_requires"][0], "nscript-runtime >=0.1");
     assert_eq!(manifest["nscript"]["permissions_reviewed"], true);
+    assert_eq!(manifest["dependencies"][0], "nip01 *");
 }
 
 #[test]

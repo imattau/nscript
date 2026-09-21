@@ -19,6 +19,10 @@ permission-review marker. `npack pack`, `npack hash`, `npack verify`, and
 `npack publish` remain responsible for archive creation, hashing, signing, and
 distribution.
 
+The top-level `dependencies` field is populated from the script's resolved root
+module requirements, so the package metadata does not silently omit NIP module
+dependencies.
+
 Pass `--lock nscript.lock.json` to `package manifest` to require an up-to-date
 lockfile and embed its SHA-256 fingerprint in the NScript manifest metadata.
 

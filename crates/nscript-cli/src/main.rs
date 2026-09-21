@@ -153,13 +153,24 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
     let Some(checked) = checked else {
         return ExitCode::from(1);
     };
+    let dependencies = program
+        .imports
+        .iter()
+        .map(|import| {
+            format!(
+                "{} {}",
+                import.path,
+                import.requirement.as_deref().unwrap_or("*")
+            )
+        })
+        .collect::<Vec<_>>();
     let manifest = serde_json::json!({
         "publisher": publisher,
         "name": name,
         "version": version,
         "artifact": artifact,
         "sha256": sha256,
-        "dependencies": [],
+        "dependencies": dependencies,
         "conflicts": [],
         "artifact_event": serde_json::Value::Null,
         "os": "any",
