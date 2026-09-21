@@ -141,6 +141,56 @@ fn generates_npack_compatible_manifest() {
 }
 
 #[test]
+fn package_manifest_embeds_verified_lockfile_fingerprint() {
+    let source = repository_path("conformance/valid/hello-note.ns");
+    let lock_path =
+        std::env::temp_dir().join(format!("nscript-manifest-lock-{}.json", std::process::id()));
+    let generated = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["package", "lock"])
+        .arg(&source)
+        .args(["--output", lock_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args([
+            "package",
+            "manifest",
+            "--publisher",
+            "npub1publisher",
+            "--name",
+            "hello",
+            "--version",
+            "0.1.0",
+            "--artifact",
+            "hello.npk",
+            "--lock",
+        ])
+        .arg(&lock_path)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        manifest["nscript"]["lockfile"]["path"],
+        lock_path.to_str().unwrap()
+    );
+    assert_eq!(
+        manifest["nscript"]["lockfile"]["sha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    let _ = std::fs::remove_file(lock_path);
+}
+
+#[test]
 fn generates_deterministic_module_lockfile() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["package", "lock"])
