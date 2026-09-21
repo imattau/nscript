@@ -28,9 +28,13 @@ the package manifest:
 
 ```bash
 nscript package lock bot.ns --output nscript.lock.json
+nscript package verify bot.ns --lock nscript.lock.json
 ```
 
 The lockfile records the source, root requirements, resolved module versions,
 canonical descriptor hashes, and each module's declared requirements. It is a
 local verification input; package archive signing and distribution remain
 owned by npack.
+
+Verification fails if source imports or resolved module hashes differ from the
+committed lockfile.

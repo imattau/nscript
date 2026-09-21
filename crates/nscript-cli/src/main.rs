@@ -22,6 +22,9 @@ fn main() -> ExitCode {
             package_manifest(rest)
         }
         [package, lock, rest @ ..] if package == "package" && lock == "lock" => package_lock(rest),
+        [package, verify, rest @ ..] if package == "package" && verify == "verify" => {
+            package_verify(rest)
+        }
         [command, emit, format, rest @ ..]
             if command == "compile" && emit == "--emit" && format == "ir" =>
         {
@@ -43,7 +46,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -152,19 +155,61 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
 }
 
 fn package_lock(arguments: &[String]) -> ExitCode {
+    let output = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--output")
+        .map(|pair| pair[1].clone());
+    let Ok((_, lockfile)) = resolve_lockfile(arguments) else {
+        return ExitCode::from(2);
+    };
+    let rendered = serde_json::to_string_pretty(&lockfile).expect("lockfile is serializable");
+    if let Some(output) = output {
+        if fs::write(&output, format!("{rendered}\n")).is_err() {
+            eprintln!("could not write lockfile: {output}");
+            return ExitCode::from(1);
+        }
+    } else {
+        println!("{rendered}");
+    }
+    ExitCode::SUCCESS
+}
+
+fn package_verify(arguments: &[String]) -> ExitCode {
+    let Some(lock_path) = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--lock")
+        .map(|pair| pair[1].clone())
+    else {
+        eprintln!("package verify requires --lock <file>");
+        return ExitCode::from(2);
+    };
+    let Ok((_, expected)) = resolve_lockfile(arguments) else {
+        return ExitCode::from(2);
+    };
+    let Ok(contents) = fs::read_to_string(&lock_path) else {
+        eprintln!("could not read lockfile: {lock_path}");
+        return ExitCode::from(1);
+    };
+    let Ok(actual) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        eprintln!("invalid lockfile JSON: {lock_path}");
+        return ExitCode::from(1);
+    };
+    if actual != expected {
+        eprintln!("lockfile is out of date: {lock_path}");
+        return ExitCode::from(1);
+    }
+    println!("lockfile verified: {lock_path}");
+    ExitCode::SUCCESS
+}
+
+fn resolve_lockfile(arguments: &[String]) -> Result<(String, serde_json::Value), ()> {
     let Some(source) = arguments.iter().find(|item| {
         Path::new(item)
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("ns"))
     }) else {
         eprintln!("package lock requires an NScript source file");
-        return ExitCode::from(2);
-    };
-    let flag = |name: &str| {
-        arguments
-            .windows(2)
-            .find(|pair| pair[0] == name)
-            .map(|pair| pair[1].clone())
+        return Err(());
     };
     let mut compiler_arguments = vec![source.clone()];
     let mut argument_index = 0;
@@ -179,10 +224,11 @@ fn package_lock(arguments: &[String]) -> ExitCode {
         argument_index += 1;
     }
     let Ok((_path, program, graph, diagnostics)) = load_program(&compiler_arguments) else {
-        return ExitCode::from(2);
+        return Err(());
     };
     if !diagnostics.is_empty() {
-        return finish(source, diagnostics);
+        finish(source, diagnostics);
+        return Err(());
     }
     let modules = graph
         .modules
@@ -217,16 +263,7 @@ fn package_lock(arguments: &[String]) -> ExitCode {
         "roots": roots,
         "modules": modules
     });
-    let rendered = serde_json::to_string_pretty(&lockfile).expect("lockfile is serializable");
-    if let Some(output) = flag("--output") {
-        if fs::write(&output, format!("{rendered}\n")).is_err() {
-            eprintln!("could not write lockfile: {output}");
-            return ExitCode::from(1);
-        }
-    } else {
-        println!("{rendered}");
-    }
-    ExitCode::SUCCESS
+    Ok((source.clone(), lockfile))
 }
 
 fn describe_module(path: &str) -> ExitCode {

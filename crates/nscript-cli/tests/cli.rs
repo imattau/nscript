@@ -166,6 +166,37 @@ fn generates_deterministic_module_lockfile() {
 }
 
 #[test]
+fn verifies_module_lockfile_and_rejects_drift() {
+    let lock_path = std::env::temp_dir().join(format!("nscript-lock-{}.json", std::process::id()));
+    let source = repository_path("conformance/valid/hello-note.ns");
+    let generated = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["package", "lock"])
+        .arg(&source)
+        .args(["--output", lock_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let verified = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["package", "verify"])
+        .arg(&source)
+        .args(["--lock", lock_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(verified.status.success());
+    let mut altered = std::fs::read_to_string(&lock_path).unwrap();
+    altered = altered.replace("\"lockfile_version\": 1", "\"lockfile_version\": 2");
+    std::fs::write(&lock_path, altered).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["package", "verify"])
+        .arg(&source)
+        .args(["--lock", lock_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    let _ = std::fs::remove_file(lock_path);
+}
+
+#[test]
 fn reports_missing_module() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("check")
