@@ -850,7 +850,12 @@ pub struct StreamWrap {
     pub stream_pubkey: String,
     /// Ephemeral `p` tag; never the key the wrap is encrypted to.
     pub ephemeral_p: String,
-    pub sealed: SealedEvent,
+    /// The carried seal. `None` for a wrap received off the wire: its seal is
+    /// encrypted and only recoverable by a host that holds the plane key.
+    pub sealed: Option<SealedEvent>,
+    /// The serialised kind-1059 event as published or received, when a real
+    /// host produced or parsed it. Fake hosts leave this `None`.
+    pub wire: Option<String>,
 }
 
 /// Why a received wrap was refused.
@@ -864,6 +869,42 @@ pub enum WrapError {
 }
 
 impl StreamWrap {
+    /// Reads the public fields of a received kind-1059 event. The seal stays
+    /// sealed until a host opens it with the plane key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WrapError`] for a non-wrap or malformed event.
+    pub fn from_wire(wire: &str) -> Result<Self, WrapError> {
+        let event: Value = serde_json::from_str(wire).map_err(|_| WrapError::NotAGiftWrap)?;
+        let kind = event
+            .get("kind")
+            .and_then(Value::as_u64)
+            .and_then(|kind| u16::try_from(kind).ok())
+            .ok_or(WrapError::NotAGiftWrap)?;
+        let stream_pubkey = event
+            .get("pubkey")
+            .and_then(Value::as_str)
+            .ok_or(WrapError::WrongStream)?;
+        let ephemeral_p = event
+            .get("tags")
+            .and_then(Value::as_array)
+            .and_then(|tags| {
+                tags.iter().find_map(|tag| {
+                    let tag = tag.as_array()?;
+                    (tag.first()?.as_str()? == "p").then(|| tag.get(1)?.as_str())?
+                })
+            })
+            .ok_or(WrapError::MalformedEphemeralKey)?;
+        Ok(Self {
+            kind,
+            stream_pubkey: stream_pubkey.to_owned(),
+            ephemeral_p: ephemeral_p.to_owned(),
+            sealed: None,
+            wire: Some(wire.to_owned()),
+        })
+    }
+
     /// Validates the envelope against the plane it was read from.
     ///
     /// # Errors
@@ -879,7 +920,12 @@ impl StreamWrap {
         if !stream::is_hex32(&self.ephemeral_p) {
             return Err(WrapError::MalformedEphemeralKey);
         }
-        if self.sealed.kind() != plane.seal_kind() {
+        // A wire wrap's seal kind is only knowable after opening it.
+        if self
+            .sealed
+            .as_ref()
+            .is_some_and(|sealed| sealed.kind() != plane.seal_kind())
+        {
             return Err(WrapError::WrongSealKind);
         }
         Ok(())
@@ -3990,7 +4036,8 @@ impl OperationHost for FakeOperationHost {
                     kind: 1059,
                     stream_pubkey: concord_test_stream_pubkey(stream),
                     ephemeral_p,
-                    sealed: sealed.clone(),
+                    sealed: Some(sealed.clone()),
+                    wire: None,
                 }))
             }
             ("concord01", "unwrap_stream") => {
@@ -4003,7 +4050,12 @@ impl OperationHost for FakeOperationHost {
                         operation: operation.to_owned(),
                     });
                 };
-                let plane = if wrap.sealed.kind() == stream::SealKind::Plaintext {
+                let Some(sealed) = &wrap.sealed else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                let plane = if sealed.kind() == stream::SealKind::Plaintext {
                     stream::Plane::Control
                 } else {
                     stream::Plane::Chat
@@ -4016,7 +4068,7 @@ impl OperationHost for FakeOperationHost {
                         operation: operation.to_owned(),
                     });
                 }
-                Ok(OperationValue::SealedEvent(wrap.sealed.clone()))
+                Ok(OperationValue::SealedEvent(sealed.clone()))
             }
             ("concord01", "publish_message") => {
                 let [
@@ -5165,7 +5217,8 @@ mod tests {
             kind: 1059,
             stream_pubkey: "aa".repeat(32),
             ephemeral_p: "bb".repeat(32),
-            sealed: sealed.clone(),
+            sealed: Some(sealed.clone()),
+            wire: None,
         };
         assert_eq!(wrap.validate(&"aa".repeat(32), stream::Plane::Chat), Ok(()));
         assert_eq!(
@@ -5189,6 +5242,25 @@ mod tests {
             not_wrap.validate(&"aa".repeat(32), stream::Plane::Chat),
             Err(WrapError::NotAGiftWrap)
         );
+    }
+
+    #[test]
+    fn wire_wraps_expose_public_fields_and_keep_the_seal_sealed() {
+        let event = serde_json::json!({
+            "kind": 1059, "pubkey": "aa".repeat(32),
+            "tags": [["expiration", "9"], ["p", "bb".repeat(32)]],
+        })
+        .to_string();
+        let wrap = StreamWrap::from_wire(&event).expect("wrap parses");
+        assert_eq!(wrap.ephemeral_p, "bb".repeat(32));
+        assert!(wrap.sealed.is_none() && wrap.wire.as_deref() == Some(event.as_str()));
+        assert_eq!(wrap.validate(&"aa".repeat(32), stream::Plane::Chat), Ok(()));
+        let no_p = serde_json::json!({"kind": 1059, "pubkey": "aa", "tags": []}).to_string();
+        assert_eq!(
+            StreamWrap::from_wire(&no_p),
+            Err(WrapError::MalformedEphemeralKey)
+        );
+        assert_eq!(StreamWrap::from_wire("nope"), Err(WrapError::NotAGiftWrap));
     }
 
     #[test]

@@ -602,6 +602,16 @@ connect panics until one is installed; the runtime's `RealRelayHost` has this
 gap for production relays. Fixed: `RealRelayHost` now opens sockets through
 `open_socket`, which installs the `ring` rustls provider when the host has not
 installed one, verified by an opt-in real TLS handshake test.
+The real `concord01` host operations landed in `nscript-host-crypto`
+(`Nip44OperationHost`): `seal_message`, `seal_control_message`, `open_message`,
+`wrap_stream` and `unwrap_stream` build and open real CORD-01 events, carrying
+rumor bytes verbatim, keeping the author's key inside the host, and mirroring a
+rumor's `expiration` onto the outer wrap (CORD-08). `StreamWrap` now carries an
+optional `wire` event and an optional seal so a received wrap can be handed to a
+host unopened. Run against the live community's channel, the operations opened
+all 6 events with none refused. Limits: the Control Plane's split signer and
+read key need two keys and are not yet expressible through one `DerivedKey`;
+`publish_message` and `derive_stream_key` stay unavailable on the real host.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

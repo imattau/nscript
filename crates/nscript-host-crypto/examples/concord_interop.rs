@@ -2,6 +2,8 @@
 //!
 //! * `read`    fetch the bundle, read and verify the Control Plane. Read-only.
 //! * `history` also read and decrypt the public channel's chat. Read-only.
+//! * `ops`     read the public channel through the real `concord01` host
+//!   operations (`unwrap_stream`, `open_message`). Read-only.
 //! * `post`    join the Guestbook and post a few messages as a throwaway
 //!   identity kept in `<keyfile>` (created if absent, never printed).
 //!
@@ -208,6 +210,52 @@ fn print_history(loaded: &Loaded, channel_id: &str) {
     }
 }
 
+/// Reads the channel through the real host operations rather than the
+/// lower-level stream functions.
+fn ops_history(loaded: &Loaded, channel_id: &str) {
+    use nscript_host_crypto::host::Nip44OperationHost;
+    use nscript_runtime::{DerivedKey, OperationHost, OperationValue, StreamWrap};
+
+    let key = channel_key(loaded, channel_id);
+    let plane = DerivedKey::new(key.secret_bytes().to_vec()).expect("key");
+    let mut host = Nip44OperationHost::new([1; 32]);
+    let mut seen = std::collections::BTreeSet::new();
+    let (mut opened, mut refused) = (0, 0);
+    for relay in &loaded.invite.relays {
+        let filter = json!({"kinds": [1059], "authors": [hex(&key.xonly_pubkey())], "limit": 200});
+        for wrap in query(relay, &filter).unwrap_or_default() {
+            if !seen.insert(wrap["id"].as_str().unwrap_or("").to_owned()) {
+                continue;
+            }
+            let call = |host: &mut Nip44OperationHost, op: &str, value: OperationValue| {
+                host.call(
+                    1,
+                    "concord01",
+                    op,
+                    &[OperationValue::DerivedKey(plane.clone()), value],
+                )
+            };
+            let result = StreamWrap::from_wire(&wrap.to_string())
+                .ok()
+                .and_then(|w| call(&mut host, "unwrap_stream", OperationValue::StreamWrap(w)).ok())
+                .and_then(|sealed| call(&mut host, "open_message", sealed).ok());
+            match result {
+                Some(OperationValue::SignedBytes(rumor)) => {
+                    opened += 1;
+                    let rumor: Value = serde_json::from_slice(rumor.as_bytes()).expect("json");
+                    println!(
+                        "  kind {} — {}",
+                        rumor["kind"],
+                        short(rumor["content"].as_str().unwrap_or(""))
+                    );
+                }
+                _ => refused += 1,
+            }
+        }
+    }
+    println!("real host operations: {opened} opened, {refused} refused");
+}
+
 fn identity(path: &str) -> [u8; 32] {
     if let Ok(text) = std::fs::read_to_string(path) {
         return unhex32(text.trim());
@@ -358,6 +406,7 @@ fn main() {
     match mode {
         "read" => {}
         "history" => print_history(&loaded, &channel_id),
+        "ops" => ops_history(&loaded, &channel_id),
         "post" => {
             let secret = identity(&args[4]);
             print_history(&loaded, &channel_id);

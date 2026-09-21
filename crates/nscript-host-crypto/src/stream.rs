@@ -122,9 +122,58 @@ fn verify_event(event: &Value) -> Result<(), StreamError> {
     }
 }
 
-/// Builds a wrap around a rumor. `wrap_signer` is the plane's stream secret,
-/// `read_key` the conversation key that encrypts the wrap and (for encrypted
-/// seals) the rumor. Returns the wrap event as JSON.
+/// Builds a seal (kind 20013 or 20014) signed by the author's real key. The
+/// rumor is carried byte-for-byte: encrypted under `read_key` for an encrypted
+/// seal, or verbatim as the seal content for a plaintext one.
+///
+/// # Errors
+///
+/// Returns [`StreamError`] for invalid keys or an oversize rumor.
+pub fn build_seal(
+    read_key: &[u8; 32],
+    form: SealForm,
+    author_secret: &[u8; 32],
+    rumor_json: &str,
+    created_at: u64,
+) -> Result<String, StreamError> {
+    let content = match form {
+        SealForm::Encrypted => nip44::encrypt(read_key, rumor_json.as_bytes())?,
+        SealForm::Plaintext => rumor_json.to_owned(),
+    };
+    let seal = signed_event(author_secret, form.kind(), &json!([]), &content, created_at)?;
+    Ok(seal.to_string())
+}
+
+/// Wraps a seal: a kind-1059 event signed by the plane's stream key, tagged
+/// with an ephemeral `p` (streams reverse NIP-59: fixed author, ephemeral
+/// `p`), plus any relay-visible `outer_tags`. CORD-08 uses those for the NIP-40
+/// `expiration` tag, which a chat wrap carries with its rumor's value.
+///
+/// # Errors
+///
+/// Returns [`StreamError`] for invalid keys or an oversize seal.
+pub fn build_wrap(
+    wrap_signer: &[u8; 32],
+    read_key: &[u8; 32],
+    seal_json: &str,
+    outer_tags: &[Vec<String>],
+    created_at: u64,
+) -> Result<String, StreamError> {
+    let content = nip44::encrypt(read_key, seal_json.as_bytes())?;
+    let ephemeral = hex(&xonly_pubkey(&crate::random32()?)?);
+    let mut tags = vec![json!(["p", ephemeral])];
+    tags.extend(outer_tags.iter().map(|tag| json!(tag)));
+    let wrap = signed_event(
+        wrap_signer,
+        KIND_WRAP,
+        &Value::Array(tags),
+        &content,
+        created_at,
+    )?;
+    Ok(wrap.to_string())
+}
+
+/// Builds a wrap around a rumor in one step.
 ///
 /// # Errors
 ///
@@ -148,9 +197,7 @@ pub fn build_stream_event(
     )
 }
 
-/// Like [`build_stream_event`], adding relay-visible tags to the outer wrap
-/// after the ephemeral `p`. CORD-08 uses this for the NIP-40 `expiration` tag,
-/// which a chat wrap must carry with the same value as its rumor.
+/// Like [`build_stream_event`], adding relay-visible outer tags.
 ///
 /// # Errors
 ///
@@ -164,56 +211,27 @@ pub fn build_stream_event_with_tags(
     outer_tags: &[Vec<String>],
     created_at: u64,
 ) -> Result<String, StreamError> {
-    let rumor_json = rumor.to_string();
-    let seal_content = match form {
-        SealForm::Encrypted => nip44::encrypt(read_key, rumor_json.as_bytes())?,
-        SealForm::Plaintext => rumor_json,
-    };
-    let seal = signed_event(
+    let seal = build_seal(
+        read_key,
+        form,
         author_secret,
-        form.kind(),
-        &json!([]),
-        &seal_content,
+        &rumor.to_string(),
         created_at,
     )?;
-    let wrap_content = nip44::encrypt(read_key, seal.to_string().as_bytes())?;
-    // Streams reverse NIP-59: fixed author, ephemeral `p` tag.
-    let ephemeral = hex(&xonly_pubkey(&crate::random32()?)?);
-    let mut tags = vec![json!(["p", ephemeral])];
-    tags.extend(outer_tags.iter().map(|tag| json!(tag)));
-    let wrap = signed_event(
-        wrap_signer,
-        KIND_WRAP,
-        &Value::Array(tags),
-        &wrap_content,
-        created_at,
-    )?;
-    Ok(wrap.to_string())
+    build_wrap(wrap_signer, read_key, &seal, outer_tags, created_at)
 }
 
-/// What a valid wrap contained.
-#[derive(Debug, Eq, PartialEq)]
-pub struct Opened {
-    /// The seal's real author.
-    pub author: String,
-    pub form: SealForm,
-    /// The rumor, byte-verbatim for plaintext seals.
-    pub rumor_json: String,
-}
-
-/// Opens a wrap: verifies the stream signature, decrypts, verifies the seal's
-/// signature, checks the seal kind against the plane, and enforces that the
-/// rumor's author equals the seal's.
+/// Verifies a wrap (kind 1059, signed by the stream key) and decrypts it to
+/// the seal event JSON it carries.
 ///
 /// # Errors
 ///
 /// Returns [`StreamError`] describing the first failed check.
-pub fn open_stream_event(
+pub fn open_wrap(
     stream_pubkey: &[u8; 32],
     read_key: &[u8; 32],
-    expected: SealForm,
     wrap_json: &str,
-) -> Result<Opened, StreamError> {
+) -> Result<String, StreamError> {
     let wrap: Value = serde_json::from_str(wrap_json).map_err(|_| StreamError::NotJson)?;
     if wrap.get("kind").and_then(Value::as_u64) != Some(KIND_WRAP) {
         return Err(StreamError::NotAWrap);
@@ -226,9 +244,45 @@ pub fn open_stream_event(
         .get("content")
         .and_then(Value::as_str)
         .ok_or(StreamError::NotJson)?;
-    let seal_json =
-        String::from_utf8(nip44::decrypt(read_key, payload)?).map_err(|_| StreamError::NotJson)?;
-    let seal: Value = serde_json::from_str(&seal_json).map_err(|_| StreamError::NotJson)?;
+    String::from_utf8(nip44::decrypt(read_key, payload)?).map_err(|_| StreamError::NotJson)
+}
+
+/// The seal form declared by a seal event's kind.
+///
+/// # Errors
+///
+/// Returns [`StreamError::WrongSealKind`] for any other kind.
+pub fn seal_form(seal_json: &str) -> Result<SealForm, StreamError> {
+    let seal: Value = serde_json::from_str(seal_json).map_err(|_| StreamError::NotJson)?;
+    match seal.get("kind").and_then(Value::as_u64) {
+        Some(KIND_SEAL_ENCRYPTED) => Ok(SealForm::Encrypted),
+        Some(KIND_SEAL_PLAINTEXT) => Ok(SealForm::Plaintext),
+        _ => Err(StreamError::WrongSealKind),
+    }
+}
+
+/// What a valid wrap contained.
+#[derive(Debug, Eq, PartialEq)]
+pub struct Opened {
+    /// The seal's real author.
+    pub author: String,
+    pub form: SealForm,
+    /// The rumor, byte-verbatim for plaintext seals.
+    pub rumor_json: String,
+}
+
+/// Opens a seal: verifies its signature, checks its kind against the plane,
+/// recovers the rumor, and enforces that the rumor's author equals the seal's.
+///
+/// # Errors
+///
+/// Returns [`StreamError`] describing the first failed check.
+pub fn open_seal(
+    read_key: &[u8; 32],
+    expected: SealForm,
+    seal_json: &str,
+) -> Result<Opened, StreamError> {
+    let seal: Value = serde_json::from_str(seal_json).map_err(|_| StreamError::NotJson)?;
     verify_event(&seal)?;
     if seal.get("kind").and_then(Value::as_u64) != Some(expected.kind()) {
         return Err(StreamError::WrongSealKind);
@@ -237,13 +291,13 @@ pub fn open_stream_event(
         .get("pubkey")
         .and_then(Value::as_str)
         .ok_or(StreamError::NotJson)?;
-    let seal_content = seal
+    let content = seal
         .get("content")
         .and_then(Value::as_str)
         .ok_or(StreamError::NotJson)?;
     let rumor_json = match expected {
-        SealForm::Plaintext => seal_content.to_owned(),
-        SealForm::Encrypted => String::from_utf8(nip44::decrypt(read_key, seal_content)?)
+        SealForm::Plaintext => content.to_owned(),
+        SealForm::Encrypted => String::from_utf8(nip44::decrypt(read_key, content)?)
             .map_err(|_| StreamError::NotJson)?,
     };
     let rumor: Value = serde_json::from_str(&rumor_json).map_err(|_| StreamError::NotJson)?;
@@ -256,6 +310,25 @@ pub fn open_stream_event(
         form: expected,
         rumor_json,
     })
+}
+
+/// Opens a wrap end to end: stream signature, decryption, seal signature and
+/// kind, and the rumor author check.
+///
+/// # Errors
+///
+/// Returns [`StreamError`] describing the first failed check.
+pub fn open_stream_event(
+    stream_pubkey: &[u8; 32],
+    read_key: &[u8; 32],
+    expected: SealForm,
+    wrap_json: &str,
+) -> Result<Opened, StreamError> {
+    open_seal(
+        read_key,
+        expected,
+        &open_wrap(stream_pubkey, read_key, wrap_json)?,
+    )
 }
 
 /// Builds a rumor with its NIP-01 id computed (an embedded id is never trusted
