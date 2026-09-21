@@ -19,6 +19,52 @@ pub type InvocationId = u64;
 pub const MAX_WASM_DISPATCH_BYTES: usize = 1 << 20;
 pub const MAX_WASM_OPERATIONS: usize = 1024;
 
+#[cfg(feature = "wasm-engine")]
+pub mod wasmi_engine {
+    use super::{MAX_WASM_DISPATCH_BYTES, RuntimeError};
+    use wasmi::{Config, Engine, Module};
+
+    /// Wasmi-backed validator with deterministic fuel configuration.
+    pub struct WasmiEngine {
+        engine: Engine,
+        fuel: u64,
+    }
+
+    impl WasmiEngine {
+        #[must_use]
+        pub fn new(fuel: u64) -> Self {
+            let mut config = Config::default();
+            config.consume_fuel(true);
+            Self {
+                engine: Engine::new(&config),
+                fuel,
+            }
+        }
+
+        /// Validates a module before instantiation or host binding.
+        ///
+        /// # Errors
+        ///
+        /// Returns [`RuntimeError::InvalidWasmPayload`] when Wasmi rejects the
+        /// module or when the artifact exceeds the dispatch size budget.
+        pub fn validate(&self, module: &[u8]) -> Result<(), RuntimeError> {
+            if module.len() > MAX_WASM_DISPATCH_BYTES {
+                return Err(RuntimeError::ResourceLimit {
+                    resource: "wasm_module_bytes".to_owned(),
+                });
+            }
+            Module::new(&self.engine, module)
+                .map(|_| ())
+                .map_err(|_| RuntimeError::InvalidWasmPayload)
+        }
+
+        #[must_use]
+        pub fn fuel(&self) -> u64 {
+            self.fuel
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnsignedEvent {
     pub event_type: String,

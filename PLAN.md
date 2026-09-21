@@ -367,6 +367,8 @@ capability sandbox; Wasmtime remains an optional performance backend. See
 The runtime now declares Wasmi behind the opt-in `wasm-engine` feature; the
 default build remains engine-free while the dependency is locked for
 reproducible integration work.
+The feature now exposes `wasmi_engine::WasmiEngine`, enabling fuel metering
+and bounded module validation before host import binding.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
