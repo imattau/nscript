@@ -82,6 +82,21 @@ permissions {
 react "👍" to event_to_react
 ```
 
+Payment intent creation is explicit about its amount:
+
+```nostr
+use nip57
+
+permissions {
+    zap
+}
+
+zap alice amount 1000
+```
+
+This creates a typed zap request/payment intent; it does not silently authorize
+or execute a payment.
+
 The next Layer 3 forms are deliberately syntax sugar over existing typed NIP
 modules:
 

@@ -702,6 +702,69 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("zap") => {
+                self.index += 1;
+                let recipient = self.parse_expression(0)?;
+                if !self.eat_word("amount") {
+                    return None;
+                }
+                let amount = self.parse_expression(0)?;
+                let span = recipient.span.join(amount.span);
+                let request = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "ZapRequest".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "recipient".to_owned(),
+                                    span,
+                                },
+                                recipient,
+                            ),
+                            (
+                                Spanned {
+                                    value: "amount".to_owned(),
+                                    span,
+                                },
+                                amount,
+                            ),
+                            (
+                                Spanned {
+                                    value: "message".to_owned(),
+                                    span,
+                                },
+                                Spanned {
+                                    value: ExprKind::Text(String::new()),
+                                    span,
+                                },
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip57".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "create_zap_request".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![request],
+                    },
+                    span,
+                })
+            }
             _ => StatementKind::Expression(self.parse_expression(0)?),
         };
         self.terminator();

@@ -365,6 +365,8 @@ Implemented `search EventType for "query"` lowering to
 `nip50.search_events(SearchRequest { query })`.
 Implemented `react "content" to target` lowering to
 `nip25.publish_reaction`.
+Implemented `zap recipient amount value` lowering to
+`nip57.create_zap_request`; payment execution remains an explicit host effect.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent

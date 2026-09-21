@@ -1,0 +1,7 @@
+use nip57
+
+permissions {
+    zap
+}
+
+zap alice amount 1000
