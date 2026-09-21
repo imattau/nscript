@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/nscript-cli",
+    "crates/nscript-host-crypto",
     "crates/nscript-ir",
     "crates/nscript-modules",
     "crates/nscript-semantics",

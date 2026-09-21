@@ -1,0 +1,24 @@
+[package]
+name = "nscript-host-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Production cryptography host implementations for NScript Concord modules"
+
+[dependencies]
+base64 = "0.22"
+chacha20 = "0.9"
+hkdf = "0.12"
+hmac = "0.12"
+k256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh"] }
+nscript-runtime = { path = "../nscript-runtime" }
+sha2.workspace = true
+subtle = "2"
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

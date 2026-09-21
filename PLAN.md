@@ -571,6 +571,17 @@ decides Public/Private and flags the Refounding on retiring the last link, and
 Direct Invite (kind 3313) parsing with the `#k` index filter. The fragment
 flag bit position is assumed (the spec names it, not its bit) and must be
 confirmed against a reference implementation.
+Started the separate `nscript-host-crypto` crate (RustCrypto: `k256`, `hkdf`,
+`hmac`, `chacha20`, `base64`) so the core runtime stays dependency-light. It
+holds real CORD-02 Appendix A `group_key` derivation (HKDF, `scalar_normalize`
+retry, x-only keys, self-ECDH conversation key), NIP-44 v2, and a
+`Nip44KeyHost` implementing `ConcordKeyHost`. NIP-44 passes every official
+vector from `paulmillr/nip44` (conversation keys, message keys, padding,
+encrypt/decrypt, 65,535-byte messages, invalid inputs); HKDF agrees with the
+runtime's independent RFC 5869-tested implementation. There are no official
+`group_key` vectors, so derivation is covered by properties and cross-checks
+only. BIP-340 signing of wraps, seal/wrap host operations and blob wrapping
+remain to be built on it.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.
