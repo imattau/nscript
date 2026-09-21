@@ -82,6 +82,21 @@ permissions {
 react "👍" to event_to_react
 ```
 
+Deletion is intentionally phrased as a request, matching NIP-09 semantics:
+
+```nostr
+use nip09
+
+permissions {
+    deletion
+}
+
+delete event_to_delete
+```
+
+The runtime publishes a typed deletion request; it does not claim that every
+relay will remove the original event.
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

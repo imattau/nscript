@@ -1,0 +1,7 @@
+use nip09
+
+permissions {
+    deletion
+}
+
+delete "event-to-delete"
