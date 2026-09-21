@@ -24,6 +24,7 @@ pub mod wasmi_engine {
     use std::collections::BTreeSet;
 
     use super::{MAX_WASM_DISPATCH_BYTES, RuntimeError};
+    use serde_json::Value;
     use wasmi::{
         Caller, Config, Engine, Error, Extern, Linker, Module, Store, StoreLimits,
         StoreLimitsBuilder,
@@ -152,6 +153,7 @@ pub mod wasmi_engine {
             invocation: super::InvocationId,
         ) -> Result<H, RuntimeError> {
             self.validate(module)?;
+            let dispatch_records = super::extract_wasm_dispatch(module)?;
             let module =
                 Module::new(&self.engine, module).map_err(|_| RuntimeError::InvalidWasmPayload)?;
             let limits = StoreLimitsBuilder::new()
@@ -168,10 +170,21 @@ pub mod wasmi_engine {
             let mut operation_indices = BTreeSet::new();
             for (name, takes_payload) in imports {
                 if *takes_payload {
-                    let Some(operation_index) = operation_index(name) else {
+                    let Some((operation_index, operation_name)) = operation_descriptor(name) else {
                         return Err(RuntimeError::InvalidWasmPayload);
                     };
                     if !operation_indices.insert(operation_index) {
+                        return Err(RuntimeError::InvalidWasmPayload);
+                    }
+                    let Some(record_name) = dispatch_records
+                        .get(operation_index)
+                        .and_then(Value::as_object)
+                        .and_then(|record| record.get("op"))
+                        .and_then(Value::as_str)
+                    else {
+                        return Err(RuntimeError::InvalidWasmPayload);
+                    };
+                    if record_name != operation_name {
                         return Err(RuntimeError::InvalidWasmPayload);
                     }
                     linker
@@ -237,6 +250,12 @@ pub mod wasmi_engine {
         name.strip_prefix("op:")
             .and_then(|value| value.split(':').next())
             .and_then(|value| value.parse::<usize>().ok())
+    }
+
+    fn operation_descriptor(name: &str) -> Option<(usize, &str)> {
+        let value = name.strip_prefix("op:")?;
+        let (index, operation) = value.split_once(':')?;
+        Some((index.parse().ok()?, operation))
     }
 }
 
@@ -495,6 +514,11 @@ pub fn execute_nscript_wasm<R: RelayHost, S: SignerHost>(
     signer: &mut S,
     invocation: InvocationId,
 ) -> Result<Vec<PublishReport>, RuntimeError> {
+    let records = extract_wasm_dispatch(module)?;
+    execute_wasm_publications(relay, signer, invocation, &records)
+}
+
+fn extract_wasm_dispatch(module: &[u8]) -> Result<Vec<Value>, RuntimeError> {
     if module.get(..8) != Some(b"\0asm\x01\0\0\0") {
         return Err(RuntimeError::InvalidWasmPayload);
     }
@@ -527,7 +551,7 @@ pub fn execute_nscript_wasm<R: RelayHost, S: SignerHost>(
             u32::try_from(payload.len() - data_start)
                 .map_err(|_| RuntimeError::InvalidWasmPayload)?,
         )?;
-        return execute_wasm_publications(relay, signer, invocation, &records);
+        return Ok(records);
     }
     Err(RuntimeError::InvalidWasmPayload)
 }

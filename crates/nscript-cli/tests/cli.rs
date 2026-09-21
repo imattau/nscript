@@ -393,12 +393,12 @@ fn executes_compiled_wasm_through_wasmi_dispatch_host() {
     WasmiEngine::with_limits(100_000, 64 * 1024, 1, 1)
         .run_with_imports(&module, &imports)
         .expect("a one-page artifact fits the configured memory budget");
-    let invalid_imports = [("payload".to_owned(), true)];
+    let invalid_imports = [("op:99:create_event".to_owned(), true)];
     assert!(
         WasmiEngine::new(100_000)
             .run_with_dispatch_host(&module, &invalid_imports, Host::default(), 1)
             .is_err(),
-        "malformed payload imports must fail preflight"
+        "out-of-range payload imports must fail preflight"
     );
     let _ = std::fs::remove_file(output_path);
 }

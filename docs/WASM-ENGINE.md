@@ -35,3 +35,5 @@ Embedding hosts may tighten these values with `WasmiEngine::with_limits`; the
 default constructor keeps the 16 MiB/one-instance/one-table policy.
 Payload imports are also checked for canonical operation names and unique
 indices before a module is instantiated.
+Each index and operation name must match the module's embedded dispatch records
+before host callbacks are enabled.

@@ -400,6 +400,8 @@ default constructor retains the safe bounded policy.
 Payload imports are preflight-validated as unique `op:<index>:<name>` bindings
 before Wasmi instantiation.
 The CLI integration suite covers malformed payload import rejection.
+Dispatch import indices and operation names are checked against the embedded
+dispatch records before host callbacks can run.
 The current Draft 0.1 blocker tranche is complete: `nscript inspect --json`
 emits deterministic publication expansion and filter-lowering traces, the
 hardened-agent profile rejects forbidden effects exposed transitively by
