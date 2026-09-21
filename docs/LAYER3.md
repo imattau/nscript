@@ -267,6 +267,18 @@ permissions {
 upload file_url hash content_hash size 1024
 ```
 
+Application handlers declare the event kind, app identity, and endpoint:
+
+```nostr
+use nip89
+
+permissions {
+    app_handler
+}
+
+handler "1" for "nostr-app" at handler_url
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr

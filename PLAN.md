@@ -394,6 +394,8 @@ Implemented `file url mime type hash digest` lowering to
 `nip94.publish_file_metadata`.
 Implemented `upload url hash digest size bytes` lowering to
 `nipb7.upload_blob`.
+Implemented `handler kind for app at endpoint` lowering to
+`nip89.publish_handler`.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent

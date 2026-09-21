@@ -1,0 +1,7 @@
+use nip89
+
+permissions {
+    app_handler
+}
+
+handler "1" for "nostr-app" at "https://example.com/handler"
