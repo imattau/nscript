@@ -8,10 +8,10 @@
 
 use std::collections::BTreeSet;
 
-use nscript_runtime::DerivedKey;
 use nscript_runtime::expiry::{is_expired, rumor_expiration};
 use nscript_runtime::stream::check_channel_binding;
 use nscript_runtime::wire::rumor_id;
+use nscript_runtime::{DerivedKey, SignedEvent, UnsignedEvent};
 use serde_json::Value;
 
 use crate::group_key::{hex, xonly_pubkey};
@@ -36,6 +36,35 @@ pub struct ReceivedMessage {
     /// `created_at * 1000 + ms`, the basis every Concord comparison uses.
     pub time_ms: u64,
     pub tags: Vec<Vec<String>>,
+}
+
+impl ReceivedMessage {
+    /// The message as a handler's `event`. The rumor is unsigned, so `signature`
+    /// is empty: authenticity was established by the seal, which is what
+    /// `author` reports. Tags with other than two columns cannot be expressed as
+    /// a name and value and are omitted.
+    #[must_use]
+    pub fn to_signed_event(&self) -> SignedEvent {
+        SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "StreamMessage".to_owned(),
+                kind: u16::try_from(self.kind).unwrap_or(u16::MAX),
+                content: self.content.clone(),
+                tags: self
+                    .tags
+                    .iter()
+                    .filter_map(|tag| match tag.as_slice() {
+                        [name, value] => Some((name.clone(), value.clone())),
+                        _ => None,
+                    })
+                    .collect(),
+                created_at: self.time_ms / 1000,
+            },
+            signer: self.author.clone(),
+            id: self.id.clone(),
+            signature: String::new(),
+        }
+    }
 }
 
 /// Why an event did not reach the handler.

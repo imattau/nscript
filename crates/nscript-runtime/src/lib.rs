@@ -3,6 +3,7 @@
 pub mod authority;
 pub mod community;
 pub mod edition;
+pub mod eval;
 pub mod expiry;
 pub mod fold;
 pub mod guestbook;
@@ -485,6 +486,11 @@ pub enum RuntimeError {
     AuthorityDenied {
         actor: String,
         action: String,
+    },
+    /// A handler body failed to evaluate: a type mismatch, an unknown name,
+    /// division by zero and the like.
+    EvaluationError {
+        message: String,
     },
 }
 

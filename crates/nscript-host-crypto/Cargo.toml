@@ -20,6 +20,8 @@ sha2.workspace = true
 subtle = "2"
 
 [dev-dependencies]
+nscript-semantics = { path = "../nscript-semantics" }
+nscript-syntax = { path = "../nscript-syntax" }
 tungstenite.workspace = true
 rustls.workspace = true
 

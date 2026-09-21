@@ -2119,7 +2119,10 @@ impl Parser<'_> {
             });
         }
         let name = self.take_name()?;
-        if self.eat_symbol('{') {
+        // Record types are capitalised (`Note { .. }`), so only a capitalised
+        // name opens a record literal. A lowercase name before `{` is a
+        // variable with a block after it: `if ready { .. }`.
+        if name.value.chars().next().is_some_and(char::is_uppercase) && self.eat_symbol('{') {
             let fields = self.parse_fields()?;
             return Some(Spanned {
                 span: start.join(self.previous_span()),

@@ -701,12 +701,23 @@ unbanned, de-duplicated messages in canonical order (live: 7 real events
 delivered once, 20 duplicates dropped). Blocked on the deferred handler
 evaluator, on typing `event` from its source, and on how a script obtains a
 key; the RFC's implementation notes record this.
+Started the handler evaluator (`eval.rs`, documented in `docs/HANDLERS.md`): a
+bounded tree-walking interpreter with typed `Value`s, scoped bindings,
+arithmetic, comparisons, user functions, `me`, and module operation calls that
+go through `OperationPolicy` via `RuntimeSession`. Proved end to end with a
+moderation bot: real encrypted channel messages, `ChannelReader`, an NScript
+handler (`if event.content contains "spam" { kick event.author }`), the real
+moderation host, and an independent Guestbook fold. Not wired into `nscript
+run`; `Result` values, `match`, `select` and in-handler publication are not yet
+evaluated. Fixed a parser bug found on the way: a lowercase name before a block
+(`if ready { .. }`) was read as a record literal.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.
 
 ## Deferred
 
-Module operation dispatch, full handler/stream evaluation,
+Module operation dispatch, full handler/stream evaluation (a core evaluator now
+exists; see `docs/HANDLERS.md`),
 cryptographic signing, NIP-44/NIP-59/NIP-46 host implementations, signed
 package distribution, and a stable IR interchange format remain later phases.

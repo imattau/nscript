@@ -162,9 +162,16 @@ members was deliberately not done.
   `concord04.kick_member`, `concord04.ban_member` and
   `concord01.publish_message`. They keep the module checks (`E3001` for an
   ungranted operation) and run from source through the policy gate and the
-  Roster (tested end to end). Not sugar yet: reading a stream
-  (`on chat.message { }`) and scoped grants (`concord Kick in devs`); those need
-  the generic mechanisms in RFC 0002. Because these forms are parser keywords,
+  Roster (tested end to end). Reading a stream is partly there:
+  `concord01.stream(key)` opens a source, the ordinary
+  `stream ... = select StreamMessage from chat` and `on` forms check against it,
+  `ChannelReader` supplies verified messages, and handler bodies now run under a
+  bounded evaluator (`docs/HANDLERS.md`). A moderation bot that reads a real
+  encrypted channel and issues a real kick is tested end to end. The evaluator
+  is a library and not yet wired into `nscript run`, `event` is not statically
+  typed from its source, and a script has no way yet to bind a host-held key.
+  Scoped grants (`concord Kick in devs`) are not started. See RFC 0002's
+  implementation notes. Because these forms are parser keywords,
   they are compiler changes, a step beyond the plan's "Concord stays in
   modules" line, taken at the owner's request.
 - **Malformed statements used to vanish silently.** The statement parser

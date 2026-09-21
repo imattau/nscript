@@ -176,18 +176,26 @@ module does not declare, and calling into a module with no `use`. Malformed
 statements and leftover tokens were also being dropped silently (see
 `docs/LAYER3.md`).
 
-**Still blocking, and not language design.**
+**Blockers, updated.** Handler evaluation, the largest one, now exists (see
+`docs/HANDLERS.md`): a bounded evaluator runs handler bodies, calls module
+operations through the policy gate, and is proved end to end by a moderation bot
+that reads a real encrypted channel and kicks a spammer
+(`nscript-host-crypto/tests/handler.rs`). It is a library, not yet wired into
+`nscript run`. What remains:
 
-- **Handler bodies are not evaluated.** `nscript run` registers subscriptions
-  and stops; `PLAN.md` lists full handler and stream evaluation as deferred.
-  Until an evaluator exists, `on chat.message { print(event.content) }` checks
-  but cannot run, however the Concord side is built.
 - **`event` is not typed by the source.** A handler over a Concord stream checks
-  as an untyped handler; `event.content` and `event.author` are not validated
-  against `StreamMessage`.
+  as an untyped handler; `event.content` and `event.author` are checked at run
+  time, not against `StreamMessage`.
 - **Where does a script get a `DerivedKey`?** This is open question 3, and it is
   now concrete: the language has no way to bind a host-held key to a name. The
   `me` principal is the only host-provided value today. `concord01.stream(key)`
   passes an undefined identifier that the checker does not resolve.
+- **`Result` values are not modelled**, so a handler cannot branch on a failed
+  operation, and publication from a handler is not evaluated.
 - **Scoped grants (section 2) and fold queries (section 3)** are untouched.
 
+Writing the evaluator's first handler also exposed a parser bug: a lowercase
+name before a block, as in `if ready { ... }`, was read as a record literal, so
+any condition ending in a bare variable failed to parse. Record types are
+capitalised, so only a capitalised name now opens a record literal. That bug
+was also why `examples/private-message.ns` failed `check`.
