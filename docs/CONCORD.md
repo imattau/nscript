@@ -70,6 +70,9 @@ The `stream`/`on` and `concord Kick in devs` forms above are aspirational; see
 [RFC 0002](../rfcs/0002-concord-language-surface.md) for the proposed generic
 language extensions that would support them.
 
+Implementation status, verification and known limits are recorded in
+[CONCORD-STATUS.md](CONCORD-STATUS.md).
+
 ## Module boundary
 
 Concord semantics must remain modules, not compiler primitives:

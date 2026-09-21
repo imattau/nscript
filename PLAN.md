@@ -672,6 +672,9 @@ roster, banlist and metadata with authors intact; staff receive the control
 secret; the removed member is cut off and cannot open the new plane. Not yet
 done: driving a Refounding from `ban_member`, and running any of this against a
 live community.
+A full status write-up of the Concord tranche, covering what was built, how it
+was verified, findings and limits, is in
+[`docs/CONCORD-STATUS.md`](docs/CONCORD-STATUS.md).
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.
