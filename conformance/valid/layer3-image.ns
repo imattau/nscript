@@ -1,0 +1,7 @@
+use nip68
+
+permissions {
+    image
+}
+
+image "https://example.com/photo.jpg" caption "A photo"

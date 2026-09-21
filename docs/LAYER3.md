@@ -219,6 +219,18 @@ permissions {
 live "weekly" titled "Nostr Space" about "Community discussion"
 ```
 
+Image events pair a media URL with a caption:
+
+```nostr
+use nip68
+
+permissions {
+    image
+}
+
+image photo_url caption "A photo"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr
