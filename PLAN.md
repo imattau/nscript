@@ -481,6 +481,12 @@ community and channel models; CORD-04 authority and roles with a constrained
 moderation bot; Armada interoperability; then CORD-05/06 key-management,
 CORD-07 host/service integration, and CORD-08 disappearing-message timers.
 
+Started the tranche with the `concord01` standard module descriptor. It defines
+nominal `SharedSecret`, `DerivedKey`, and immutable `SignedBytes` boundaries,
+the typed `StreamMessage` shape, and capability/permission-gated derivation
+and publication operation contracts. Host implementations and CORD-01 wire
+processing remain the next steps.
+
 ## Deferred
 
 Module operation dispatch, full handler/stream evaluation,

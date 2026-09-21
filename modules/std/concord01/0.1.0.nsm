@@ -1,0 +1,33 @@
+module concord01 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/ereignishorizont/concord/blob/main/CORD-01.md"
+use nip44 @ "^0.1"
+use nip59 @ "^0.1"
+
+nominal SharedSecret from Bytes {
+    require length(value) > 0
+}
+
+nominal DerivedKey from Bytes {
+    require length(value) > 0
+}
+
+nominal SignedBytes from Bytes {
+    require length(value) > 0
+}
+
+record StreamMessage {
+    field author: PubKey
+    field content: Text
+}
+
+error ConcordKeyError {
+    field message: Text
+}
+
+error StreamMessageError {
+    field message: Text
+}
+
+operation derive_stream_key(secret: SharedSecret) -> Result<DerivedKey,ConcordKeyError> effect Encrypt permission concord_key_derivation
+operation publish_message(stream: DerivedKey, message: StreamMessage) -> Result<PublishReport,StreamMessageError> effect Encrypt,Sign,Relay permission concord_publish
