@@ -208,6 +208,9 @@ pub struct ModuleRegistry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedModuleGraph {
     pub modules: BTreeMap<String, RegisteredModule>,
+    /// Every module name the registry knows, imported or not, so a call into a
+    /// module the program forgot to `use` can be told from an ordinary name.
+    pub known: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -377,7 +380,10 @@ impl ModuleRegistry {
         if let Some(cycle) = dependency_cycle(&selected) {
             return Err(ResolutionError::Cycle(cycle));
         }
-        Ok(ResolvedModuleGraph { modules: selected })
+        Ok(ResolvedModuleGraph {
+            modules: selected,
+            known: self.entries.keys().cloned().collect(),
+        })
     }
 
     fn solve(

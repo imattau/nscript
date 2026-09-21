@@ -234,6 +234,21 @@ fn validate_module_symbols(program: &Program, graph: &ResolvedModuleGraph) -> Ve
     diagnostics
 }
 
+/// What call validation needs to know about the program's modules.
+struct CallContext {
+    /// `module.operation` to its declarations, for imported modules.
+    calls: BTreeMap<String, Vec<ModuleCall>>,
+    /// Modules the program imports with `use`.
+    imported: BTreeSet<String>,
+    /// Every module the registry knows, imported or not.
+    known: BTreeSet<String>,
+    /// Imported modules that resolved. An import that failed to resolve has
+    /// already been reported (`E4002`); its calls are not reported again.
+    resolved: BTreeSet<String>,
+    /// Names the program declares itself, which shadow module names.
+    locals: BTreeSet<String>,
+}
+
 #[derive(Clone)]
 struct ModuleCall {
     module: String,
@@ -291,9 +306,39 @@ fn validate_module_calls(
         }
     }
     let permissions = program_permissions(program);
+    let context = CallContext {
+        calls,
+        imported: program
+            .imports
+            .iter()
+            .map(|item| item.path.clone())
+            .collect(),
+        known: graph.known.clone(),
+        resolved: graph.modules.keys().cloned().collect(),
+        locals: program_locals(program),
+    };
     for item in &program.ast.items {
-        validate_item_calls(item, &calls, &permissions, diagnostics);
+        validate_item_calls(item, &context, &permissions, diagnostics);
     }
+}
+
+/// Names the program itself declares at top level. A declaration named like a
+/// module shadows it, so `let nip44 = 1` is not a call into the module.
+fn program_locals(program: &Program) -> BTreeSet<String> {
+    program
+        .ast
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Let(declaration) => Some(declaration.name.value.clone()),
+            Item::Function(function) => Some(function.name.value.clone()),
+            Item::Stream { name, .. } => Some(name.value.clone()),
+            Item::Signer(declaration) | Item::Relay(declaration) | Item::RelaySet(declaration) => {
+                Some(declaration.name.value.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn program_permissions(program: &Program) -> BTreeSet<String> {
@@ -318,7 +363,7 @@ fn program_permissions(program: &Program) -> BTreeSet<String> {
 
 fn validate_item_calls(
     item: &Item,
-    calls: &BTreeMap<String, Vec<ModuleCall>>,
+    calls: &CallContext,
     permissions: &BTreeSet<String>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -341,7 +386,7 @@ fn validate_item_calls(
 
 fn validate_statement_calls(
     statement: &StatementKind,
-    calls: &BTreeMap<String, Vec<ModuleCall>>,
+    calls: &CallContext,
     permissions: &BTreeSet<String>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -407,16 +452,54 @@ fn validate_statement_calls(
     }
 }
 
+/// A call the checker cannot resolve is not a call it can check, so it must not
+/// pass silently: a program that calls `concord04.kick_member` without
+/// `use concord04` would otherwise be checked against no permissions at all.
+fn report_unresolved_module_call(
+    path: &str,
+    span: Span,
+    calls: &CallContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Some((module, operation)) = path.split_once('.') else {
+        return;
+    };
+    // Only `module.operation`; deeper paths are member chains on values.
+    if operation.contains('.') || calls.locals.contains(module) {
+        return;
+    }
+    if calls.imported.contains(module) {
+        if calls.resolved.contains(module) && !calls.calls.contains_key(path) {
+            diagnostics.push(Diagnostic {
+                code: "E1101",
+                message: format!("module `{module}` has no operation `{operation}`"),
+                span,
+            });
+        }
+    } else if calls.known.contains(module) {
+        diagnostics.push(Diagnostic {
+            code: "E1101",
+            message: format!("module `{module}` is not imported; add `use {module}`"),
+            span,
+        });
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn validate_expr_calls(
     expression: &Expr,
-    calls: &BTreeMap<String, Vec<ModuleCall>>,
+    calls: &CallContext,
     permissions: &BTreeSet<String>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    if let ExprKind::Call { callee, .. } = &expression.value
+        && let Some(name) = expression_path(callee)
+    {
+        report_unresolved_module_call(&name, callee.span, calls, diagnostics);
+    }
     if let ExprKind::Call { callee, arguments } = &expression.value
         && let Some(name) = expression_path(callee)
-        && let Some(candidates) = calls.get(&name)
+        && let Some(candidates) = calls.calls.get(&name)
     {
         if candidates.len() > 1 {
             diagnostics.push(Diagnostic {

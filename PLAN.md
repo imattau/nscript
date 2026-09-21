@@ -685,6 +685,14 @@ general, so the item loop now also reports any statement that fails without a
 diagnostic and requires statements to end at a line boundary, `;` or `}`; leftover
 tokens are no longer read as extra statements.
 The read side and scoped grants still await RFC 0002.
+Starting the RFC 0002 read side exposed a third silent-acceptance hole in the
+checker: a call the checker could not resolve was simply not checked. Calling
+an operation an imported module does not declare (`concord04.no_such_op(x)`),
+or calling `concord04.kick_member(alice)` with no `use concord04`, passed
+`check`, the second with no permission or arity check at all. Both are now
+`E1101`. `ResolvedModuleGraph` gained a `known` set of every registered module
+name so a forgotten `use` can be told from an ordinary identifier; a program's
+own top-level names shadow module names.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

@@ -695,6 +695,7 @@ fn load_program(
             });
             nscript_modules::ResolvedModuleGraph {
                 modules: std::collections::BTreeMap::new(),
+                known: std::collections::BTreeSet::new(),
             }
         }
     };

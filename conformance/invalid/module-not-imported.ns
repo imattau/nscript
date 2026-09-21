@@ -1,0 +1,3 @@
+// error: E1101 unknown-name
+// Without `use`, nothing about this call would be checked: no permission, no arity.
+let result = concord04.kick_member(alice)

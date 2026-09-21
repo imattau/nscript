@@ -1,0 +1,8 @@
+// error: E1101 unknown-name
+use concord04
+
+permissions {
+    concord_kick
+}
+
+let result = concord04.no_such_operation(alice)

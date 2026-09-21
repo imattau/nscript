@@ -180,6 +180,10 @@ members was deliberately not done.
   external packages, and `examples/private-message.ns` has a parse problem at
   `decrypt(event, account)?`) fail identically before and after.
   Still accepted: `return return`, where a reserved word is read as a name.
+- **Unresolvable module calls used to pass `check`.** A call the checker could
+  not resolve was skipped rather than reported. Calling an operation an imported
+  module does not declare, or calling into a module with no `use`, checked clean
+  (the second with no permission or arity check at all). Both are now `E1101`.
 - **`can_*` operations** return `Int` 0/1 and declare a `Storage` effect only
   because descriptors currently require an effect and the language has no
   boolean result; the RFC proposes fixing this.
