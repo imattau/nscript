@@ -2086,7 +2086,13 @@ where
                 continue;
             };
             match &statement.value {
-                StatementKind::Return(_) => return Ok(HandlerFlow::Return),
+                StatementKind::Return(Some(_)) => {
+                    return Err(RuntimeError::OperationUnavailable {
+                        module: "handler".to_owned(),
+                        operation: "return_value".to_owned(),
+                    });
+                }
+                StatementKind::Return(None) => return Ok(HandlerFlow::Return),
                 StatementKind::Expression(expression) => {
                     let ExprKind::Call { callee, arguments } = &expression.value else {
                         return Err(RuntimeError::OperationUnavailable {
@@ -5159,6 +5165,27 @@ mod tests {
             .expect("return executes");
         assert_eq!(logs.records.len(), 1);
         assert_eq!(logs.records[0].message, "before");
+    }
+
+    #[test]
+    fn handler_body_rejects_value_return() {
+        let source = "permissions {\n    read Note from public\n    relay public\n}\non Note {\n    return \"value\"\n}";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut logs = FakeLogHost::default();
+        assert!(
+            runtime
+                .execute_handler_body(&checked.handlers[0], &mut logs)
+                .is_err()
+        );
     }
 
     #[test]
