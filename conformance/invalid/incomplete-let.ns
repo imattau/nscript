@@ -1,0 +1,2 @@
+// error: E1101 unknown-name
+let x =

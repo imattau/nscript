@@ -680,7 +680,10 @@ lowering to `concord04.kick_member`, `concord04.ban_member` and
 `concord01.publish_message`, with conformance fixtures, lowering tests and a
 from-source execution test through the policy gate and Roster. Every Layer 3
 form now reports `E1101` when incomplete rather than being dropped silently (a
-wrapper over `parse_statement` and the `LAYER3_FORMS` list).
+wrapper over `parse_statement` and the `LAYER3_FORMS` list). The same flaw was
+general, so the item loop now also reports any statement that fails without a
+diagnostic and requires statements to end at a line boundary, `;` or `}`; leftover
+tokens are no longer read as extra statements.
 The read side and scoped grants still await RFC 0002.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before

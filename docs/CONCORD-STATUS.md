@@ -167,13 +167,19 @@ members was deliberately not done.
   the generic mechanisms in RFC 0002. Because these forms are parser keywords,
   they are compiler changes, a step beyond the plan's "Concord stays in
   modules" line, taken at the owner's request.
-- **Malformed Layer 3 forms used to be dropped silently.** Any Layer 3 form that
-  failed to parse (`react "x"` with no target, `kick` with no member) was
-  skipped with no diagnostic and `check` exited 0. A wrapper around
-  `parse_statement` now reports `E1101` for every Layer 3 keyword whose
-  statement fails without saying why; forms that already explain themselves are
-  not reported twice. No existing valid program was affected. Statements that do
-  not start with a Layer 3 keyword are not covered by this rule.
+- **Malformed statements used to vanish silently.** The statement parser
+  discarded any statement that failed without a diagnostic, and never required a
+  statement to end at a line boundary. So `react "x"`, `let x =`, `x =` and
+  `5 +` checked clean and did nothing, and leftover tokens became extra
+  statements: `kick alice bob` kicked `alice` and ignored `bob`. Two fixes:
+  the item loop now reports `E1101` for any statement that fails without saying
+  why, and requires each statement to end at a newline, `;`, a block's closing
+  `}` or end of input, and a wrapper names the failing Layer 3 form. Of 26
+  malformed probes, 25 were accepted before and are rejected now. No existing
+  valid program changed; the five example programs that fail `check` (four need
+  external packages, and `examples/private-message.ns` has a parse problem at
+  `decrypt(event, account)?`) fail identically before and after.
+  Still accepted: `return return`, where a reserved word is read as a name.
 - **`can_*` operations** return `Int` 0/1 and declare a `Storage` effect only
   because descriptors currently require an effect and the language has no
   boolean result; the RFC proposes fixing this.

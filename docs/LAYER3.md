@@ -338,8 +338,20 @@ An incomplete Layer 3 statement is an error, never a silent no-op: `kick` with
 no member, `say "hi"` with no `in <stream>`, `react "x"` with no target and the
 like report `E1101`. A statement that vanishes without a diagnostic would let a
 script check clean and do nothing, which for moderation is a dangerous failure.
-The rule covers every Layer 3 keyword (the `LAYER3_FORMS` list in the parser),
-so a new form is covered by adding its keyword there.
+The wrapper that names the form covers every Layer 3 keyword (the
+`LAYER3_FORMS` list in the parser), so a new form gets it by adding its keyword
+there.
+
+The rule is general, not just for Layer 3. Two parser guarantees back it:
+
+- **A statement that fails must say why.** The item loop reports
+  `could not parse the statement starting at ...` whenever a parser gives up
+  without a diagnostic, so `let x =`, `x =`, `5 +` and `relayset x =` are errors.
+- **A statement ends where its line does.** After a statement the parser
+  requires a newline, `;`, the enclosing block's closing `}`, or the end of
+  input. Leftover tokens are `unexpected ...` errors rather than extra
+  statements, so `kick alice bob` cannot silently kick `alice` and ignore `bob`.
+  Several statements on one line need `;`.
 
 The words `kick`, `ban` and `say` are recognised only at the start of a
 statement; they remain ordinary names elsewhere (`let ban = 1`).

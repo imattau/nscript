@@ -1,0 +1,8 @@
+// error: E1101 unknown-name
+use concord04
+
+permissions {
+    concord_kick
+}
+
+kick alice bob

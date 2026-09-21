@@ -60,6 +60,8 @@ impl Parser<'_> {
         self.skip_terminators();
         while !self.at_end() && closing.is_none_or(|value| !self.at_symbol(value)) {
             let start = self.span();
+            let diagnostics_before = self.diagnostics.len();
+            let first_token = self.token_text();
             let item = match self.word() {
                 Some("use") => self.parse_use().map(Item::Use),
                 Some("runtime") => self.parse_runtime().map(Item::Runtime),
@@ -77,7 +79,29 @@ impl Parser<'_> {
             };
             if let Some(item) = item {
                 items.push(item);
+                // A statement must end where the line does. Leftover tokens
+                // would otherwise become extra statements: `kick alice bob`
+                // would silently kick `alice` and ignore `bob`.
+                if !self.statement_ended(closing) {
+                    let junk = self.token_text();
+                    self.error(
+                        self.span(),
+                        "E1101",
+                        format!("unexpected `{junk}`; end a statement with a newline or `;`"),
+                    );
+                    self.recover_item();
+                }
             } else {
+                // A parser that gives up without a word must not let the
+                // statement vanish: every path that fails reports something.
+                if self.diagnostics.len() == diagnostics_before {
+                    let first = first_token.clone();
+                    self.error(
+                        start,
+                        "E1101",
+                        format!("could not parse the statement starting at `{first}`"),
+                    );
+                }
                 self.recover_item();
             }
             if self.span() == start && !self.at_end() {
@@ -2534,6 +2558,27 @@ impl Parser<'_> {
             self.index += 1;
         }
     }
+    /// Whether the statement just parsed ended cleanly: at the end of input, a
+    /// terminator, the enclosing block's closing symbol, or right after a
+    /// terminator or block-closing `}` that its parser already consumed.
+    fn statement_ended(&self, closing: Option<char>) -> bool {
+        if self.at_end() || self.at_terminator() {
+            return true;
+        }
+        if closing.is_some_and(|symbol| self.at_symbol(symbol)) {
+            return true;
+        }
+        self.index
+            .checked_sub(1)
+            .and_then(|previous| self.tokens.get(previous))
+            .is_some_and(|token| {
+                matches!(
+                    token.kind,
+                    TokenKind::Newline | TokenKind::Symbol(';' | '}')
+                )
+            })
+    }
+
     fn recover_item(&mut self) {
         while !self.at_end() && !self.at_terminator() && !self.at_symbol('}') {
             self.index += 1;

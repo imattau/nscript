@@ -652,4 +652,48 @@ publish Note { content: "hello" }
         let (_, diagnostics) = parse_program("say \"hi\"\n");
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
+
+    #[test]
+    fn statements_that_used_to_vanish_are_now_errors() {
+        for source in [
+            "foo bar baz\n", // leftover tokens were extra statements
+            "123 456\n",
+            "\"a string\" more\n",
+            "kick alice bob\n", // would have kicked alice and ignored bob
+            "let x =\n",        // a declaration with no value
+            "x =\n",            // an assignment with no right side
+            "5 +\n",            // a dangling operator
+            "relayset x =\n",
+        ] {
+            let (_, diagnostics) = parse_program(source);
+            assert!(
+                diagnostics.iter().any(|d| d.code == "E1101"),
+                "{source:?} was accepted silently"
+            );
+        }
+    }
+
+    #[test]
+    fn leftover_tokens_are_reported_once_per_statement() {
+        let (_, diagnostics) = parse_program("kick alice extra tokens here\n");
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert!(diagnostics[0].message.contains("unexpected `extra`"));
+    }
+
+    #[test]
+    fn well_formed_statement_boundaries_are_still_accepted() {
+        for source in [
+            "let a = 1; let b = 2\n", // `;` separates statements
+            "let a = 1\nlet b = 2\n", // so does a newline
+            "if true { print(1) }\n", // a block's closing brace ends its last statement
+            "if true { print(1); print(2) }\n",
+            "fn f() { return 1 }\nlet x = f()\n",
+            "on Note { print(event.content) }\n",
+            "kick alice; ban bob\n",
+            "let a = 1", // end of input ends a statement
+        ] {
+            let (_, diagnostics) = parse_program(source);
+            assert!(diagnostics.is_empty(), "{source:?}: {diagnostics:?}");
+        }
+    }
 }
