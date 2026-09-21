@@ -505,6 +505,66 @@ impl Parser<'_> {
                 };
                 StatementKind::Send { value, signer }
             }
+            Some("reply") => {
+                self.index += 1;
+                let content = self.parse_expression(0)?;
+                if !self.eat_word("to") {
+                    return None;
+                }
+                let target = self.parse_expression(0)?;
+                let span = content.span.join(target.span);
+                let reply = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "Reply".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "target".to_owned(),
+                                    span,
+                                },
+                                target.clone(),
+                            ),
+                            (
+                                Spanned {
+                                    value: "root".to_owned(),
+                                    span,
+                                },
+                                target,
+                            ),
+                            (
+                                Spanned {
+                                    value: "content".to_owned(),
+                                    span,
+                                },
+                                content,
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip10".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_reply".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![reply],
+                    },
+                    span,
+                })
+            }
             _ => StatementKind::Expression(self.parse_expression(0)?),
         };
         self.terminator();

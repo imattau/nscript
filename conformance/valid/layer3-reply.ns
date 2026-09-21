@@ -1,0 +1,7 @@
+use nip10
+
+permissions {
+    reply
+}
+
+reply "Agreed" to "event-target"

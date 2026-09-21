@@ -34,6 +34,18 @@ permissions {
 send "Hello" to alice
 ```
 
+Thread replies use the same intent-oriented pattern:
+
+```nostr
+use nip10
+
+permissions {
+    reply
+}
+
+reply "Agreed" to event_target
+```
+
 The next Layer 3 forms are deliberately syntax sugar over existing typed NIP
 modules:
 
