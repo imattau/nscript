@@ -21,6 +21,7 @@ fn main() -> ExitCode {
         [package, manifest, rest @ ..] if package == "package" && manifest == "manifest" => {
             package_manifest(rest)
         }
+        [package, lock, rest @ ..] if package == "package" && lock == "lock" => package_lock(rest),
         [command, emit, format, rest @ ..]
             if command == "compile" && emit == "--emit" && format == "ir" =>
         {
@@ -42,7 +43,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file>\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -142,6 +143,84 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
     if let Some(output) = flag("--output") {
         if fs::write(&output, format!("{rendered}\n")).is_err() {
             eprintln!("could not write manifest: {output}");
+            return ExitCode::from(1);
+        }
+    } else {
+        println!("{rendered}");
+    }
+    ExitCode::SUCCESS
+}
+
+fn package_lock(arguments: &[String]) -> ExitCode {
+    let Some(source) = arguments.iter().find(|item| {
+        Path::new(item)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("ns"))
+    }) else {
+        eprintln!("package lock requires an NScript source file");
+        return ExitCode::from(2);
+    };
+    let flag = |name: &str| {
+        arguments
+            .windows(2)
+            .find(|pair| pair[0] == name)
+            .map(|pair| pair[1].clone())
+    };
+    let mut compiler_arguments = vec![source.clone()];
+    let mut argument_index = 0;
+    while argument_index < arguments.len() {
+        if matches!(arguments[argument_index].as_str(), "-M" | "--module-path")
+            && let Some(directory) = arguments.get(argument_index + 1)
+        {
+            compiler_arguments.extend([arguments[argument_index].clone(), directory.clone()]);
+            argument_index += 2;
+            continue;
+        }
+        argument_index += 1;
+    }
+    let Ok((_path, program, graph, diagnostics)) = load_program(&compiler_arguments) else {
+        return ExitCode::from(2);
+    };
+    if !diagnostics.is_empty() {
+        return finish(source, diagnostics);
+    }
+    let modules = graph
+        .modules
+        .values()
+        .map(|module| {
+            serde_json::json!({
+                "name": module.descriptor.id.name,
+                "version": module.descriptor.id.version.to_string(),
+                "sha256": hash_hex(&module.descriptor.canonical_hash),
+                "dependencies": module.descriptor.dependencies.iter().map(|dependency| {
+                    serde_json::json!({
+                        "name": dependency.name,
+                        "requirement": dependency.requirement.to_string()
+                    })
+                }).collect::<Vec<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+    let roots = program
+        .imports
+        .iter()
+        .map(|import| {
+            serde_json::json!({
+                "name": import.path,
+                "requirement": import.requirement.as_deref().unwrap_or("*")
+            })
+        })
+        .collect::<Vec<_>>();
+    let lockfile = serde_json::json!({
+        "lockfile_version": 1,
+        "source": source,
+        "roots": roots,
+        "modules": modules
+    });
+    let rendered = serde_json::to_string_pretty(&lockfile).expect("lockfile is serializable");
+    if let Some(output) = flag("--output") {
+        if fs::write(&output, format!("{rendered}\n")).is_err() {
+            eprintln!("could not write lockfile: {output}");
             return ExitCode::from(1);
         }
     } else {

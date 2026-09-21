@@ -141,6 +141,31 @@ fn generates_npack_compatible_manifest() {
 }
 
 #[test]
+fn generates_deterministic_module_lockfile() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["package", "lock"])
+        .arg(repository_path("conformance/valid/hello-note.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let lockfile: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(lockfile["lockfile_version"], 1);
+    assert_eq!(lockfile["roots"][0]["name"], "nip01");
+    assert!(
+        lockfile["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|module| {
+                module["name"] == "nip01"
+                    && module["sha256"]
+                        .as_str()
+                        .is_some_and(|hash| hash.len() == 64)
+            })
+    );
+}
+
+#[test]
 fn reports_missing_module() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("check")
