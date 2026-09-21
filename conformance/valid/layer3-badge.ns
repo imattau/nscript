@@ -1,0 +1,7 @@
+use nip58
+
+permissions {
+    badge
+}
+
+badge "contributor" as "Contributor"

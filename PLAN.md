@@ -378,6 +378,8 @@ default `nscript` namespace.
 Implemented `status value` lowering to `nip38.publish_status` with an empty
 optional status description.
 Implemented `draft identifier with content` lowering to `nip37.save_draft`.
+Implemented `badge identifier as name` lowering to `nip58.publish_badge` with
+an empty optional description.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent

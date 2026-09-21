@@ -941,6 +941,69 @@ impl Parser<'_> {
                     span,
                 })
             }
+            Some("badge") => {
+                self.index += 1;
+                let identifier = self.parse_expression(0)?;
+                if !self.eat_word("as") {
+                    return None;
+                }
+                let name = self.parse_expression(0)?;
+                let span = identifier.span.join(name.span);
+                let badge = Spanned {
+                    value: ExprKind::Construct {
+                        name: Spanned {
+                            value: "Badge".to_owned(),
+                            span,
+                        },
+                        fields: vec![
+                            (
+                                Spanned {
+                                    value: "identifier".to_owned(),
+                                    span,
+                                },
+                                identifier,
+                            ),
+                            (
+                                Spanned {
+                                    value: "name".to_owned(),
+                                    span,
+                                },
+                                name,
+                            ),
+                            (
+                                Spanned {
+                                    value: "description".to_owned(),
+                                    span,
+                                },
+                                Spanned {
+                                    value: ExprKind::Text(String::new()),
+                                    span,
+                                },
+                            ),
+                        ],
+                    },
+                    span,
+                };
+                StatementKind::Expression(Spanned {
+                    value: ExprKind::Call {
+                        callee: Box::new(Spanned {
+                            value: ExprKind::Member {
+                                value: Box::new(Spanned {
+                                    value: ExprKind::Identifier("nip58".to_owned()),
+                                    span,
+                                }),
+                                name: Spanned {
+                                    value: "publish_badge".to_owned(),
+                                    span,
+                                },
+                            },
+                            span,
+                        }),
+                        arguments: vec![badge],
+                    },
+                    span,
+                })
+            }
             Some("search") => {
                 self.index += 1;
                 let _event = self.parse_type()?;

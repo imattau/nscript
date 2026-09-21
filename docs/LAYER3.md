@@ -158,6 +158,19 @@ permissions {
 draft "welcome" with "A draft note"
 ```
 
+Badges use an identifier and display name; descriptions remain available via
+the lower-level typed NIP-58 record:
+
+```nostr
+use nip58
+
+permissions {
+    badge
+}
+
+badge "contributor" as "Contributor"
+```
+
 Payment intent creation is explicit about its amount:
 
 ```nostr
