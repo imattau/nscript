@@ -1,5 +1,7 @@
 use std::{
-    env, fs,
+    env,
+    fmt::Write as _,
+    fs,
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -8,6 +10,7 @@ use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_he
 use nscript_semantics::{analyze_with_modules, check};
 use nscript_syntax::{Diagnostic, Program, parse_program};
 use semver::VersionReq;
+use sha2::{Digest, Sha256};
 
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
@@ -53,6 +56,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn package_manifest(arguments: &[String]) -> ExitCode {
     let Some(source) = arguments.iter().find(|item| {
         Path::new(item)
@@ -95,6 +99,34 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
         eprintln!("--sha256 must be 64 hexadecimal characters");
         return ExitCode::from(2);
     }
+    let lock_metadata = if let Some(lock_path) = flag("--lock") {
+        let Ok(contents) = fs::read_to_string(&lock_path) else {
+            eprintln!("could not read lockfile: {lock_path}");
+            return ExitCode::from(1);
+        };
+        let Ok(actual) = serde_json::from_str::<serde_json::Value>(&contents) else {
+            eprintln!("invalid lockfile JSON: {lock_path}");
+            return ExitCode::from(1);
+        };
+        let Ok((_, expected)) = resolve_lockfile(arguments) else {
+            return ExitCode::from(2);
+        };
+        if actual != expected {
+            eprintln!("lockfile is out of date: {lock_path}");
+            return ExitCode::from(1);
+        }
+        let digest = Sha256::digest(contents.as_bytes());
+        let mut fingerprint = String::with_capacity(64);
+        for byte in digest {
+            write!(&mut fingerprint, "{byte:02x}").expect("writing to a string cannot fail");
+        }
+        Some(serde_json::json!({
+            "path": lock_path,
+            "sha256": fingerprint
+        }))
+    } else {
+        None
+    };
     let mut compiler_arguments = vec![source.clone()];
     let mut argument_index = 0;
     while argument_index < arguments.len() {
@@ -138,6 +170,7 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
         "post_install": [],
         "nscript": {
             "source": source,
+            "lockfile": lock_metadata,
             "effects": checked.effects.iter().map(|effect| format!("{effect:?}").to_lowercase()).collect::<Vec<_>>(),
             "permissions_reviewed": true
         }

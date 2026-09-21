@@ -330,6 +330,8 @@ resolved module versions, canonical descriptor hashes, and transitive module
 requirements for reproducible package builds.
 Added `nscript package verify`, which rejects source/module-graph drift against
 a committed lockfile before packaging.
+`package manifest --lock` now verifies that lockfile and embeds its SHA-256
+fingerprint in the generated package metadata.
 Added a durable `FileStorage` host for local deployments. It preserves the
 existing transactional and idempotency interfaces using deterministic
 tab-separated records and atomic replacement, providing a real persistent

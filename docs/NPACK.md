@@ -19,6 +19,9 @@ permission-review marker. `npack pack`, `npack hash`, `npack verify`, and
 `npack publish` remain responsible for archive creation, hashing, signing, and
 distribution.
 
+Pass `--lock nscript.lock.json` to `package manifest` to require an up-to-date
+lockfile and embed its SHA-256 fingerprint in the NScript manifest metadata.
+
 Keep the final archive hash in `sha256` before publishing. NScript's checked
 permissions and Nostr signer identity remain part of the source/package review
 workflow; installation transport is delegated to npack.
