@@ -623,6 +623,21 @@ TLS reached three relays and read back. That exposed and fixed three
 program), `publish` took the next frame as its answer instead of the `OK` naming
 its event, and `RealRelayPool::publish` aborted on the first failing relay
 instead of reporting partial publication.
+The `concord04` bot now acts for real (`ConcordModerationHost` in
+`nscript-host-crypto`, plus `wire::build_edition` as the exact inverse of the
+edition decoder). `ban_member` publishes a chained Banlist edition on the
+Control Plane (plaintext seal by the actor, wrap by the `control_root` signer,
+read key from the `community_root`), keeping earlier bans and citing the
+actor's own Grant. `kick_member` performs Role Removal (only when the actor
+holds MANAGE_ROLES and the staff key) and then a Guestbook kick, degrading to
+the weaker removal otherwise, per CORD-04 §6. Both re-check the CORD-04 bit and
+strict-outrank rule, so the runtime `OperationPolicy` and the roster remain two
+independent gates. Proved on a self-made local community: an independent reader
+holding only member-level keys opens every published wrap and folds it through
+`AuthorityFold` and `Guestbook` (bans take effect, roles are stripped, kicks
+land). Not run against the live community: the throwaway identity has no
+authority there, so such editions would be dropped. A ban is the Banlist layer
+only; the Refounding that severs read access is still unbuilt.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.

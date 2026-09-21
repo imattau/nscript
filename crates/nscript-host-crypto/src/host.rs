@@ -154,7 +154,7 @@ struct Plane {
 }
 
 /// Converts a serialised kind-1059 event into the runtime's [`SignedEvent`].
-fn signed_event_from_wire(wire: &str) -> Option<SignedEvent> {
+pub(crate) fn signed_event_from_wire(wire: &str) -> Option<SignedEvent> {
     let event: serde_json::Value = serde_json::from_str(wire).ok()?;
     let text = |name: &str| event.get(name)?.as_str().map(str::to_owned);
     let tags = event

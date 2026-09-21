@@ -109,6 +109,65 @@ pub fn parse_edition_rumor(seal_pubkey: &str, rumor_json: &str) -> Result<Editio
     })
 }
 
+/// Builds the next edition of an entity and its kind-3308 rumor JSON: the
+/// inverse of [`parse_edition_rumor`]. `prev` chains it (version + 1, `ep` tag
+/// citing `prev`'s hash); `None` starts a new entity at version 1. `content`
+/// is carried byte-verbatim. The returned [`Edition`] has its `rumor_id` set,
+/// so it can be folded locally as well as published.
+///
+/// Returns `None` if `entity_id`, `prev` or a `vac` field is not valid hex.
+#[must_use]
+pub fn build_edition(
+    vsk: u8,
+    entity_id: &str,
+    prev: Option<&Edition>,
+    content: &str,
+    actor: &str,
+    vac: Option<&Vac>,
+    created_at: u64,
+) -> Option<(Edition, String)> {
+    let mut edition = Edition {
+        vsk,
+        entity_id: entity_id.to_owned(),
+        version: prev.map_or(1, |p| p.version + 1),
+        prev: match prev {
+            Some(p) => Some(p.hash()?),
+            None => None,
+        },
+        content: content.to_owned(),
+        actor: actor.to_owned(),
+        rumor_id: String::new(),
+        vac: vac.cloned(),
+    };
+    edition.hash()?;
+    let mut tags = vec![
+        Value::from(vec!["vsk".to_owned(), vsk.to_string()]),
+        Value::from(vec!["eid".to_owned(), edition.entity_id.clone()]),
+        Value::from(vec!["ev".to_owned(), edition.version.to_string()]),
+    ];
+    if let Some(prev) = &edition.prev {
+        tags.push(Value::from(vec!["ep".to_owned(), prev.clone()]));
+    }
+    if let Some(vac) = vac {
+        tags.push(Value::from(vec![
+            "vac".to_owned(),
+            vac.grant_eid.clone(),
+            vac.version.to_string(),
+            vac.hash.clone(),
+        ]));
+    }
+    let mut rumor = serde_json::json!({
+        "kind": KIND_CONTROL_EDITION,
+        "pubkey": actor,
+        "content": content,
+        "tags": tags,
+        "created_at": created_at,
+    });
+    edition.rumor_id = rumor_id(&rumor.to_string())?;
+    rumor["id"] = Value::from(edition.rumor_id.clone());
+    Some((edition, rumor.to_string()))
+}
+
 /// NIP-01 event id of a rumor: sha256 of the canonical
 /// `[0, pubkey, created_at, kind, tags, content]` array. An embedded `id` is
 /// never trusted.
@@ -204,6 +263,29 @@ mod tests {
         assert_eq!(e2.vac.as_ref().map(|v| v.version), Some(3));
         assert_eq!(e2.rumor_id.len(), 64);
         assert_ne!(e1.rumor_id, e2.rumor_id);
+    }
+
+    #[test]
+    fn built_editions_round_trip_through_the_decoder() {
+        let actor = hex("aa");
+        let (first, json) =
+            build_edition(1, &hex("11"), None, r#"{"k": 1}"#, &actor, None, 100).unwrap();
+        assert_eq!(parse_edition_rumor(&actor, &json).unwrap(), first);
+        assert_eq!((first.version, first.prev.clone()), (1, None));
+
+        let vac = Vac {
+            grant_eid: hex("22"),
+            version: 3,
+            hash: hex("33"),
+        };
+        let (second, json) =
+            build_edition(1, &hex("11"), Some(&first), "next", &actor, Some(&vac), 200).unwrap();
+        assert_eq!(parse_edition_rumor(&actor, &json).unwrap(), second);
+        assert_eq!(second.version, 2);
+        assert_eq!(second.prev, first.hash(), "chained to the previous hash");
+        assert_eq!(second.content, "next", "content is verbatim");
+        // Malformed coordinates are refused rather than built.
+        assert!(build_edition(1, "nothex", None, "x", &actor, None, 1).is_none());
     }
 
     #[test]

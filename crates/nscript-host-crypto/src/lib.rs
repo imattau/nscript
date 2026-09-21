@@ -5,6 +5,7 @@
 
 pub mod group_key;
 pub mod host;
+pub mod moderation;
 pub mod nip44;
 pub mod schnorr;
 pub mod stream;
