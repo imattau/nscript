@@ -1,0 +1,73 @@
+// A poll-close bot: tallies `vote` tags on the closing note with a `for`
+// loop and reassignable counters, then publishes the outcome as a real
+// signed reply.
+//
+// Try it:
+//
+//   nscript run examples/poll-tally-bot.ns \
+//       --event '{"content": "closing the poll", "tags": [["t", "poll-close"], ["vote", "yes"], ["vote", "yes"], ["vote", "no"]]}'
+//       (2 yes, 1 no: publishes "Poll closed: yes wins")
+//
+//   nscript run examples/poll-tally-bot.ns \
+//       --event '{"content": "closing the poll", "tags": [["t", "poll-close"], ["vote", "yes"], ["vote", "no"]]}'
+//       (tied: publishes "Poll closed: tied")
+//
+// `event.tags` iterates as one "name=value" text per tag (see
+// docs/HANDLERS.md), so a `vote` tag arrives as the text "vote=yes" or
+// "vote=no" and is matched with `contains` rather than read as a
+// structured pair.
+//
+// Two things this could NOT do, found while writing it:
+//
+// 1. Publish the actual tally (e.g. "2 yes, 1 no") rather than just who
+//    won. `+` only joins two `Text`s or two `Int`s (see `arithmetic` in
+//    crates/nscript-runtime/src/eval.rs) - there is no int-to-text
+//    conversion, so `"count: " + yes` fails at run time with
+//    `` `+` needs two ints, found a text and a int `` even though it
+//    checks clean. Confirmed directly: `nscript check` accepts it,
+//    `nscript run` does not.
+// 2. Write `else if` for the three-way yes/no/tied branch, despite
+//    `spec/grammar.ebnf`'s own `if_stmt` production allowing
+//    `"else", (block | if_stmt)`. The actual parser
+//    (`crates/nscript-syntax/src/parser.rs`) only ever parses a literal
+//    block after `else`, never a nested `if` statement — confirmed with
+//    a two-line reproduction: `if x == 1 { } else if x == 2 { }` fails
+//    `check` with `expected {`, spec notwithstanding. Below uses a
+//    default value reassigned by a plain `if`, not `else if`.
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    read Note from public
+    publish Note to public
+    sign Note with account
+    relay public
+    log
+}
+
+on Note where tags.t contains "poll-close" {
+    let yes = 0
+    let no = 0
+    for tag in event.tags {
+        if tag contains "vote=yes" {
+            yes = yes + 1
+        }
+        if tag contains "vote=no" {
+            no = no + 1
+        }
+    }
+    let outcome = "tied"
+    if yes > no {
+        outcome = "yes wins"
+    }
+    if no > yes {
+        outcome = "no wins"
+    }
+    let result = publish Note {
+        content: "Poll closed: " + outcome,
+    } to public with account
+    print(result.accepted)
+}

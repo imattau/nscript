@@ -2379,6 +2379,59 @@ mod tests {
         assert_eq!(runtime.relay.published[0].unsigned.content, "reply: hi");
     }
 
+    #[test]
+    fn the_poll_tally_bot_counts_vote_tags_with_a_for_loop_and_reassignment() {
+        const SOURCE: &str = include_str!("../../../examples/poll-tally-bot.ns");
+        let (program, checked) = checked(SOURCE);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let policy = policy_for(&checked);
+        let mut tally = |tags: &[[&str; 2]]| -> String {
+            let mut runtime = Runtime::new(
+                FakeRelayHost {
+                    relays: [("fake://public".to_owned(), true)].into_iter().collect(),
+                    ..FakeRelayHost::default()
+                },
+                FakeSignerHost::default(),
+                FakeClock::default(),
+                RecordingAudit::default(),
+            );
+            let mut log = FakeLogHost::default();
+            let mut all_tags: Vec<[&str; 2]> = vec![["t", "poll-close"]];
+            all_tags.extend_from_slice(tags);
+            let event = event_from_json(&serde_json::json!({
+                "content": "closing the poll",
+                "tags": all_tags,
+            }))
+            .unwrap();
+            let outcomes = runtime.run_handlers_for_event(
+                &program,
+                &checked,
+                &event,
+                &policy,
+                &mut ops,
+                &mut log,
+                None,
+                EvalLimits::default(),
+                None,
+            );
+            assert_eq!(outcomes.len(), 1);
+            assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+            assert_eq!(runtime.relay.published.len(), 1);
+            runtime.relay.published[0].unsigned.content.clone()
+        };
+
+        assert_eq!(
+            tally(&[["vote", "yes"], ["vote", "yes"], ["vote", "no"]]),
+            "Poll closed: yes wins"
+        );
+        assert_eq!(
+            tally(&[["vote", "no"], ["vote", "no"]]),
+            "Poll closed: no wins"
+        );
+        assert_eq!(tally(&[["vote", "yes"], ["vote", "no"]]), "Poll closed: tied");
+        assert_eq!(tally(&[]), "Poll closed: tied");
+    }
+
     /// What one evaluated cycle produced.
     struct CycleRun {
         report: Result<CycleReport, RuntimeError>,
