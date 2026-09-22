@@ -1,0 +1,24 @@
+// NIP-72 moderated communities: a community definition (kind 34550) and an
+// approval of one of its posts (kind 4550). Community posts themselves (kind
+// 1111) are not modelled separately from NIP-22's comment shape.
+use nip72
+
+permissions {
+    community
+    community_approval
+}
+
+let result = nip72.publish_community(Community {
+    identifier: "nscript-devs";
+    name: "NScript Developers";
+    description: "Discussion for NScript contributors";
+    moderators: [alice];
+})
+
+let approval = nip72.approve_post(PostApproval {
+    community: "34550:aaaa:nscript-devs";
+    post: "1111111111111111111111111111111111111111111111111111111111111111";
+    author: bob;
+    kind: 1111;
+    post_json: "{\"kind\":1111,\"content\":\"hello\"}";
+})

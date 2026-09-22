@@ -610,3 +610,35 @@ largest arm of every `Result<OperationValue, _>` function's error path
 (`Value::Op` → `eval::Stop::Propagate`, in particular). It is boxed
 (`OperationValue::Listing(Box<Listing>)`) rather than shrunk, since the
 fields are the ones the spec actually asks for.
+
+## Four more: NIP-34, NIP-54, NIP-72, NIP-C7
+
+`nip34` and `nip72` each cover several real Nostr kinds; both are scoped to
+the one piece that is small, well-defined, and doesn't need key material or
+payment rails, with the rest named honestly as unbuilt:
+
+- `nip34` (git): `nip34.publish_repository` covers only the repository
+  announcement (kind 30617) — identifier, name, description, clone and web
+  URLs. Repository state (30618), patches (1617), pull requests
+  (1618/1619), issues (1621) and their status events (1630-1633) are not
+  modelled.
+- `nip54` (wiki, kind 30818): `nip54.publish_wiki_article` takes an
+  identifier, title, summary and content. Merge requests (kind 818) and
+  redirects (kind 30819) are not modelled.
+- `nip72` (moderated communities): two operations, matching the two pieces
+  of the spec that are actual actions rather than a note shape —
+  `publish_community` (kind 34550: identifier, name, description,
+  moderator pubkeys) and `approve_post` (kind 4550: which community, which
+  post, its author and kind, and the approved event's own JSON). Community
+  posts themselves (kind 1111) are not modelled separately; NIP-22's
+  `Comment` already covers "a note replying to something" and this NIP
+  does not need a second version of that shape.
+- `nipc7` (chats, kind 9): `send_chat_message` and
+  `reply_to_chat_message` (the latter carrying the parent's event id for
+  the `q` tag).
+
+None get Layer 3 sugar keywords, for the same reason as the rest of this
+section. `Repository`'s five `Text` fields (120 bytes) landed it right at
+the `clippy::result_large_err` threshold once wrapped in `OperationValue`
+(the 8-byte discriminant pushes it to exactly 128), so it is boxed the same
+way `Listing` was.

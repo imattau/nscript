@@ -1,0 +1,15 @@
+// NIP-34 git: a repository announcement (kind 30617). Patches, issues, pull
+// requests and status events are not modelled.
+use nip34
+
+permissions {
+    repository
+}
+
+let result = nip34.publish_repository(Repository {
+    identifier: "nscript";
+    name: "NScript";
+    description: "A scripting language for Nostr";
+    clone_url: "https://github.com/example/nscript.git";
+    web_url: "https://github.com/example/nscript";
+})

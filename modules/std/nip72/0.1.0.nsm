@@ -1,0 +1,25 @@
+module nip72 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/72.md"
+
+record Community {
+    field identifier: Text
+    field name: Text
+    field description: Text
+    field moderators: List<PubKey>
+}
+
+record PostApproval {
+    field community: Text
+    field post: EventId
+    field author: PubKey
+    field kind: Int
+    field post_json: Text
+}
+
+error CommunityError {
+    field message: Text
+}
+
+operation publish_community(community: Community) -> Result<PublishReport,CommunityError> effect Sign,Relay permission community
+operation approve_post(approval: PostApproval) -> Result<PublishReport,CommunityError> effect Sign,Relay permission community_approval

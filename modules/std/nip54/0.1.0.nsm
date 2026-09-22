@@ -1,0 +1,16 @@
+module nip54 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/54.md"
+
+record WikiArticle {
+    field identifier: Text
+    field title: Text
+    field summary: Text
+    field content: Text
+}
+
+error WikiError {
+    field message: Text
+}
+
+operation publish_wiki_article(article: WikiArticle) -> Result<PublishReport,WikiError> effect Sign,Relay permission wiki

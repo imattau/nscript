@@ -1355,6 +1355,51 @@ pub struct CodeSnippet {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Repository {
+    pub identifier: String,
+    pub name: String,
+    pub description: String,
+    pub clone_url: String,
+    pub web_url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WikiArticle {
+    pub identifier: String,
+    pub title: String,
+    pub summary: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Community {
+    pub identifier: String,
+    pub name: String,
+    pub description: String,
+    pub moderators: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PostApproval {
+    pub community: String,
+    pub post: String,
+    pub author: String,
+    pub kind: i64,
+    pub post_json: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChatMessage {
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChatReply {
+    pub content: String,
+    pub target: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     Integer(i64),
@@ -1433,6 +1478,14 @@ pub enum OperationValue {
     Listing(Box<Listing>),
     Bookmark(Bookmark),
     CodeSnippet(CodeSnippet),
+    // Boxed for the same reason as `Listing`: five `String` fields (120
+    // bytes) push this variant to exactly the `result_large_err` threshold.
+    Repository(Box<Repository>),
+    WikiArticle(WikiArticle),
+    Community(Community),
+    PostApproval(PostApproval),
+    ChatMessage(ChatMessage),
+    ChatReply(ChatReply),
     PublishReport(PublishReport),
 }
 
@@ -5301,6 +5354,124 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip34", "publish_repository") => {
+                let [OperationValue::Repository(repository)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if repository.identifier.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://repository".to_owned(),
+                        accepted: true,
+                        detail: "repository announcement lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip54", "publish_wiki_article") => {
+                let [OperationValue::WikiArticle(article)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if article.identifier.is_empty() || article.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://wiki".to_owned(),
+                        accepted: true,
+                        detail: "wiki article lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip72", "publish_community") => {
+                let [OperationValue::Community(community)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if community.identifier.is_empty() || community.moderators.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://community".to_owned(),
+                        accepted: true,
+                        detail: "community definition lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip72", "approve_post") => {
+                let [OperationValue::PostApproval(approval)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if approval.community.is_empty()
+                    || approval.post.is_empty()
+                    || approval.post_json.is_empty()
+                    || approval.kind < 0
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://community-approval".to_owned(),
+                        accepted: true,
+                        detail: "post approval lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipc7", "send_chat_message") => {
+                let [OperationValue::ChatMessage(message)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if message.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://chat".to_owned(),
+                        accepted: true,
+                        detail: "chat message lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipc7", "reply_to_chat_message") => {
+                let [OperationValue::ChatReply(reply)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if reply.content.is_empty() || reply.target.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://chat-reply".to_owned(),
+                        accepted: true,
+                        detail: "chat reply lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip25", "publish_reaction") => {
                 let [OperationValue::Reaction(_reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -5807,6 +5978,84 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
                     name,
                     description,
                 })
+            }
+            _ => value.clone(),
+        },
+        "Repository" => match (
+            text("identifier"),
+            text("name"),
+            text("description"),
+            text("clone_url"),
+            text("web_url"),
+        ) {
+            (Some(identifier), Some(name), Some(description), Some(clone_url), Some(web_url)) => {
+                OperationValue::Repository(Box::new(Repository {
+                    identifier,
+                    name,
+                    description,
+                    clone_url,
+                    web_url,
+                }))
+            }
+            _ => value.clone(),
+        },
+        "WikiArticle" => match (
+            text("identifier"),
+            text("title"),
+            text("summary"),
+            text("content"),
+        ) {
+            (Some(identifier), Some(title), Some(summary), Some(content)) => {
+                OperationValue::WikiArticle(WikiArticle {
+                    identifier,
+                    title,
+                    summary,
+                    content,
+                })
+            }
+            _ => value.clone(),
+        },
+        "Community" => match (
+            text("identifier"),
+            text("name"),
+            text("description"),
+            record_strings(fields, "moderators"),
+        ) {
+            (Some(identifier), Some(name), Some(description), Some(moderators)) => {
+                OperationValue::Community(Community {
+                    identifier,
+                    name,
+                    description,
+                    moderators,
+                })
+            }
+            _ => value.clone(),
+        },
+        "PostApproval" => match (
+            text("community"),
+            text("post"),
+            pubkey("author"),
+            integer("kind"),
+            text("post_json"),
+        ) {
+            (Some(community), Some(post), Some(author), Some(kind), Some(post_json)) => {
+                OperationValue::PostApproval(PostApproval {
+                    community,
+                    post,
+                    author,
+                    kind,
+                    post_json,
+                })
+            }
+            _ => value.clone(),
+        },
+        "ChatMessage" => match text("content") {
+            Some(content) => OperationValue::ChatMessage(ChatMessage { content }),
+            None => value.clone(),
+        },
+        "ChatReply" => match (text("content"), text("target")) {
+            (Some(content), Some(target)) => {
+                OperationValue::ChatReply(ChatReply { content, target })
             }
             _ => value.clone(),
         },
@@ -6340,6 +6589,37 @@ mod tests {
                     bytes: 4_700_000_000,
                 }],
                 trackers: vec!["udp://tracker.example/announce".to_owned()],
+            })
+        );
+    }
+
+    #[test]
+    fn a_list_valued_field_normalizes_a_community_moderator_list() {
+        let community = OperationValue::Record {
+            name: "Community".to_owned(),
+            fields: vec![
+                (
+                    "identifier".to_owned(),
+                    OperationValue::Text("devs".to_owned()),
+                ),
+                ("name".to_owned(), OperationValue::Text("Devs".to_owned())),
+                (
+                    "description".to_owned(),
+                    OperationValue::Text("desc".to_owned()),
+                ),
+                (
+                    "moderators".to_owned(),
+                    OperationValue::List(vec![OperationValue::PubKey("alice".to_owned())]),
+                ),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&community),
+            OperationValue::Community(Community {
+                identifier: "devs".to_owned(),
+                name: "Devs".to_owned(),
+                description: "desc".to_owned(),
+                moderators: vec!["alice".to_owned()],
             })
         );
     }

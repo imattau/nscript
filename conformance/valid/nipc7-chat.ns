@@ -1,0 +1,15 @@
+// NIP-C7 chats: a plain kind:9 chat message, and a reply via its `q` tag.
+use nipc7
+
+permissions {
+    chat
+}
+
+let result = nipc7.send_chat_message(ChatMessage {
+    content: "GM";
+})
+
+let reply = nipc7.reply_to_chat_message(ChatReply {
+    content: "GM to you too";
+    target: "2222222222222222222222222222222222222222222222222222222222222222";
+})

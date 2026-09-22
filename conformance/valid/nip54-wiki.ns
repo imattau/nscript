@@ -1,0 +1,14 @@
+// NIP-54 wiki: an addressable wiki article (kind 30818). Merge requests and
+// redirects are not modelled.
+use nip54
+
+permissions {
+    wiki
+}
+
+let result = nip54.publish_wiki_article(WikiArticle {
+    identifier: "nostr-protocol";
+    title: "Nostr Protocol";
+    summary: "An overview of the Nostr protocol";
+    content: "Nostr is a simple, open protocol...";
+})
