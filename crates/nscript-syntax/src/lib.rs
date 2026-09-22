@@ -936,4 +936,47 @@ publish Note { content: "hello" }
             );
         }
     }
+
+    #[test]
+    fn else_if_parses_as_a_nested_if_in_the_else_body() {
+        // `spec/grammar.ebnf`'s `if_stmt` allows `"else", (block | if_stmt)`;
+        // this was previously unimplemented — `else` only ever parsed a
+        // literal block, so `else if` failed with "expected `{`".
+        let (program, diagnostics) = parse_program(
+            "on Note {\n    if x == 1 {\n        print(1)\n    } else if x == 2 {\n        print(2)\n    } else {\n        print(3)\n    }\n}\n",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let Item::Statement(outer) = &program.ast.items[0] else {
+            panic!("on statement")
+        };
+        let StatementKind::On { body, .. } = &outer.value else {
+            panic!("on")
+        };
+        let Item::Statement(if_statement) = &body[0] else {
+            panic!("if statement")
+        };
+        let StatementKind::If { else_body, .. } = &if_statement.value else {
+            panic!("if")
+        };
+        // The `else if` is a single nested `if` statement, not two arms
+        // flattened into one block.
+        assert_eq!(else_body.len(), 1);
+        let Item::Statement(nested) = &else_body[0] else {
+            panic!("nested if wrapped as a statement")
+        };
+        let StatementKind::If {
+            then_body: nested_then,
+            else_body: nested_else,
+            ..
+        } = &nested.value
+        else {
+            panic!("else if nests another if, not a block")
+        };
+        assert_eq!(nested_then.len(), 1);
+        // The trailing plain `else` is that nested `if`'s own else block, a
+        // literal block again (not a further nested `if`).
+        assert_eq!(nested_else.len(), 1);
+        assert!(matches!(&nested_else[0], Item::Statement(_)));
+    }
+
 }

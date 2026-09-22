@@ -2432,6 +2432,34 @@ mod tests {
         assert_eq!(tally(&[]), "Poll closed: tied");
     }
 
+    #[test]
+    fn a_three_way_else_if_chain_reaches_every_arm_at_run_time() {
+        let source = "permissions {\n    log\n}\n\non Note {\n    let x = event.kind\n    if x == 1 {\n        print(\"one\")\n    } else if x == 2 {\n        print(\"two\")\n    } else if x == 3 {\n        print(\"three\")\n    } else {\n        print(\"other\")\n    }\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let policy = policy_for(&checked);
+        for (kind, expected) in [(1, "one"), (2, "two"), (3, "three"), (9, "other")] {
+            let mut runtime = runtime();
+            let mut log = FakeLogHost::default();
+            let event = event_from_json(&serde_json::json!({"kind": kind})).unwrap();
+            let outcomes = runtime.run_handlers_for_event(
+                &program,
+                &checked,
+                &event,
+                &policy,
+                &mut ops,
+                &mut log,
+                None,
+                EvalLimits::default(),
+                None,
+            );
+            assert_eq!(outcomes.len(), 1);
+            assert!(outcomes[0].result.is_ok(), "kind={kind}: {:?}", outcomes[0].result);
+            assert_eq!(log.records.len(), 1, "kind={kind}");
+            assert_eq!(log.records[0].message, expected, "kind={kind}");
+        }
+    }
+
     /// What one evaluated cycle produced.
     struct CycleRun {
         report: Result<CycleReport, RuntimeError>,

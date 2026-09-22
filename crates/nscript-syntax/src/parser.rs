@@ -577,7 +577,18 @@ impl Parser<'_> {
                 let condition = self.parse_expression(0)?;
                 let then_body = self.parse_block()?;
                 let else_body = if self.eat_word("else") {
-                    self.parse_block()?
+                    if self.word() == Some("if") {
+                        // `else if ...`: the grammar (`spec/grammar.ebnf`'s
+                        // `if_stmt`) allows the else clause to be another
+                        // `if_stmt`, not only a block. Parse that nested `if`
+                        // as its own statement and wrap it as the sole item
+                        // of this `else`'s body, so `else if c { a } else { b }`
+                        // means exactly what `else { if c { a } else { b } }`
+                        // already did.
+                        vec![Item::Statement(self.parse_statement()?)]
+                    } else {
+                        self.parse_block()?
+                    }
                 } else {
                     Vec::new()
                 };
