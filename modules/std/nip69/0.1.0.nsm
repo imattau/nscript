@@ -1,0 +1,20 @@
+module nip69 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/69.md"
+
+record P2POrder {
+    field identifier: Text
+    field order_type: Text
+    field currency: Text
+    field status: Text
+    field amount_sats: Int
+    field fiat_amount: Text
+    field payment_method: Text
+    field premium: Int
+}
+
+error OrderError {
+    field message: Text
+}
+
+operation publish_order(order: P2POrder) -> Result<PublishReport,OrderError> effect Sign,Relay permission p2p_order

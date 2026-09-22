@@ -1,0 +1,16 @@
+module nip26 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/26.md"
+
+record DelegatedNote {
+    field content: Text
+    field delegator: PubKey
+    field conditions: Text
+    field token: Text
+}
+
+error DelegationError {
+    field message: Text
+}
+
+operation publish_delegated_note(note: DelegatedNote) -> Result<PublishReport,DelegationError> effect Sign,Relay permission delegation

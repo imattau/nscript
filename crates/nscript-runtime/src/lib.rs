@@ -1531,6 +1531,39 @@ pub struct VoiceReply {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NoteWithSubject {
+    pub content: String,
+    pub subject: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DelegatedNote {
+    pub content: String,
+    pub delegator: String,
+    pub conditions: String,
+    pub token: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BridgedNote {
+    pub content: String,
+    pub source_id: String,
+    pub protocol: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct P2POrder {
+    pub identifier: String,
+    pub order_type: String,
+    pub currency: String,
+    pub status: String,
+    pub amount_sats: i64,
+    pub fiat_amount: String,
+    pub payment_method: String,
+    pub premium: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     Integer(i64),
@@ -1638,6 +1671,13 @@ pub enum OperationValue {
     JobResult(JobResult),
     VoiceMessage(VoiceMessage),
     VoiceReply(VoiceReply),
+    NoteWithSubject(NoteWithSubject),
+    DelegatedNote(DelegatedNote),
+    BridgedNote(BridgedNote),
+    // Boxed like `Listing`/`Repository`/`GeocacheListing`: six `Text` fields
+    // plus two `Int`s (160 bytes) would make this the largest
+    // `OperationValue` variant.
+    P2POrder(Box<P2POrder>),
     PublishReport(PublishReport),
 }
 
@@ -6005,6 +6045,90 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip14", "publish_note_with_subject") => {
+                let [OperationValue::NoteWithSubject(note)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if note.content.is_empty() || note.subject.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://note-with-subject".to_owned(),
+                        accepted: true,
+                        detail: "subject note lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip26", "publish_delegated_note") => {
+                let [OperationValue::DelegatedNote(note)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if note.content.is_empty()
+                    || note.delegator.is_empty()
+                    || note.conditions.is_empty()
+                    || note.token.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://delegated-note".to_owned(),
+                        accepted: true,
+                        detail: "delegated note lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip48", "publish_bridged_note") => {
+                let [OperationValue::BridgedNote(note)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if note.source_id.is_empty() || note.protocol.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://bridged-note".to_owned(),
+                        accepted: true,
+                        detail: "bridged note lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip69", "publish_order") => {
+                let [OperationValue::P2POrder(order)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if order.identifier.is_empty()
+                    || !matches!(order.order_type.as_str(), "sell" | "buy")
+                    || order.currency.is_empty()
+                    || order.amount_sats < 0
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://p2p-order".to_owned(),
+                        accepted: true,
+                        detail: "p2p order lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip25", "publish_reaction") => {
                 let [OperationValue::Reaction(_reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -6789,6 +6913,69 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             }
             _ => value.clone(),
         },
+        "NoteWithSubject" => match (text("content"), text("subject")) {
+            (Some(content), Some(subject)) => {
+                OperationValue::NoteWithSubject(NoteWithSubject { content, subject })
+            }
+            _ => value.clone(),
+        },
+        "DelegatedNote" => match (
+            text("content"),
+            pubkey("delegator"),
+            text("conditions"),
+            text("token"),
+        ) {
+            (Some(content), Some(delegator), Some(conditions), Some(token)) => {
+                OperationValue::DelegatedNote(DelegatedNote {
+                    content,
+                    delegator,
+                    conditions,
+                    token,
+                })
+            }
+            _ => value.clone(),
+        },
+        "BridgedNote" => match (text("content"), text("source_id"), text("protocol")) {
+            (Some(content), Some(source_id), Some(protocol)) => {
+                OperationValue::BridgedNote(BridgedNote {
+                    content,
+                    source_id,
+                    protocol,
+                })
+            }
+            _ => value.clone(),
+        },
+        "P2POrder" => match (
+            text("identifier"),
+            text("order_type"),
+            text("currency"),
+            text("status"),
+            integer("amount_sats"),
+            text("fiat_amount"),
+            text("payment_method"),
+            integer("premium"),
+        ) {
+            (
+                Some(identifier),
+                Some(order_type),
+                Some(currency),
+                Some(status),
+                Some(amount_sats),
+                Some(fiat_amount),
+                Some(payment_method),
+                Some(premium),
+            ) => OperationValue::P2POrder(Box::new(P2POrder {
+                identifier,
+                order_type,
+                currency,
+                status,
+                amount_sats,
+                fiat_amount,
+                payment_method,
+                premium,
+            })),
+            _ => value.clone(),
+        },
         _ => value.clone(),
     }
 }
@@ -7478,6 +7665,54 @@ mod tests {
                 output: "text/plain".to_owned(),
                 bid_msats: 5_000_000,
             })
+        );
+    }
+
+    #[test]
+    fn a_p2p_order_normalizes_its_eight_mixed_fields_and_is_boxed() {
+        let order = OperationValue::Record {
+            name: "P2POrder".to_owned(),
+            fields: vec![
+                (
+                    "identifier".to_owned(),
+                    OperationValue::Text("order-1".to_owned()),
+                ),
+                (
+                    "order_type".to_owned(),
+                    OperationValue::Text("sell".to_owned()),
+                ),
+                (
+                    "currency".to_owned(),
+                    OperationValue::Text("USD".to_owned()),
+                ),
+                (
+                    "status".to_owned(),
+                    OperationValue::Text("pending".to_owned()),
+                ),
+                ("amount_sats".to_owned(), OperationValue::Integer(100_000)),
+                (
+                    "fiat_amount".to_owned(),
+                    OperationValue::Text("50".to_owned()),
+                ),
+                (
+                    "payment_method".to_owned(),
+                    OperationValue::Text("bank transfer".to_owned()),
+                ),
+                ("premium".to_owned(), OperationValue::Integer(2)),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&order),
+            OperationValue::P2POrder(Box::new(P2POrder {
+                identifier: "order-1".to_owned(),
+                order_type: "sell".to_owned(),
+                currency: "USD".to_owned(),
+                status: "pending".to_owned(),
+                amount_sats: 100_000,
+                fiat_amount: "50".to_owned(),
+                payment_method: "bank transfer".to_owned(),
+                premium: 2,
+            }))
         );
     }
 

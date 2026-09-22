@@ -1,0 +1,13 @@
+// NIP-48 bridged events: a note carrying a `proxy` tag back to its source
+// object on another protocol.
+use nip48
+
+permissions {
+    bridge
+}
+
+let result = nip48.publish_bridged_note(BridgedNote {
+    content: "Cross-posted from the fediverse";
+    source_id: "https://mastodon.example/@alice/12345";
+    protocol: "activitypub";
+})

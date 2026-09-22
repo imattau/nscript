@@ -1,0 +1,11 @@
+// NIP-14 subject tag: a kind:1 note with a threading subject line.
+use nip14
+
+permissions {
+    subject
+}
+
+let result = nip14.publish_note_with_subject(NoteWithSubject {
+    content: "Let's meet at 10am instead of 9am.";
+    subject: "Standup time change";
+})

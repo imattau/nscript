@@ -732,3 +732,35 @@ dishonestly.
 
 None get Layer 3 sugar keywords, for the same reason as the rest of this
 section.
+
+## Four more: NIP-14, NIP-26, NIP-48, NIP-69
+
+`nip14`, `nip26` and `nip48` all fit the "one tag on a plain note" pattern
+(like `nip70`, and unlike the excluded `nip31`): each tag applies to any
+event kind in the real spec, but has no conflict with being a plain note,
+so each module models "a note carrying that one tag":
+
+- `nip14` (subject tag, kind 1): `publish_note_with_subject` takes content
+  and a subject line.
+- `nip26` (delegated event signing): `publish_delegated_note` takes
+  content, the delegator's pubkey, the conditions query string, and the
+  delegation token itself as opaque text. The token is a signature the
+  delegator produces off-chain over `nostr:delegation:<delegatee
+  pubkey>:<conditions>`; this module accepts it as given and does not
+  compute or verify it, the same stance as `nip03`'s OTS proof.
+- `nip48` (bridged events): `publish_bridged_note` takes content, the
+  source object's id, and the originating protocol name (e.g.
+  `activitypub`, `atproto`, `rss`, `web`).
+- `nip69` (peer-to-peer orders, kind 38383): `publish_order` takes an
+  identifier, order type (checked to be `sell` or `buy`), currency,
+  status, amount in sats, fiat amount, payment method, and premium
+  percentage. Maker rating, geolocation, network/layer and
+  expiration tags are not modelled. This announces a trade order, the
+  same as `nip99`'s classified listing does for a sale — it does not move
+  funds or settle anything, unlike the payment-rail modules (`nip47`,
+  `nip57`) this document deliberately keeps separate from Layer 3 sugar.
+
+None get Layer 3 sugar keywords, for the same reason as the rest of this
+section. `P2POrder` (six `Text` fields plus two `Int`s, 160 bytes) was
+boxed up front, the fourth time this `clippy::result_large_err` shape has
+come up (`Listing`, `Repository`, `GeocacheListing`).

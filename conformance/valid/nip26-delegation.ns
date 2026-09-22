@@ -1,0 +1,14 @@
+// NIP-26 delegated event signing: a note published under a delegation the
+// delegator issued off-chain. The token's own validity is not checked here.
+use nip26
+
+permissions {
+    delegation
+}
+
+let result = nip26.publish_delegated_note(DelegatedNote {
+    content: "Posted on the delegator's behalf";
+    delegator: alice;
+    conditions: "kind=1&created_at>1674834236&created_at<1677426236";
+    token: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+})

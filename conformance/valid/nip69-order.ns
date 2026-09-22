@@ -1,0 +1,17 @@
+// NIP-69 peer-to-peer orders: a liquidity order announcement (kind 38383).
+use nip69
+
+permissions {
+    p2p_order
+}
+
+let result = nip69.publish_order(P2POrder {
+    identifier: "order-1";
+    order_type: "sell";
+    currency: "USD";
+    status: "pending";
+    amount_sats: 100000;
+    fiat_amount: "50";
+    payment_method: "bank transfer";
+    premium: 2;
+})
