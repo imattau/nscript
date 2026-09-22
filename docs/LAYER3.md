@@ -672,3 +672,26 @@ None get Layer 3 sugar keywords. `GeocacheListing` (five `Text` fields plus
 two `Int`s, 136 bytes) was boxed up front this time, having already been
 caught twice by the same `clippy::result_large_err` threshold in the
 previous two batches (`Listing`, `Repository`).
+
+## Four more: NIP-28, NIP-62, NIP-75, NIP-A4
+
+- `nip28` (public chat): four operations — `create_channel` (kind 40),
+  `send_channel_message` (kind 42), `hide_message` (kind 43, client-side
+  suppression) and `mute_user` (kind 44). Channel metadata updates (kind
+  41) and the reply-threading tags on kind 42 (`e` tagged `"reply"`, plus
+  a `p` tag) are not modelled; every message here is a root message.
+- `nip62` (request to vanish, kind 62): `request_to_vanish` takes a
+  `List<Text>` of relay URLs (or the literal `"ALL_RELAYS"`, which this
+  module does not special-case — it is just a string the caller can pass)
+  and a reason.
+- `nip75` (zap goals, kind 9041): `publish_zap_goal` takes a description,
+  the target amount in millisats, the relays to aggregate zaps from, and
+  a close timestamp. `image`, `summary`, beneficiary zap tags, and the
+  `r`/`a`/`goal` linking tags are not modelled.
+- `nipa4` (public messages, kind 24): `publish_public_message` takes
+  content and a `List<PubKey>` of recipients. Citation (`q`), reaction/zap
+  kind (`k`) and `imeta` tags are not modelled — as the spec itself says,
+  there is no thread or chatroom concept here to begin with.
+
+None get Layer 3 sugar keywords, for the same reason as the rest of this
+section.

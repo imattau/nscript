@@ -1,0 +1,33 @@
+module nip28 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/28.md"
+
+record Channel {
+    field name: Text
+    field about: Text
+    field picture: Text
+}
+
+record ChannelMessage {
+    field channel: EventId
+    field content: Text
+}
+
+record HideMessage {
+    field message: EventId
+    field reason: Text
+}
+
+record MuteUser {
+    field target: PubKey
+    field reason: Text
+}
+
+error ChannelError {
+    field message: Text
+}
+
+operation create_channel(channel: Channel) -> Result<PublishReport,ChannelError> effect Sign,Relay permission channel
+operation send_channel_message(message: ChannelMessage) -> Result<PublishReport,ChannelError> effect Sign,Relay permission channel_message
+operation hide_message(hide: HideMessage) -> Result<PublishReport,ChannelError> effect Sign,Relay permission channel_moderation
+operation mute_user(mute: MuteUser) -> Result<PublishReport,ChannelError> effect Sign,Relay permission channel_moderation

@@ -1,0 +1,31 @@
+// NIP-28 public chat: creating a channel, sending a message, and the two
+// client-side moderation actions. Channel metadata updates (kind 41) and
+// reply threading tags are not modelled.
+use nip28
+
+permissions {
+    channel
+    channel_message
+    channel_moderation
+}
+
+let channel = nip28.create_channel(Channel {
+    name: "General";
+    about: "General discussion";
+    picture: "https://cdn.example/channel.png";
+})
+
+let message = nip28.send_channel_message(ChannelMessage {
+    channel: "3333333333333333333333333333333333333333333333333333333333333333";
+    content: "Welcome!";
+})
+
+let hidden = nip28.hide_message(HideMessage {
+    message: "4444444444444444444444444444444444444444444444444444444444444444";
+    reason: "spam";
+})
+
+let muted = nip28.mute_user(MuteUser {
+    target: alice;
+    reason: "repeated spam";
+})

@@ -1,0 +1,16 @@
+module nip75 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/75.md"
+
+record ZapGoal {
+    field description: Text
+    field amount_msats: Int
+    field relays: List<Text>
+    field closed_at: Int
+}
+
+error ZapGoalError {
+    field message: Text
+}
+
+operation publish_zap_goal(goal: ZapGoal) -> Result<PublishReport,ZapGoalError> effect Sign,Relay permission zap_goal

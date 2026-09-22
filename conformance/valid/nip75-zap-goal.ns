@@ -1,0 +1,14 @@
+// NIP-75 zap goals: a fundraising target. Image, summary, beneficiaries,
+// and r/a/goal linking tags are not modelled.
+use nip75
+
+permissions {
+    zap_goal
+}
+
+let result = nip75.publish_zap_goal(ZapGoal {
+    description: "Fund the next release";
+    amount_msats: 100000000;
+    relays: ["wss://relay.example"];
+    closed_at: 1700003600;
+})

@@ -1,0 +1,12 @@
+// NIP-A4 public messages: a plaintext, non-threaded message to one or more
+// recipients. Citation (`q`), kind (`k`) and imeta tags are not modelled.
+use nipa4
+
+permissions {
+    public_message
+}
+
+let result = nipa4.publish_public_message(PublicMessage {
+    content: "Reminder: standup at 10am";
+    recipients: [alice, bob];
+})

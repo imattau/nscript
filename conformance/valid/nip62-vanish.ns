@@ -1,0 +1,11 @@
+// NIP-62 request to vanish: asking relays to fully delete a pubkey's events.
+use nip62
+
+permissions {
+    vanish
+}
+
+let result = nip62.request_to_vanish(VanishRequest {
+    relays: ["wss://relay.example"];
+    reason: "account closure";
+})

@@ -1444,6 +1444,51 @@ pub struct FoundLog {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Channel {
+    pub name: String,
+    pub about: String,
+    pub picture: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelMessage {
+    pub channel: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HideMessage {
+    pub message: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MuteUser {
+    pub target: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VanishRequest {
+    pub relays: Vec<String>,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ZapGoal {
+    pub description: String,
+    pub amount_msats: i64,
+    pub relays: Vec<String>,
+    pub closed_at: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicMessage {
+    pub content: String,
+    pub recipients: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     Integer(i64),
@@ -1538,6 +1583,13 @@ pub enum OperationValue {
     // (136 bytes) would make this the largest `OperationValue` variant.
     GeocacheListing(Box<GeocacheListing>),
     FoundLog(FoundLog),
+    Channel(Channel),
+    ChannelMessage(ChannelMessage),
+    HideMessage(HideMessage),
+    MuteUser(MuteUser),
+    VanishRequest(VanishRequest),
+    ZapGoal(ZapGoal),
+    PublicMessage(PublicMessage),
     PublishReport(PublishReport),
 }
 
@@ -5642,6 +5694,142 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip28", "create_channel") => {
+                let [OperationValue::Channel(channel)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if channel.name.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://channel".to_owned(),
+                        accepted: true,
+                        detail: "channel created".to_owned(),
+                    }],
+                }))
+            }
+            ("nip28", "send_channel_message") => {
+                let [OperationValue::ChannelMessage(message)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if message.channel.is_empty() || message.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://channel-message".to_owned(),
+                        accepted: true,
+                        detail: "channel message lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip28", "hide_message") => {
+                let [OperationValue::HideMessage(hide)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if hide.message.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://hide-message".to_owned(),
+                        accepted: true,
+                        detail: "hide request lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip28", "mute_user") => {
+                let [OperationValue::MuteUser(mute)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if mute.target.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://mute-user".to_owned(),
+                        accepted: true,
+                        detail: "mute request lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip62", "request_to_vanish") => {
+                let [OperationValue::VanishRequest(request)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if request.relays.is_empty() || request.relays.iter().any(String::is_empty) {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://vanish".to_owned(),
+                        accepted: true,
+                        detail: "vanish request lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip75", "publish_zap_goal") => {
+                let [OperationValue::ZapGoal(goal)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if goal.description.is_empty()
+                    || goal.amount_msats <= 0
+                    || goal.relays.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://zap-goal".to_owned(),
+                        accepted: true,
+                        detail: "zap goal lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipa4", "publish_public_message") => {
+                let [OperationValue::PublicMessage(message)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if message.content.is_empty() || message.recipients.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://public-message".to_owned(),
+                        accepted: true,
+                        detail: "public message lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip25", "publish_reaction") => {
                 let [OperationValue::Reaction(_reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -6303,6 +6491,58 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             (Some(cache), Some(message)) => OperationValue::FoundLog(FoundLog { cache, message }),
             _ => value.clone(),
         },
+        "Channel" => match (text("name"), text("about"), text("picture")) {
+            (Some(name), Some(about), Some(picture)) => OperationValue::Channel(Channel {
+                name,
+                about,
+                picture,
+            }),
+            _ => value.clone(),
+        },
+        "ChannelMessage" => match (text("channel"), text("content")) {
+            (Some(channel), Some(content)) => {
+                OperationValue::ChannelMessage(ChannelMessage { channel, content })
+            }
+            _ => value.clone(),
+        },
+        "HideMessage" => match (text("message"), text("reason")) {
+            (Some(message), Some(reason)) => {
+                OperationValue::HideMessage(HideMessage { message, reason })
+            }
+            _ => value.clone(),
+        },
+        "MuteUser" => match (pubkey("target"), text("reason")) {
+            (Some(target), Some(reason)) => OperationValue::MuteUser(MuteUser { target, reason }),
+            _ => value.clone(),
+        },
+        "VanishRequest" => match (record_strings(fields, "relays"), text("reason")) {
+            (Some(relays), Some(reason)) => {
+                OperationValue::VanishRequest(VanishRequest { relays, reason })
+            }
+            _ => value.clone(),
+        },
+        "ZapGoal" => match (
+            text("description"),
+            integer("amount_msats"),
+            record_strings(fields, "relays"),
+            integer("closed_at"),
+        ) {
+            (Some(description), Some(amount_msats), Some(relays), Some(closed_at)) => {
+                OperationValue::ZapGoal(ZapGoal {
+                    description,
+                    amount_msats,
+                    relays,
+                    closed_at,
+                })
+            }
+            _ => value.clone(),
+        },
+        "PublicMessage" => match (text("content"), record_strings(fields, "recipients")) {
+            (Some(content), Some(recipients)) => {
+                OperationValue::PublicMessage(PublicMessage { content, recipients })
+            }
+            _ => value.clone(),
+        },
         _ => value.clone(),
     }
 }
@@ -6905,6 +7145,60 @@ mod tests {
                 size: "small".to_owned(),
                 description: "near the bench".to_owned(),
             }))
+        );
+    }
+
+    #[test]
+    fn a_list_valued_field_normalizes_a_zap_goals_relay_list() {
+        let goal = OperationValue::Record {
+            name: "ZapGoal".to_owned(),
+            fields: vec![
+                (
+                    "description".to_owned(),
+                    OperationValue::Text("Fund it".to_owned()),
+                ),
+                (
+                    "amount_msats".to_owned(),
+                    OperationValue::Integer(100_000_000),
+                ),
+                (
+                    "relays".to_owned(),
+                    OperationValue::List(vec![OperationValue::Text(
+                        "wss://relay.example".to_owned(),
+                    )]),
+                ),
+                ("closed_at".to_owned(), OperationValue::Integer(1_700_003_600)),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&goal),
+            OperationValue::ZapGoal(ZapGoal {
+                description: "Fund it".to_owned(),
+                amount_msats: 100_000_000,
+                relays: vec!["wss://relay.example".to_owned()],
+                closed_at: 1_700_003_600,
+            })
+        );
+
+        let message = OperationValue::Record {
+            name: "PublicMessage".to_owned(),
+            fields: vec![
+                (
+                    "content".to_owned(),
+                    OperationValue::Text("hi".to_owned()),
+                ),
+                (
+                    "recipients".to_owned(),
+                    OperationValue::List(vec![OperationValue::PubKey("alice".to_owned())]),
+                ),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&message),
+            OperationValue::PublicMessage(PublicMessage {
+                content: "hi".to_owned(),
+                recipients: vec!["alice".to_owned()],
+            })
         );
     }
 
