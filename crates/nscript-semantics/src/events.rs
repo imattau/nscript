@@ -419,17 +419,30 @@ impl HandlerChecker<'_> {
         {
             return;
         }
-        let Some(operation) = self.graph.modules.get(module).and_then(|registered| {
-            registered
-                .descriptor
-                .operations
-                .iter()
-                .find(|operation| operation.name == name.value)
-        }) else {
+        let Some(registered) = self.graph.modules.get(module) else {
             return;
         };
-        let parameters: Vec<(String, String)> = operation
-            .parameters
+        // `function` declarations (RFC 0002 §3 fold queries) are checked the
+        // same way as `operation`s: only their permission requirement (or
+        // lack of one) differs.
+        let Some(parameters) = registered
+            .descriptor
+            .operations
+            .iter()
+            .find(|operation| operation.name == name.value)
+            .map(|operation| &operation.parameters)
+            .or_else(|| {
+                registered
+                    .descriptor
+                    .functions
+                    .iter()
+                    .find(|function| function.name == name.value)
+                    .map(|function| &function.parameters)
+            })
+        else {
+            return;
+        };
+        let parameters: Vec<(String, String)> = parameters
             .iter()
             .map(|parameter| (parameter.name.clone(), parameter.type_name.clone()))
             .collect();

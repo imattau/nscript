@@ -1,0 +1,5 @@
+module concord05 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/concord-protocol/concord/blob/main/05.md"
+
+function invite_is_valid(bundle: Text, now: Int) -> Bool

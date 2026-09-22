@@ -1,0 +1,16 @@
+// error: E1001 nominal-type-mismatch
+// `event.content` is a Text; `invite_is_valid`'s second parameter needs an
+// Int. Fold-query `function`s are type-checked like operations, minus the
+// permission requirement (RFC 0002 §3).
+use nip01
+use concord05
+
+permissions {
+    log
+}
+
+on Note {
+    if concord05.invite_is_valid(event.content, event.content) {
+        print("valid")
+    }
+}

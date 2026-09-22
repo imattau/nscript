@@ -67,6 +67,32 @@ pub trait EvalHost {
             operation: format!("key {label}"),
         })
     }
+
+    /// Whether `module.function` is a pure fold query (RFC 0002 §3), so the
+    /// evaluator runs it via [`Self::call_pure_function`] instead of the
+    /// gated [`Self::call_operation`]: no permission, no effect, no
+    /// declared-return `Result` wrapping.
+    fn is_pure_function(&self, _module: &str, _function: &str) -> bool {
+        false
+    }
+
+    /// Evaluates a pure fold query. Only called when
+    /// [`Self::is_pure_function`] said yes.
+    ///
+    /// # Errors
+    ///
+    /// Returns the argument or availability failure.
+    fn call_pure_function(
+        &mut self,
+        module: &str,
+        function: &str,
+        _arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError> {
+        Err(RuntimeError::OperationUnavailable {
+            module: module.to_owned(),
+            operation: function.to_owned(),
+        })
+    }
 }
 
 /// A run-time value.
@@ -171,6 +197,7 @@ impl Value {
         match self {
             Self::Text(value) => Ok(OperationValue::Text(value.clone())),
             Self::Int(value) => Ok(OperationValue::Integer(*value)),
+            Self::Bool(value) => Ok(OperationValue::Bool(*value)),
             Self::PubKey(value) => Ok(OperationValue::PubKey(value.clone())),
             Self::Op(value) => Ok(value.clone()),
             Self::Record { name, fields } if name == "StreamMessage" => {
@@ -208,6 +235,7 @@ impl Value {
         match value {
             OperationValue::Text(value) => Self::Text(value),
             OperationValue::Integer(value) => Self::Int(value),
+            OperationValue::Bool(value) => Self::Bool(value),
             OperationValue::PubKey(value) => Self::PubKey(value),
             OperationValue::PublishReport(report) => Self::Record {
                 name: "PublishReport".to_owned(),
@@ -626,6 +654,15 @@ impl<H: EvalHost> Interpreter<'_, H> {
                     .iter()
                     .map(Value::to_operation)
                     .collect::<Result<Vec<_>, _>>()?;
+                // A pure fold query (RFC 0002 §3): no permission gate, no
+                // effect, no `Result` wrapping — just the answer.
+                if self.host.is_pure_function(module, &name.value) {
+                    let result = self
+                        .host
+                        .call_pure_function(module, &name.value, &operands)
+                        .map_err(Stop::Error)?;
+                    return Ok(Value::from_operation(result));
+                }
                 let declared = self.host.declared_return(module, &name.value);
                 let outcome = self.host.call_operation(module, &name.value, &operands);
                 match declared.as_deref().and_then(result_error_type) {
@@ -969,6 +1006,19 @@ where
         self.operations
             .host_key(label)
             .map(OperationValue::DerivedKey)
+    }
+
+    fn is_pure_function(&self, module: &str, function: &str) -> bool {
+        self.operations.is_pure_function(module, function)
+    }
+
+    fn call_pure_function(
+        &mut self,
+        module: &str,
+        function: &str,
+        arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError> {
+        self.operations.call_pure_function(module, function, arguments)
     }
 }
 
@@ -2088,6 +2138,11 @@ mod tests {
         fail_with: Option<RuntimeError>,
         declared: Option<&'static str>,
         calls: usize,
+        /// Test-only stand-in for a pure fold query: when `Some`, every
+        /// member call is answered this way instead of going through
+        /// `call_operation`, so a test can tell the two paths apart.
+        pure_answer: Option<bool>,
+        pure_calls: usize,
     }
 
     impl EvalHost for Scripted {
@@ -2118,6 +2173,18 @@ mod tests {
         }
         fn declared_return(&self, _module: &str, _operation: &str) -> Option<String> {
             self.declared.map(str::to_owned)
+        }
+        fn is_pure_function(&self, _module: &str, _operation: &str) -> bool {
+            self.pure_answer.is_some()
+        }
+        fn call_pure_function(
+            &mut self,
+            _module: &str,
+            _function: &str,
+            _arguments: &[OperationValue],
+        ) -> Result<OperationValue, RuntimeError> {
+            self.pure_calls += 1;
+            Ok(OperationValue::Bool(self.pure_answer.unwrap_or(false)))
         }
     }
 
@@ -2159,6 +2226,22 @@ mod tests {
     }
 
     const BRANCHING_BOT: &str = "use concord04\non m {\n    match concord04.kick_member(event.author) {\n        Ok(report) => print(\"kicked\")\n        Err(error) => print(\"could not kick: \" + error.message)\n    }\n}\n";
+
+    #[test]
+    fn a_pure_fold_query_returns_a_raw_bool_and_never_calls_call_operation() {
+        let source = "use concord05\non m {\n    if concord05.invite_is_valid(event.content, 0) {\n        print(\"valid\")\n    }\n}\n";
+        let mut host = Scripted {
+            pure_answer: Some(true),
+            ..Scripted::default()
+        };
+        run_scripted(source, &mut host).unwrap();
+        // Routed through `call_pure_function`, not `call_operation`: no
+        // `Result` wrapping needed to read the answer, and the effectful
+        // path was never touched.
+        assert_eq!(host.printed, ["valid"]);
+        assert_eq!(host.pure_calls, 1);
+        assert_eq!(host.calls, 0);
+    }
 
     #[test]
     fn a_handler_can_branch_on_a_successful_operation_result() {

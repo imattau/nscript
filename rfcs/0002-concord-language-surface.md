@@ -1,6 +1,6 @@
 # RFC 0002: Language surface for Concord and other module-defined protocols
 
-Status: **Draft — read side partly implemented (see Implementation notes); scoped grants and fold queries still proposals**
+Status: **Draft — read side and fold queries (section 3) implemented (see Implementation notes); scoped grants (section 2) still a proposal**
 
 ## Abstract
 
@@ -188,18 +188,68 @@ with fake hosts. What remains:
   are checked, and its values are checked against operation parameters. A stream
   handler's event type is also the element type now, so a received
   `StreamMessage` matches it.
-- **Where does a script get a `DerivedKey`?** This is open question 3, and it is
-  now concrete: the language has no way to bind a host-held key to a name. The
-  `me` principal is the only host-provided value today. `concord01.stream(key)`
-  passes an undefined identifier that the checker does not resolve.
+- **Where does a script get a `DerivedKey`?** This was open question 3; it is
+  now answered by `key name = host("label")`, a new declaration resolved by the
+  checker as `DerivedKey`. The script gets an opaque handle: it can pass it to
+  an operation but never read, print or convert the bytes. `nscript run`
+  derives a deterministic, non-secret stand-in per label;
+  `Nip44OperationHost::with_key` provisions a real one. See
+  `examples/concord-key-bot.ns`.
 - **Publication from a handler is not evaluated.** `Result` values are now
   modelled (see `docs/HANDLERS.md`): a handler can `match` on an operation's
   `Ok`/`Err`, use `?`, and a kick the Roster refuses reaches the script as an
   `Err` it can read.
-- **Scoped grants (section 2) and fold queries (section 3)** are untouched.
+- **Scoped grants (section 2)** are untouched.
 
 Writing the evaluator's first handler also exposed a parser bug: a lowercase
 name before a block, as in `if ready { ... }`, was read as a record literal, so
 any condition ending in a bare variable failed to parse. Record types are
 capitalised, so only a capitalised name now opens a record literal. That bug
 was also why `examples/private-message.ns` failed `check`.
+
+## Implementation notes (2026-09-22): fold queries (section 3)
+
+Section 3 proposed fold-derived reads as pure functions, typed `Bool`,
+replacing the `Result<Int,E>`/`Storage` workaround `can_kick`/`can_ban` use
+today because the language had no boolean result. That workaround is
+untouched (changing a shipped, descriptor-stable operation is a separate,
+riskier change); what landed is the general mechanism, plus two new fold
+queries built on it.
+
+**The grammar already had the right shape.** `function` declarations
+(`spec/module-schema.ebnf`) take no `effect` and no `permission` — exactly
+what a pure read needs — but were never reachable from a running handler: the
+evaluator treated every `module.name(args)` call as a gated operation call,
+and `PureFunctionHost` (used for `nip19`) was wired to nothing. Two new
+`OperationHost`/`EvalHost` methods fix that: `is_pure_function` (true only for
+the fold queries the trait itself implements, as default methods — no host
+ever overrides it) and `call_pure_function` (no permission gate, no effect, no
+`Ok`/`Err` wrapping, an `OperationValue::Bool` round-trips through `Value` like
+any other scalar). A member call the checker resolved to a `function` (rather
+than an `operation`) routes through this path.
+
+**Two concrete queries**, both backed by protocol logic already tested from
+earlier CORD-05/06 work, both callable with no permission declared anywhere in
+a script:
+
+- `concord05.invite_is_valid(bundle: Text, now: Int) -> Bool` — an invite
+  bundle's own structure, owner self-certification and (given the caller's
+  clock) expiry, with no relay and no key touched.
+- `concord06.commitment_matches(held_key: DerivedKey, held_epoch: Int,
+  commitment: Text) -> Bool` — CORD-06 §4 continuity: whether a key the script
+  already holds (an opaque handle, e.g. from `key name = host(...)`),
+  compared at `held_epoch`, reproduces a rotation's committed tag, so a script
+  can decide whether a rekey notice is worth acting on before spending the
+  effort to apply it.
+
+**Argument type-checking now covers `function`s too**, not just `operation`s
+(`nscript-semantics/src/events.rs`): a wrong scalar type on either kind of
+call is `E1001`, the same as before.
+
+**Left for later, as this RFC's own non-goals and open questions already
+flagged:** fold queries are usable only inside handler bodies, where the
+evaluator runs; a top-level call is collected like any other operation call
+and would fail as unavailable, since `run_operations` does not know about
+`is_pure_function`. Whether that also belongs in `select` predicates (open
+question 4) is untouched. `can_kick`/`can_ban` were not migrated to `function`
+form. Section 2 (scoped grants) remains a proposal.

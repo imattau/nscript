@@ -19,7 +19,7 @@ library — key derivation, the presence rumor, the broker auth grant, and the
 rendezvous tie-break — with the SFU connection and media pipeline themselves
 left as host/service integration, per the plan.
 
-372 tests pass across the workspace (one further test is ignored because it
+378 tests pass across the workspace (one further test is ignored because it
 needs network access). `cargo clippy --workspace --all-targets` is clean under
 the workspace's pedantic lints.
 
@@ -165,6 +165,19 @@ real cryptography in `nscript-host-crypto::voice`:
   service. These are the host/service half the plan calls for; nothing here
   currently talks to LiveKit or any other SFU.
 
+## Fold queries (RFC 0002 §3)
+
+`concord05.invite_is_valid` and `concord06.commitment_matches` are pure,
+effect-free `function` calls — no permission, no `Storage` effect, and no
+`Result<Int,E>` workaround, unlike the existing `can_kick`/`can_ban`. The
+evaluator gained the general mechanism (`OperationHost::is_pure_function`/
+`call_pure_function`), so this is a real language capability, not a Concord
+special case: any module can now declare a `function` and have it actually
+run from a handler body, which was previously wired up to nothing. Usable only
+inside handler bodies today; see `rfcs/0002-concord-language-surface.md`
+("Implementation notes: fold queries") for what a top-level call and `select`
+predicates still lack.
+
 ## Not done, and limits
 
 - **Not confirmed in an Armada client.** Everything above was verified by this
@@ -254,8 +267,8 @@ messages as the identity in `keyfile`.
 ## Suggested next steps
 
 1. Look at the live community in an Armada client and report what renders.
-2. Review RFC 0002 for the read side (`on chat.message`) and scoped grants, the
-   two Layer 3 pieces Concord still lacks.
+2. Review RFC 0002 for scoped grants (section 2), the one Layer 3 piece
+   Concord still lacks; the read side and fold queries (section 3) are done.
 3. Raise the 120-blob arithmetic with the Concord authors.
 4. Decide whether to run a live moderation test using a second throwaway
    identity as the target, and whether to drive a Refounding from a ban.

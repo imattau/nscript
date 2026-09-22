@@ -1230,6 +1230,7 @@ pub struct SiteDeployment {
 pub enum OperationValue {
     Text(String),
     Integer(i64),
+    Bool(bool),
     PubKey(String),
     Record {
         name: String,
@@ -1327,6 +1328,39 @@ pub trait OperationHost {
             module: "host".to_owned(),
             operation: "key".to_owned(),
         })
+    }
+
+    /// Whether `module.function` is a pure, effect-free protocol query — a
+    /// module `function` declaration (RFC 0002 §3), never a gated
+    /// `operation`. A host never overrides this: every fold query the
+    /// language knows is answered below, by [`Self::call_pure_function`],
+    /// from protocol logic already in this crate.
+    fn is_pure_function(&self, module: &str, function: &str) -> bool {
+        pure_function(module, function).is_some()
+    }
+
+    /// Evaluates a pure protocol query (RFC 0002 §3: `concord05`/`concord06`
+    /// fold-derived reads such as `invite_is_valid` and
+    /// `commitment_matches`). Unlike [`Self::call`], this runs with no
+    /// permission gate, no declared effect, and no operation-call audit
+    /// trail — the result depends only on the arguments, so every host
+    /// answers it the same way.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::InvalidOperationArguments`] for a wrong
+    /// argument shape, or [`RuntimeError::OperationUnavailable`] for a
+    /// `module`/`function` pair this is not one of.
+    fn call_pure_function(
+        &mut self,
+        module: &str,
+        function: &str,
+        arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError> {
+        pure_function(module, function).ok_or_else(|| RuntimeError::OperationUnavailable {
+            module: module.to_owned(),
+            operation: function.to_owned(),
+        })?(arguments)
     }
 
     /// Invoke a declared NIP module operation with typed values.
@@ -2934,6 +2968,65 @@ where
         }
         Ok(report)
     }
+}
+
+/// A pure protocol query's implementation, dispatched by
+/// [`OperationHost::call_pure_function`].
+type PureFunction = fn(&[OperationValue]) -> Result<OperationValue, RuntimeError>;
+
+/// The fold queries RFC 0002 §3 proposes, resolved by `(module, function)`.
+/// Adding one here is the whole implementation: every [`OperationHost`]
+/// answers it identically, with no per-host wiring.
+fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
+    match (module, function) {
+        ("concord05", "invite_is_valid") => Some(invite_is_valid as PureFunction),
+        ("concord06", "commitment_matches") => Some(commitment_matches as PureFunction),
+        _ => None,
+    }
+}
+
+fn invalid(function: &'static str) -> RuntimeError {
+    RuntimeError::InvalidOperationArguments {
+        operation: function.to_owned(),
+    }
+}
+
+/// CORD-05 §6/§7: whether a bundle's own structure is well-formed, its
+/// owner self-certification reproduces its `community_id`, and (given the
+/// caller's clock) it has not expired. Never touches a relay or a key: the
+/// bundle is data the script already holds, and no secret is exposed, only a
+/// yes/no.
+fn invite_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(bundle_json), OperationValue::Integer(now_ms)] = arguments else {
+        return Err(invalid("invite_is_valid"));
+    };
+    let now_ms = u64::try_from(*now_ms).map_err(|_| invalid("invite_is_valid"))?;
+    let valid = match crate::invite::parse_invite(bundle_json) {
+        Ok(invite) => invite.expires_at.is_none_or(|expires_at| now_ms < expires_at),
+        Err(_) => false,
+    };
+    Ok(OperationValue::Bool(valid))
+}
+
+/// CORD-06 §4 continuity: whether a key the caller already holds, compared at
+/// `held_epoch`, reproduces a rotation's committed `epoch_key_commitment`
+/// tag. A script uses this to decide whether a rekey notice actually extends
+/// what it holds before spending effort trying to apply it — the key itself
+/// never leaves the opaque [`DerivedKey`] handle, only the comparison's
+/// result does.
+fn commitment_matches(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::DerivedKey(held_key), OperationValue::Integer(held_epoch), OperationValue::Text(commitment)] =
+        arguments
+    else {
+        return Err(invalid("commitment_matches"));
+    };
+    let held_epoch = u64::try_from(*held_epoch).map_err(|_| invalid("commitment_matches"))?;
+    let key_bytes: [u8; 32] = held_key
+        .as_bytes()
+        .try_into()
+        .map_err(|_| invalid("commitment_matches"))?;
+    let expected = crate::rekey::epoch_key_commitment(held_epoch, &key_bytes);
+    Ok(OperationValue::Bool(expected == *commitment))
 }
 
 fn checked_to_operation(argument: &CheckedArgument) -> OperationValue {
@@ -5158,6 +5251,111 @@ impl AuditHost for RecordingAudit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // RFC 0002 §3: fold queries as pure functions. Every `OperationHost`
+    // answers these identically (they are default trait methods), so a
+    // bare `FakeOperationHost` exercises the same logic a real host would.
+
+    #[test]
+    fn a_valid_unexpired_invite_bundle_is_valid() {
+        let owner = "1".repeat(64);
+        let owner_salt = "2".repeat(64);
+        let community_id = crate::authority::community_id(&owner, &owner_salt).unwrap();
+        let bundle = serde_json::json!({
+            "community_id": community_id,
+            "owner": owner,
+            "owner_salt": owner_salt,
+            "community_root": "3".repeat(64),
+            "root_epoch": 1,
+            "channels": [],
+            "name": "lounge",
+            "expires_at": 2_000,
+        })
+        .to_string();
+        let mut host = FakeOperationHost::default();
+        assert_eq!(
+            host.call_pure_function(
+                "concord05",
+                "invite_is_valid",
+                &[OperationValue::Text(bundle.clone()), OperationValue::Integer(1_000)]
+            ),
+            Ok(OperationValue::Bool(true))
+        );
+        // Past its own `expires_at`: still well-formed, but no longer valid.
+        assert_eq!(
+            host.call_pure_function(
+                "concord05",
+                "invite_is_valid",
+                &[OperationValue::Text(bundle), OperationValue::Integer(3_000)]
+            ),
+            Ok(OperationValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn a_forged_or_malformed_invite_bundle_is_never_valid() {
+        let mut host = FakeOperationHost::default();
+        for bundle in [
+            "not json".to_owned(),
+            serde_json::json!({"community_id": "1".repeat(64), "owner": "1".repeat(64), "owner_salt": "2".repeat(64), "community_root": "3".repeat(64), "root_epoch": 1, "channels": [], "name": "x"}).to_string(),
+        ] {
+            assert_eq!(
+                host.call_pure_function(
+                    "concord05",
+                    "invite_is_valid",
+                    &[OperationValue::Text(bundle), OperationValue::Integer(0)]
+                ),
+                Ok(OperationValue::Bool(false))
+            );
+        }
+    }
+
+    #[test]
+    fn commitment_matches_only_the_key_and_epoch_that_produced_it() {
+        let key = DerivedKey::new(vec![9; 32]).unwrap();
+        let expected = crate::rekey::epoch_key_commitment(4, &[9; 32]);
+        let mut host = FakeOperationHost::default();
+        assert_eq!(
+            host.call_pure_function(
+                "concord06",
+                "commitment_matches",
+                &[
+                    OperationValue::DerivedKey(key.clone()),
+                    OperationValue::Integer(4),
+                    OperationValue::Text(expected.clone()),
+                ]
+            ),
+            Ok(OperationValue::Bool(true))
+        );
+        // A different epoch derives a different commitment: no match.
+        assert_eq!(
+            host.call_pure_function(
+                "concord06",
+                "commitment_matches",
+                &[
+                    OperationValue::DerivedKey(key),
+                    OperationValue::Integer(5),
+                    OperationValue::Text(expected),
+                ]
+            ),
+            Ok(OperationValue::Bool(false))
+        );
+    }
+
+    #[test]
+    fn pure_functions_reject_the_wrong_argument_shape_and_unknown_names() {
+        let mut host = FakeOperationHost::default();
+        assert!(matches!(
+            host.call_pure_function("concord05", "invite_is_valid", &[]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function("concord09", "nope", &[]),
+            Err(RuntimeError::OperationUnavailable { .. })
+        ));
+        assert!(host.is_pure_function("concord05", "invite_is_valid"));
+        assert!(!host.is_pure_function("concord01", "stream"));
+    }
 
     #[test]
     fn concord_protocol_bytes_are_non_empty_and_debug_redacted() {

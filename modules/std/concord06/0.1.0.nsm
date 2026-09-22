@@ -1,0 +1,6 @@
+module concord06 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/concord-protocol/concord/blob/main/06.md"
+use concord01 @ "^0.1"
+
+function commitment_matches(held_key: DerivedKey, held_epoch: Int, commitment: Text) -> Bool

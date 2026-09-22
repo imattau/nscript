@@ -809,3 +809,43 @@ fn a_key_must_be_declared_from_a_host_label() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("E1101"));
 }
+
+#[test]
+fn a_fold_query_runs_pure_with_no_permission_and_no_result_wrapping() {
+    // A genuinely valid, unexpired invite bundle: `invite_is_valid` is a
+    // `function` (RFC 0002 §3), so `event.content` can carry it straight
+    // into the handler with no permission declared for it anywhere in the
+    // script's `permissions` block.
+    let owner = "1".repeat(64);
+    let owner_salt = "2".repeat(64);
+    let community_id = nscript_runtime::authority::community_id(&owner, &owner_salt).unwrap();
+    let bundle = serde_json::json!({
+        "community_id": community_id,
+        "owner": owner,
+        "owner_salt": owner_salt,
+        "community_root": "3".repeat(64),
+        "root_epoch": 1,
+        "channels": [],
+        "name": "lounge",
+    })
+    .to_string();
+    let event = serde_json::json!({
+        "event_type": "Note",
+        "content": bundle,
+        "created_at": 0,
+    })
+    .to_string();
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("conformance/valid/concord-fold-queries.ns"))
+        .args(["--event", &event])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("invite still valid"), "{stdout}");
+}

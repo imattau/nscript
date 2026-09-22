@@ -1,0 +1,23 @@
+// RFC 0002 §3: fold queries as pure functions. `concord05.invite_is_valid`
+// and `concord06.commitment_matches` take no permission and no effect — they
+// are host-answered reads, not gated operations — and can be called from a
+// handler body to decide whether to act on something an event carried.
+use nip01
+use concord05
+use concord06
+
+permissions {
+    log
+}
+
+key channel_key = host("general")
+
+on Note {
+    if concord05.invite_is_valid(event.content, event.created_at) {
+        print("invite still valid")
+    }
+
+    if concord06.commitment_matches(channel_key, 4, event.content) {
+        print("rekey continues what I hold")
+    }
+}
