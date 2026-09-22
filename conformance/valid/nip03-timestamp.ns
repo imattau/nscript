@@ -1,0 +1,12 @@
+// NIP-03 OpenTimestamps: attesting that an event existed by a given time.
+use nip03
+
+permissions {
+    timestamp
+}
+
+let result = nip03.publish_timestamp(TimestampAttestation {
+    target: "5555555555555555555555555555555555555555555555555555555555555555";
+    target_kind: 1;
+    ots_proof: "base64:AQIDBAU=";
+})

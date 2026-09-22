@@ -1,0 +1,25 @@
+module nip90 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/90.md"
+
+record JobRequest {
+    field job_kind: Int
+    field input: Text
+    field input_type: Text
+    field output: Text
+    field bid_msats: Int
+}
+
+record JobResult {
+    field job_kind: Int
+    field request: EventId
+    field payload: Text
+    field amount_msats: Int
+}
+
+error JobError {
+    field message: Text
+}
+
+operation publish_job_request(request: JobRequest) -> Result<PublishReport,JobError> effect Sign,Relay permission job_request
+operation publish_job_result(result: JobResult) -> Result<PublishReport,JobError> effect Sign,Relay permission job_result

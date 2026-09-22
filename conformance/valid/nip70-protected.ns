@@ -1,0 +1,11 @@
+// NIP-70 protected events: a note relays must reject unless the publisher
+// authenticates (NIP-42) as its author.
+use nip70
+
+permissions {
+    protected_note
+}
+
+let result = nip70.publish_protected_note(ProtectedNote {
+    content: "Only visible to relays I've authenticated to";
+})

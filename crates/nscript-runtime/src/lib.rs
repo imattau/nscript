@@ -1489,6 +1489,48 @@ pub struct PublicMessage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimestampAttestation {
+    pub target: String,
+    pub target_kind: i64,
+    pub ots_proof: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtectedNote {
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JobRequest {
+    pub job_kind: i64,
+    pub input: String,
+    pub input_type: String,
+    pub output: String,
+    pub bid_msats: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JobResult {
+    pub job_kind: i64,
+    pub request: String,
+    pub payload: String,
+    pub amount_msats: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VoiceMessage {
+    pub audio_url: String,
+    pub duration: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VoiceReply {
+    pub audio_url: String,
+    pub duration: i64,
+    pub target: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     Integer(i64),
@@ -1590,6 +1632,12 @@ pub enum OperationValue {
     VanishRequest(VanishRequest),
     ZapGoal(ZapGoal),
     PublicMessage(PublicMessage),
+    TimestampAttestation(TimestampAttestation),
+    ProtectedNote(ProtectedNote),
+    JobRequest(JobRequest),
+    JobResult(JobResult),
+    VoiceMessage(VoiceMessage),
+    VoiceReply(VoiceReply),
     PublishReport(PublishReport),
 }
 
@@ -5830,6 +5878,133 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip03", "publish_timestamp") => {
+                let [OperationValue::TimestampAttestation(attestation)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if attestation.target.is_empty() || attestation.ots_proof.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://timestamp".to_owned(),
+                        accepted: true,
+                        detail: "timestamp attestation lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip70", "publish_protected_note") => {
+                let [OperationValue::ProtectedNote(note)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if note.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://protected-note".to_owned(),
+                        accepted: true,
+                        detail: "protected note lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip90", "publish_job_request") => {
+                let [OperationValue::JobRequest(request)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if !(5000..6000).contains(&request.job_kind)
+                    || request.input.is_empty()
+                    || request.bid_msats < 0
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://job-request".to_owned(),
+                        accepted: true,
+                        detail: "job request lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip90", "publish_job_result") => {
+                let [OperationValue::JobResult(result)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if !(6000..7000).contains(&result.job_kind)
+                    || result.request.is_empty()
+                    || result.amount_msats < 0
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://job-result".to_owned(),
+                        accepted: true,
+                        detail: "job result lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipa0", "publish_voice_message") => {
+                let [OperationValue::VoiceMessage(message)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if message.audio_url.is_empty()
+                    || message.duration <= 0
+                    || message.duration > 60
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://voice-message".to_owned(),
+                        accepted: true,
+                        detail: "voice message lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipa0", "reply_with_voice_message") => {
+                let [OperationValue::VoiceReply(reply)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if reply.audio_url.is_empty()
+                    || reply.duration <= 0
+                    || reply.duration > 60
+                    || reply.target.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://voice-reply".to_owned(),
+                        accepted: true,
+                        detail: "voice reply lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip25", "publish_reaction") => {
                 let [OperationValue::Reaction(_reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -6543,6 +6718,77 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             }
             _ => value.clone(),
         },
+        "TimestampAttestation" => match (
+            text("target"),
+            integer("target_kind"),
+            text("ots_proof"),
+        ) {
+            (Some(target), Some(target_kind), Some(ots_proof)) => {
+                OperationValue::TimestampAttestation(TimestampAttestation {
+                    target,
+                    target_kind,
+                    ots_proof,
+                })
+            }
+            _ => value.clone(),
+        },
+        "ProtectedNote" => match text("content") {
+            Some(content) => OperationValue::ProtectedNote(ProtectedNote { content }),
+            None => value.clone(),
+        },
+        "JobRequest" => match (
+            integer("job_kind"),
+            text("input"),
+            text("input_type"),
+            text("output"),
+            integer("bid_msats"),
+        ) {
+            (Some(job_kind), Some(input), Some(input_type), Some(output), Some(bid_msats)) => {
+                OperationValue::JobRequest(JobRequest {
+                    job_kind,
+                    input,
+                    input_type,
+                    output,
+                    bid_msats,
+                })
+            }
+            _ => value.clone(),
+        },
+        "JobResult" => match (
+            integer("job_kind"),
+            text("request"),
+            text("payload"),
+            integer("amount_msats"),
+        ) {
+            (Some(job_kind), Some(request), Some(payload), Some(amount_msats)) => {
+                OperationValue::JobResult(JobResult {
+                    job_kind,
+                    request,
+                    payload,
+                    amount_msats,
+                })
+            }
+            _ => value.clone(),
+        },
+        "VoiceMessage" => match (text("audio_url"), integer("duration")) {
+            (Some(audio_url), Some(duration)) => {
+                OperationValue::VoiceMessage(VoiceMessage {
+                    audio_url,
+                    duration,
+                })
+            }
+            _ => value.clone(),
+        },
+        "VoiceReply" => match (text("audio_url"), integer("duration"), text("target")) {
+            (Some(audio_url), Some(duration), Some(target)) => {
+                OperationValue::VoiceReply(VoiceReply {
+                    audio_url,
+                    duration,
+                    target,
+                })
+            }
+            _ => value.clone(),
+        },
         _ => value.clone(),
     }
 }
@@ -7198,6 +7444,39 @@ mod tests {
             OperationValue::PublicMessage(PublicMessage {
                 content: "hi".to_owned(),
                 recipients: vec!["alice".to_owned()],
+            })
+        );
+    }
+
+    #[test]
+    fn a_job_request_normalizes_its_mixed_integer_and_text_fields() {
+        let request = OperationValue::Record {
+            name: "JobRequest".to_owned(),
+            fields: vec![
+                ("job_kind".to_owned(), OperationValue::Integer(5002)),
+                (
+                    "input".to_owned(),
+                    OperationValue::Text("translate".to_owned()),
+                ),
+                (
+                    "input_type".to_owned(),
+                    OperationValue::Text("text".to_owned()),
+                ),
+                (
+                    "output".to_owned(),
+                    OperationValue::Text("text/plain".to_owned()),
+                ),
+                ("bid_msats".to_owned(), OperationValue::Integer(5_000_000)),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&request),
+            OperationValue::JobRequest(JobRequest {
+                job_kind: 5002,
+                input: "translate".to_owned(),
+                input_type: "text".to_owned(),
+                output: "text/plain".to_owned(),
+                bid_msats: 5_000_000,
             })
         );
     }

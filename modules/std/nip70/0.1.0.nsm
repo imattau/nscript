@@ -1,0 +1,13 @@
+module nip70 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/70.md"
+
+record ProtectedNote {
+    field content: Text
+}
+
+error ProtectedError {
+    field message: Text
+}
+
+operation publish_protected_note(note: ProtectedNote) -> Result<PublishReport,ProtectedError> effect Sign,Relay permission protected_note

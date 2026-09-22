@@ -695,3 +695,40 @@ previous two batches (`Listing`, `Repository`).
 
 None get Layer 3 sugar keywords, for the same reason as the rest of this
 section.
+
+## Four more: NIP-03, NIP-70, NIP-90, NIP-A0
+
+NIP-31 (the `alt` tag) was considered for this batch and dropped: it
+explicitly excludes `kind:1` notes ("social clients... can still show
+something in case a custom event pops up"), so the "attach this one tag
+to a plain note" scoping used for NIP-92/36/40/70 would misrepresent it —
+the whole point is a fallback on *non-note* custom kinds, and this
+language has no generic mechanism to attach a tag to an arbitrary custom
+event yet (see the NIP-92 note above). Left unbuilt rather than modelled
+dishonestly.
+
+- `nip03` (OpenTimestamps, kind 1040): `publish_timestamp` takes the
+  target event's id and kind, plus the base64 `.ots` proof itself as
+  opaque text — the proof's own validity (that it actually resolves to a
+  Bitcoin block) is not checked here, same as every other module in this
+  document that publishes a claim without verifying it.
+- `nip70` (protected events): unlike NIP-31, this one *does* fit the "one
+  tag on a plain note" pattern — the `-` tag applies to any event kind but
+  carries no data, so `publish_protected_note` is exactly that: a note
+  with nothing else attached. The spec's actual mechanism (a relay must
+  reject it unless the publisher NIP-42-authenticates as the author) is
+  relay-side enforcement, not something this module does.
+- `nip90` (data vending machines): `publish_job_request` and
+  `publish_job_result` cover the two event shapes that actually carry a
+  job (kind 5000-5999 and 6000-6999, checked to be in range). Job
+  feedback (kind 7000, status updates) and NIP-04-encrypted params are not
+  modelled.
+- `nipa0` (voice messages, kinds 1222/1244): `publish_voice_message` and
+  `reply_with_voice_message` take an audio URL and duration, rejecting a
+  duration outside the spec's 0-60 second range. This is a different
+  thing from Concord's CORD-07 (`docs/CONCORD.md`) audio/video work:
+  CORD-07 is a live channel's presence/broker-auth protocol, this is a
+  single voice-note event with no channel or session behind it.
+
+None get Layer 3 sugar keywords, for the same reason as the rest of this
+section.

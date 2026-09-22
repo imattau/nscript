@@ -1,0 +1,23 @@
+// NIP-90 data vending machines: a job request and its result. Job feedback
+// (kind 7000) and NIP-04-encrypted params are not modelled.
+use nip90
+
+permissions {
+    job_request
+    job_result
+}
+
+let request = nip90.publish_job_request(JobRequest {
+    job_kind: 5002;
+    input: "Translate this text to French";
+    input_type: "text";
+    output: "text/plain";
+    bid_msats: 5000000;
+})
+
+let result = nip90.publish_job_result(JobResult {
+    job_kind: 6002;
+    request: "6666666666666666666666666666666666666666666666666666666666666666";
+    payload: "Traduisez ce texte en français";
+    amount_msats: 5000000;
+})

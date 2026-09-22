@@ -1,0 +1,21 @@
+module nipa0 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/A0.md"
+
+record VoiceMessage {
+    field audio_url: Text
+    field duration: Int
+}
+
+record VoiceReply {
+    field audio_url: Text
+    field duration: Int
+    field target: EventId
+}
+
+error VoiceMessageError {
+    field message: Text
+}
+
+operation publish_voice_message(message: VoiceMessage) -> Result<PublishReport,VoiceMessageError> effect Sign,Relay permission voice_message
+operation reply_with_voice_message(reply: VoiceReply) -> Result<PublishReport,VoiceMessageError> effect Sign,Relay permission voice_message

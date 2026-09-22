@@ -290,6 +290,22 @@ const BUILTINS: &[(&str, &str)] = &[
         "nipa4",
         include_str!("../../../modules/std/nipa4/0.1.0.nsm"),
     ),
+    (
+        "nip03",
+        include_str!("../../../modules/std/nip03/0.1.0.nsm"),
+    ),
+    (
+        "nip70",
+        include_str!("../../../modules/std/nip70/0.1.0.nsm"),
+    ),
+    (
+        "nip90",
+        include_str!("../../../modules/std/nip90/0.1.0.nsm"),
+    ),
+    (
+        "nipa0",
+        include_str!("../../../modules/std/nipa0/0.1.0.nsm"),
+    ),
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -774,7 +790,7 @@ mod tests {
     fn discovers_standard_layout() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules/std");
         let mut registry = ModuleRegistry::default();
-        assert_eq!(registry.load_root(&root).unwrap(), 71);
+        assert_eq!(registry.load_root(&root).unwrap(), 75);
     }
 
     #[test]

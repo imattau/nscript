@@ -1,0 +1,19 @@
+// NIP-A0 voice messages: a plain voice note and a threaded reply. This is
+// distinct from Concord's CORD-07 audio/video presence protocol — a
+// standalone voice message, not a live channel.
+use nipa0
+
+permissions {
+    voice_message
+}
+
+let message = nipa0.publish_voice_message(VoiceMessage {
+    audio_url: "https://cdn.example/voice.m4a";
+    duration: 12;
+})
+
+let reply = nipa0.reply_with_voice_message(VoiceReply {
+    audio_url: "https://cdn.example/voice-reply.m4a";
+    duration: 8;
+    target: "7777777777777777777777777777777777777777777777777777777777777777";
+})
