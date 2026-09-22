@@ -1,0 +1,12 @@
+// NIP-B0 web bookmarks: a `d`-tag-addressed bookmark of a URI.
+use nipb0
+
+permissions {
+    bookmark
+}
+
+let result = nipb0.publish_bookmark(Bookmark {
+    uri: "alice.blog/post";
+    title: "Alice's post";
+    description: "Worth a re-read";
+})

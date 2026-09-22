@@ -578,3 +578,35 @@ below covers the one case it models well and no more.
 None of the four get Layer 3 sugar keywords, for the same reason as `nip88`/
 `nip92`/`nip36`/`nip40`: each takes a list-of-records or multi-field shape
 that doesn't compress into a short intent phrase.
+
+## Four more: NIP-35, NIP-99, NIP-B0, NIP-C0
+
+Unlike the previous two batches, each of these owns one real, addressable
+Nostr kind of its own — no tag-attaches-to-anything scoping caveat needed:
+
+- `nip35` (torrents, kind 2003): `nip35.publish_torrent` takes a title,
+  description, the v1 BitTorrent info hash, a `List<TorrentFile { path,
+  bytes }>`, and a `List<Text>` of tracker URLs. The spec's optional `i`
+  tags (category hierarchies, IMDB/TMDB/anilist IDs) and the separate kind
+  2004 torrent-comment event are not modelled.
+- `nip99` (classified listings, kind 30402): `nip99.publish_listing` takes
+  title, summary, content, location, and a flattened `price_amount`/
+  `price_currency` (the spec's optional fourth price element, a recurrence
+  frequency like "month", is not modelled, nor are `status`, `t`, `image`
+  or `g` tags).
+- `nipb0` (web bookmarks, kind 39701): `nipb0.publish_bookmark` takes the
+  bookmarked URI, an optional-in-spirit title, and a description.
+- `nipc0` (code snippets, kind 1337): `nipc0.publish_snippet` takes the
+  code, its language, a name and a description. The spec's `extension`,
+  `runtime`, `license`, `dep` and `repo` tags are not modelled.
+
+None get Layer 3 sugar keywords either, for the same multi-field-shape
+reason as the rest of this section.
+
+Fitting `nip99.Listing` into `OperationValue` also tripped a real
+`clippy::result_large_err` warning across the crate: six `Text` fields make
+`Listing` 144 bytes, large enough that carrying it inline made it the
+largest arm of every `Result<OperationValue, _>` function's error path
+(`Value::Op` → `eval::Stop::Propagate`, in particular). It is boxed
+(`OperationValue::Listing(Box<Listing>)`) rather than shrunk, since the
+fields are the ones the spec actually asks for.

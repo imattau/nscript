@@ -1,0 +1,14 @@
+// NIP-C0 code snippets: a kind:1337 event carrying source code and its
+// language metadata.
+use nipc0
+
+permissions {
+    snippet
+}
+
+let result = nipc0.publish_snippet(CodeSnippet {
+    code: "print(\"hello\")";
+    language: "python";
+    name: "hello.py";
+    description: "Minimal example";
+})

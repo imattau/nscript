@@ -1,0 +1,15 @@
+// NIP-99 classified listings: an addressable listing event with a price tag.
+use nip99
+
+permissions {
+    listing
+}
+
+let result = nip99.publish_listing(Listing {
+    title: "Vintage bicycle";
+    summary: "Well-maintained road bike";
+    content: "Selling my vintage road bike, ridden weekly, no major repairs.";
+    location: "Melbourne, Australia";
+    price_amount: "450";
+    price_currency: "AUD";
+})

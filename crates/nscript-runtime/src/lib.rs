@@ -1315,6 +1315,46 @@ pub struct ExternalComment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TorrentFile {
+    pub path: String,
+    pub bytes: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Torrent {
+    pub title: String,
+    pub description: String,
+    pub info_hash: String,
+    pub files: Vec<TorrentFile>,
+    pub trackers: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Listing {
+    pub title: String,
+    pub summary: String,
+    pub content: String,
+    pub location: String,
+    pub price_amount: String,
+    pub price_currency: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Bookmark {
+    pub uri: String,
+    pub title: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodeSnippet {
+    pub code: String,
+    pub language: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     Integer(i64),
@@ -1385,6 +1425,14 @@ pub enum OperationValue {
     NoteWithEmoji(NoteWithEmoji),
     IdentityClaims(IdentityClaims),
     ExternalComment(ExternalComment),
+    Torrent(Torrent),
+    // Boxed: `Listing` has six `String` fields (144 bytes), which alone would
+    // make this the largest `OperationValue` variant and trip
+    // `clippy::result_large_err` on every `Result<OperationValue, _>` in the
+    // crate.
+    Listing(Box<Listing>),
+    Bookmark(Bookmark),
+    CodeSnippet(CodeSnippet),
     PublishReport(PublishReport),
 }
 
@@ -5167,6 +5215,92 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip35", "publish_torrent") => {
+                let [OperationValue::Torrent(torrent)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if torrent.title.is_empty()
+                    || torrent.info_hash.is_empty()
+                    || torrent.files.is_empty()
+                    || torrent
+                        .files
+                        .iter()
+                        .any(|file| file.path.is_empty() || file.bytes <= 0)
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://torrent".to_owned(),
+                        accepted: true,
+                        detail: "torrent lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip99", "publish_listing") => {
+                let [OperationValue::Listing(listing)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if listing.title.is_empty()
+                    || listing.price_amount.is_empty()
+                    || listing.price_currency.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://listing".to_owned(),
+                        accepted: true,
+                        detail: "listing lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipb0", "publish_bookmark") => {
+                let [OperationValue::Bookmark(bookmark)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if bookmark.uri.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://bookmark".to_owned(),
+                        accepted: true,
+                        detail: "bookmark lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipc0", "publish_snippet") => {
+                let [OperationValue::CodeSnippet(snippet)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if snippet.code.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://snippet".to_owned(),
+                        accepted: true,
+                        detail: "snippet lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip25", "publish_reaction") => {
                 let [OperationValue::Reaction(_reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -5607,6 +5741,75 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             }
             _ => value.clone(),
         },
+        "Torrent" => match (
+            text("title"),
+            text("description"),
+            text("info_hash"),
+            record_torrent_files(fields, "files"),
+            record_strings(fields, "trackers"),
+        ) {
+            (Some(title), Some(description), Some(info_hash), Some(files), Some(trackers)) => {
+                OperationValue::Torrent(Torrent {
+                    title,
+                    description,
+                    info_hash,
+                    files,
+                    trackers,
+                })
+            }
+            _ => value.clone(),
+        },
+        "Listing" => match (
+            text("title"),
+            text("summary"),
+            text("content"),
+            text("location"),
+            text("price_amount"),
+            text("price_currency"),
+        ) {
+            (
+                Some(title),
+                Some(summary),
+                Some(content),
+                Some(location),
+                Some(price_amount),
+                Some(price_currency),
+            ) => OperationValue::Listing(Box::new(Listing {
+                title,
+                summary,
+                content,
+                location,
+                price_amount,
+                price_currency,
+            })),
+            _ => value.clone(),
+        },
+        "Bookmark" => match (text("uri"), text("title"), text("description")) {
+            (Some(uri), Some(title), Some(description)) => {
+                OperationValue::Bookmark(Bookmark {
+                    uri,
+                    title,
+                    description,
+                })
+            }
+            _ => value.clone(),
+        },
+        "CodeSnippet" => match (
+            text("code"),
+            text("language"),
+            text("name"),
+            text("description"),
+        ) {
+            (Some(code), Some(language), Some(name), Some(description)) => {
+                OperationValue::CodeSnippet(CodeSnippet {
+                    code,
+                    language,
+                    name,
+                    description,
+                })
+            }
+            _ => value.clone(),
+        },
         _ => value.clone(),
     }
 }
@@ -5717,6 +5920,31 @@ fn record_emoji(fields: &[(String, OperationValue)], key: &str) -> Option<Vec<Cu
                             (Some(shortcode), Some(url)) => {
                                 Some(CustomEmoji { shortcode, url })
                             }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        })?
+    })
+}
+
+/// A `List<TorrentFile>` field; see [`record_poll_options`] for why each
+/// element is read directly rather than through `normalize_record`.
+fn record_torrent_files(
+    fields: &[(String, OperationValue)],
+    key: &str,
+) -> Option<Vec<TorrentFile>> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::List(items) => items
+                .iter()
+                .map(|item| match item {
+                    OperationValue::Record { name, fields } if name == "TorrentFile" => {
+                        match (record_text(fields, "path"), record_integer(fields, "bytes")) {
+                            (Some(path), Some(bytes)) => Some(TorrentFile { path, bytes }),
                             _ => None,
                         }
                     }
@@ -6059,6 +6287,59 @@ mod tests {
                     platform: "github:example".to_owned(),
                     proof: "https://gist.example/abc".to_owned(),
                 }],
+            })
+        );
+    }
+
+    #[test]
+    fn a_list_of_records_normalizes_a_torrents_file_list() {
+        let torrent = OperationValue::Record {
+            name: "Torrent".to_owned(),
+            fields: vec![
+                (
+                    "title".to_owned(),
+                    OperationValue::Text("A film".to_owned()),
+                ),
+                (
+                    "description".to_owned(),
+                    OperationValue::Text("desc".to_owned()),
+                ),
+                (
+                    "info_hash".to_owned(),
+                    OperationValue::Text("abc123".to_owned()),
+                ),
+                (
+                    "files".to_owned(),
+                    OperationValue::List(vec![OperationValue::Record {
+                        name: "TorrentFile".to_owned(),
+                        fields: vec![
+                            (
+                                "path".to_owned(),
+                                OperationValue::Text("film.mkv".to_owned()),
+                            ),
+                            ("bytes".to_owned(), OperationValue::Integer(4_700_000_000)),
+                        ],
+                    }]),
+                ),
+                (
+                    "trackers".to_owned(),
+                    OperationValue::List(vec![OperationValue::Text(
+                        "udp://tracker.example/announce".to_owned(),
+                    )]),
+                ),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&torrent),
+            OperationValue::Torrent(Torrent {
+                title: "A film".to_owned(),
+                description: "desc".to_owned(),
+                info_hash: "abc123".to_owned(),
+                files: vec![TorrentFile {
+                    path: "film.mkv".to_owned(),
+                    bytes: 4_700_000_000,
+                }],
+                trackers: vec!["udp://tracker.example/announce".to_owned()],
             })
         );
     }

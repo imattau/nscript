@@ -1,0 +1,16 @@
+module nipc0 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/C0.md"
+
+record CodeSnippet {
+    field code: Text
+    field language: Text
+    field name: Text
+    field description: Text
+}
+
+error SnippetError {
+    field message: Text
+}
+
+operation publish_snippet(snippet: CodeSnippet) -> Result<PublishReport,SnippetError> effect Sign,Relay permission snippet

@@ -1,0 +1,18 @@
+// NIP-35 torrents: a searchable torrent index event with a magnet-link info
+// hash and file listing.
+use nip35
+
+permissions {
+    torrent
+}
+
+let result = nip35.publish_torrent(Torrent {
+    title: "A Public Domain Film";
+    description: "Full quality rip, see files for details";
+    info_hash: "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5";
+    files: [
+        TorrentFile { path: "film.mkv"; bytes: 4700000000 },
+        TorrentFile { path: "subs.srt"; bytes: 20000 },
+    ];
+    trackers: ["udp://tracker.example:1337/announce"];
+})
