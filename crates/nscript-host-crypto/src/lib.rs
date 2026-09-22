@@ -12,6 +12,7 @@ pub mod refound;
 pub mod rekey;
 pub mod schnorr;
 pub mod stream;
+pub mod voice;
 
 /// 32 bytes from the operating system's random number generator.
 ///

@@ -1,6 +1,6 @@
 # Concord integration: status write-up
 
-Status as of 2026-09-21, commit range `10a7292..HEAD` (25 commits). This
+Status as of 2026-09-22, commit range `10a7292..HEAD`. This
 document records what was built for the Concord tranche of `PLAN.md`, how each
 part was verified, what was learned about the specification, and what is not
 done. It is a snapshot, not a specification: `docs/CONCORD.md` is the design,
@@ -9,15 +9,17 @@ early gap analysis that drove the rework described below.
 
 ## Summary
 
-CORD-01 through CORD-06 and CORD-08 are implemented as pure, tested logic in
+CORD-01 through CORD-08 are implemented as pure, tested logic in
 `nscript-runtime`, with real cryptography and real event construction in a new
 `nscript-host-crypto` crate. The pieces were exercised against a live Concord
 community (read, decrypt, verify, fold, post), and the write paths that need
 authority (moderation, rekey, Refounding) were proved end to end on a
-self-made local community. CORD-07 (audio/video) is not started; the plan
-treats it as host/service integration.
+self-made local community. CORD-07 (audio/video) is now a tested protocol
+library — key derivation, the presence rumor, the broker auth grant, and the
+rendezvous tie-break — with the SFU connection and media pipeline themselves
+left as host/service integration, per the plan.
 
-252 tests pass across the workspace (one further test is ignored because it
+372 tests pass across the workspace (one further test is ignored because it
 needs network access). `cargo clippy --workspace --all-targets` is clean under
 the workspace's pedantic lints.
 
@@ -32,7 +34,7 @@ the workspace's pedantic lints.
 | CORD-05 invites | `runtime/invite.rs` | Bundle validation (owner self-certification, bounds, expiry), link fragment codec and relay dictionary, `bundle_key`, mergeable Invite List, Registry fold, Direct Invites |
 | CORD-06 rekeys | `runtime/rekey.rs`, `host-crypto/rekey.rs`, `host-crypto/refound.rs` | Blob forms (72/104/136 bytes), locators, continuity, chunk assembly, race resolution; real blob building and receiving; Refounding with verbatim Control Plane compaction, key roll, channel rekeys, Guestbook snapshot, ordered idempotent publishing |
 | CORD-08 timers | `runtime/expiry.rs` | `message_expiration` field, NIP-40 tag rules and exemptions, enforcement by the signed rumor's own tag, timer notices |
-| CORD-07 A/V | not started | Host/service integration per the plan |
+| CORD-07 A/V | `runtime/voice.rs`, `host-crypto/voice.rs` | `voice_key`/`voice_media_key`/`sender_key` derivation; presence rumor (kind 23313) over a new ephemeral wrap (21059); staleness and the identity-conflict render rule; broker auth grant (kind 27235) build/verify with freshness and replay checks; RFC-6454 origin canonicalization and the rendezvous tie-break. The SFU connection and media pipeline are host/service integration, not built here |
 
 Supporting changes:
 
@@ -131,6 +133,38 @@ moderation action, edition or Refounding has been run against the live
 community; the interop identity now holds a moderator role, and using it on real
 members was deliberately not done.
 
+## CORD-07 Audio/Video
+
+Voice and video calls are host/service integration by design (`docs/CONCORD.md`
+§9): no scripted "join a call" operation was added, and none is planned. What
+was built is the deterministic protocol logic a broker or client needs, split
+the same way as every other layer — pure rules in `nscript-runtime::voice`,
+real cryptography in `nscript-host-crypto::voice`:
+
+- **Keying (§1).** `voice_key` is a `group_key`-derived signing pair (the SFU
+  room name and the token-grant signer); `voice_media_key` and each
+  publisher's `sender_key` are plain HKDF coordinates, not signing keys. All
+  three ride the Channel's own `(channel_secret, epoch)`, so a Rekey or
+  Refounding rolls them exactly as it rolls Chat.
+- **The broker request (§2).** `build_broker_auth`/`verify_broker_auth`
+  produce and check a kind-27235 grant: signature, room match, `u`/`method`
+  match, ±60s freshness, and replay. The base64 `Authorization: Concord …`
+  header is a thin encode/decode pair.
+- **Presence (§4).** `build_presence`/`open_presence` carry `joined`/`left`
+  over a new ephemeral wrap kind (21059, alongside the existing persistent
+  1059) at the Channel's own Chat address — the wrap infrastructure now takes
+  either kind rather than hardcoding 1059. `is_stale`, `latest_per_author` and
+  `render_participants` implement the 90-second staleness rule and the
+  identity-conflict rule (a contested SFU identity renders every claimant
+  unverified) exactly as specified.
+- **Rendezvous (§5).** `canonical_origin` (RFC 6454 serialization),
+  `tie_break_origin` and `choose_broker` implement the deterministic
+  broker-selection tie-break.
+- **Not built:** the SFU connection itself, the WebRTC media pipeline, actual
+  AES-256-GCM frame encryption under `sender_key`, and a running broker
+  service. These are the host/service half the plan calls for; nothing here
+  currently talks to LiveKit or any other SFU.
+
 ## Not done, and limits
 
 - **Not confirmed in an Armada client.** Everything above was verified by this
@@ -195,7 +229,8 @@ members was deliberately not done.
 - **`can_*` operations** return `Int` 0/1 and declare a `Storage` effect only
   because descriptors currently require an effect and the language has no
   boolean result; the RFC proposes fixing this.
-- **CORD-07** is not started.
+- **CORD-07** is now a tested protocol library (below); the SFU connection and
+  media pipeline themselves remain host/service integration.
 
 ## Reproducing the checks
 
@@ -224,4 +259,6 @@ messages as the identity in `keyfile`.
 3. Raise the 120-blob arithmetic with the Concord authors.
 4. Decide whether to run a live moderation test using a second throwaway
    identity as the target, and whether to drive a Refounding from a ban.
-5. Start CORD-07 as host/service integration, or defer it.
+5. Build the actual broker service and an SFU-facing client on top of
+   `nscript-host-crypto::voice` — the protocol logic is tested, but no process
+   has run it against a real LiveKit deployment.

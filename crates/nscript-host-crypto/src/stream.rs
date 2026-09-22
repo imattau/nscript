@@ -13,6 +13,10 @@ use crate::nip44::{self, Nip44Error};
 use crate::schnorr;
 
 pub const KIND_WRAP: u64 = 1059;
+/// The ephemeral wrap (CORD-01 §1.3): same shape as [`KIND_WRAP`], but in
+/// Nostr's ephemeral range so relays never store any layer of it. Typing
+/// indicators and voice presence (CORD-07 §4) use this kind.
+pub const KIND_WRAP_EPHEMERAL: u64 = 21059;
 pub const KIND_SEAL_ENCRYPTED: u64 = 20013;
 pub const KIND_SEAL_PLAINTEXT: u64 = 20014;
 
@@ -87,7 +91,7 @@ fn unhex64(text: &str) -> Option<[u8; 64]> {
 }
 
 /// A signed Nostr event as JSON.
-fn signed_event(
+pub(crate) fn signed_event(
     secret: &[u8; 32],
     kind: u64,
     tags: &Value,
@@ -105,7 +109,7 @@ fn signed_event(
 }
 
 /// Verifies an event's id and signature, returning its fields.
-fn verify_event(event: &Value) -> Result<(), StreamError> {
+pub(crate) fn verify_event(event: &Value) -> Result<(), StreamError> {
     let field = |name: &str| event.get(name).ok_or(StreamError::NotJson);
     let pubkey = field("pubkey")?.as_str().ok_or(StreamError::NotJson)?;
     let created_at = field("created_at")?.as_u64().ok_or(StreamError::NotJson)?;
@@ -159,17 +163,44 @@ pub fn build_wrap(
     outer_tags: &[Vec<String>],
     created_at: u64,
 ) -> Result<String, StreamError> {
+    build_wrap_as(KIND_WRAP, wrap_signer, read_key, seal_json, outer_tags, created_at)
+}
+
+/// Like [`build_wrap`], as [`KIND_WRAP_EPHEMERAL`]: a wrap relays never store.
+///
+/// # Errors
+///
+/// Returns [`StreamError`] for invalid keys or an oversize seal.
+pub fn build_ephemeral_wrap(
+    wrap_signer: &[u8; 32],
+    read_key: &[u8; 32],
+    seal_json: &str,
+    outer_tags: &[Vec<String>],
+    created_at: u64,
+) -> Result<String, StreamError> {
+    build_wrap_as(
+        KIND_WRAP_EPHEMERAL,
+        wrap_signer,
+        read_key,
+        seal_json,
+        outer_tags,
+        created_at,
+    )
+}
+
+fn build_wrap_as(
+    wrap_kind: u64,
+    wrap_signer: &[u8; 32],
+    read_key: &[u8; 32],
+    seal_json: &str,
+    outer_tags: &[Vec<String>],
+    created_at: u64,
+) -> Result<String, StreamError> {
     let content = nip44::encrypt(read_key, seal_json.as_bytes())?;
     let ephemeral = hex(&xonly_pubkey(&crate::random32()?)?);
     let mut tags = vec![json!(["p", ephemeral])];
     tags.extend(outer_tags.iter().map(|tag| json!(tag)));
-    let wrap = signed_event(
-        wrap_signer,
-        KIND_WRAP,
-        &Value::Array(tags),
-        &content,
-        created_at,
-    )?;
+    let wrap = signed_event(wrap_signer, wrap_kind, &Value::Array(tags), &content, created_at)?;
     Ok(wrap.to_string())
 }
 
@@ -221,6 +252,31 @@ pub fn build_stream_event_with_tags(
     build_wrap(wrap_signer, read_key, &seal, outer_tags, created_at)
 }
 
+/// Like [`build_stream_event_with_tags`], wrapped as [`KIND_WRAP_EPHEMERAL`]
+/// (a typing indicator or voice presence, CORD-01 §1.3).
+///
+/// # Errors
+///
+/// Returns [`StreamError`] for invalid keys or an oversize rumor.
+pub fn build_ephemeral_stream_event_with_tags(
+    wrap_signer: &[u8; 32],
+    read_key: &[u8; 32],
+    form: SealForm,
+    author_secret: &[u8; 32],
+    rumor: &Value,
+    outer_tags: &[Vec<String>],
+    created_at: u64,
+) -> Result<String, StreamError> {
+    let seal = build_seal(
+        read_key,
+        form,
+        author_secret,
+        &rumor.to_string(),
+        created_at,
+    )?;
+    build_ephemeral_wrap(wrap_signer, read_key, &seal, outer_tags, created_at)
+}
+
 /// Verifies a wrap (kind 1059, signed by the stream key) and decrypts it to
 /// the seal event JSON it carries.
 ///
@@ -232,8 +288,30 @@ pub fn open_wrap(
     read_key: &[u8; 32],
     wrap_json: &str,
 ) -> Result<String, StreamError> {
+    open_wrap_as(KIND_WRAP, stream_pubkey, read_key, wrap_json)
+}
+
+/// Like [`open_wrap`], for a [`KIND_WRAP_EPHEMERAL`] wrap.
+///
+/// # Errors
+///
+/// Returns [`StreamError`] describing the first failed check.
+pub fn open_ephemeral_wrap(
+    stream_pubkey: &[u8; 32],
+    read_key: &[u8; 32],
+    wrap_json: &str,
+) -> Result<String, StreamError> {
+    open_wrap_as(KIND_WRAP_EPHEMERAL, stream_pubkey, read_key, wrap_json)
+}
+
+fn open_wrap_as(
+    wrap_kind: u64,
+    stream_pubkey: &[u8; 32],
+    read_key: &[u8; 32],
+    wrap_json: &str,
+) -> Result<String, StreamError> {
     let wrap: Value = serde_json::from_str(wrap_json).map_err(|_| StreamError::NotJson)?;
-    if wrap.get("kind").and_then(Value::as_u64) != Some(KIND_WRAP) {
+    if wrap.get("kind").and_then(Value::as_u64) != Some(wrap_kind) {
         return Err(StreamError::NotAWrap);
     }
     if wrap.get("pubkey").and_then(Value::as_str) != Some(hex(stream_pubkey).as_str()) {
@@ -328,6 +406,24 @@ pub fn open_stream_event(
         read_key,
         expected,
         &open_wrap(stream_pubkey, read_key, wrap_json)?,
+    )
+}
+
+/// Like [`open_stream_event`], for a [`KIND_WRAP_EPHEMERAL`] wrap.
+///
+/// # Errors
+///
+/// Returns [`StreamError`] describing the first failed check.
+pub fn open_ephemeral_stream_event(
+    stream_pubkey: &[u8; 32],
+    read_key: &[u8; 32],
+    expected: SealForm,
+    wrap_json: &str,
+) -> Result<Opened, StreamError> {
+    open_seal(
+        read_key,
+        expected,
+        &open_ephemeral_wrap(stream_pubkey, read_key, wrap_json)?,
     )
 }
 

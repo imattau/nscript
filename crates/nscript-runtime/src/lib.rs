@@ -11,6 +11,7 @@ pub mod invite;
 pub mod moderation;
 pub mod rekey;
 pub mod stream;
+pub mod voice;
 pub mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};
