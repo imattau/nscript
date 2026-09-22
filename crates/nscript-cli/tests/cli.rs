@@ -767,3 +767,45 @@ fn run_evaluates_record_guard_and_literal_patterns_from_source() {
         "only the spam was kicked: {stdout}"
     );
 }
+
+#[test]
+fn a_declared_key_is_an_opaque_handle_the_host_provisions() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("examples/concord-key-bot.ns"))
+        .args(["--as", "bot"])
+        .args([
+            "--event",
+            r#"{"event_type":"StreamMessage","content":"ping"}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The startup call and the handler both received the key, and only its
+    // length is ever printed: the bytes are not visible to the script or log.
+    assert!(stdout.contains("operation 0: StreamHandle"), "{stdout}");
+    assert!(
+        stdout.contains("concord01.publish_message(DerivedKey(DerivedKey { length: 32 })"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_key_must_be_declared_from_a_host_label() {
+    let dir = std::env::temp_dir().join("nscript-key-decl");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("bad.ns");
+    std::fs::write(&path, "key k = 1\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("check")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("E1101"));
+}

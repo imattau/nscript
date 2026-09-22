@@ -9,6 +9,8 @@ permissions {
     log
 }
 
+// The host holds the key; the script only names it.
+key channel_key = host("general")
 let chat = concord01.stream(channel_key)
 
 stream messages = select StreamMessage from chat

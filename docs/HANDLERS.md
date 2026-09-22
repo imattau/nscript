@@ -221,3 +221,18 @@ An unsupported construct is a stable `OperationUnavailable` or
   `run_handler_cycle_with_event_body`) is a separate, text-only path kept for its
   existing callers. It cannot call a module operation. New code should use
   `run_handlers_for_event`.
+
+## Host-held keys
+
+`key name = host("label")` binds a key the host holds to a name, typed
+`DerivedKey`. The script gets an opaque handle: it can pass it to an operation
+(`concord01.stream(room)`, `say "hi" in room`) but cannot read, print or
+convert the bytes. The label is only a request; the host decides whether it
+holds such a key. `nscript run` provisions a deterministic, non-secret stand-in
+so a script can be exercised; `Nip44OperationHost::with_key` provisions a real
+one, and an unprovisioned label fails with `OperationUnavailable`.
+
+The declaration is checked at parse time (E1101 unless it is `host("<text>")`).
+Both startup calls and handler bodies resolve the name. A top-level `let` is
+not visible inside a handler, so a handler names the key rather than a value
+derived from it. See `examples/concord-key-bot.ns`.

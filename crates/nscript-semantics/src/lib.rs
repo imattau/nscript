@@ -80,6 +80,8 @@ pub struct CheckedProgram {
     pub operation_calls: Vec<CheckedOperationCall>,
     pub schedules: Vec<CheckedSchedule>,
     pub handlers: Vec<CheckedHandler>,
+    /// `key` declarations: name to the label the host provisions it under.
+    pub keys: BTreeMap<String, String>,
 }
 
 const HARDENED_FORBIDDEN: &[&str] = &[
@@ -336,10 +338,37 @@ fn program_locals(program: &Program) -> BTreeSet<String> {
             Item::Let(declaration) => Some(declaration.name.value.clone()),
             Item::Function(function) => Some(function.name.value.clone()),
             Item::Stream { name, .. } => Some(name.value.clone()),
-            Item::Signer(declaration) | Item::Relay(declaration) | Item::RelaySet(declaration) => {
+            Item::Signer(declaration)
+            | Item::Relay(declaration)
+            | Item::RelaySet(declaration)
+            | Item::Key(declaration) => {
                 Some(declaration.name.value.clone())
             }
             _ => None,
+        })
+        .collect()
+}
+
+/// `key name = host("label")` declarations: name to label.
+fn declared_keys(program: &Program) -> BTreeMap<String, String> {
+    program
+        .ast
+        .items
+        .iter()
+        .filter_map(|item| {
+            let Item::Key(declaration) = item else {
+                return None;
+            };
+            let ExprKind::Call { arguments, .. } = &declaration.value.value else {
+                return None;
+            };
+            match arguments.as_slice() {
+                [Expr {
+                    value: ExprKind::Text(label),
+                    ..
+                }] => Some((declaration.name.value.clone(), label.clone())),
+                _ => None,
+            }
         })
         .collect()
 }
@@ -786,6 +815,7 @@ pub fn check(program: &Program) -> (Option<CheckedProgram>, Vec<Diagnostic>) {
         operation_calls: checker.operation_calls,
         schedules: checker.schedules,
         handlers: checker.handlers,
+        keys: declared_keys(program),
     });
     (result, checker.diagnostics)
 }

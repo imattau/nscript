@@ -222,6 +222,14 @@ struct HandlerChecker<'a> {
 }
 
 impl HandlerChecker<'_> {
+    fn declares_key(&self, name: &str) -> bool {
+        self.program
+            .ast
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Key(key) if key.name.value == name))
+    }
+
     fn error(&mut self, code: &'static str, span: Span, message: String) {
         self.diagnostics.push(Diagnostic {
             code,
@@ -379,7 +387,8 @@ impl HandlerChecker<'_> {
                 .get(name)
                 .cloned()
                 // `me` is the program's principal.
-                .or_else(|| (name == "me").then(|| "PubKey".to_owned())),
+                .or_else(|| (name == "me").then(|| "PubKey".to_owned()))
+                .or_else(|| self.declares_key(name).then(|| "DerivedKey".to_owned())),
             ExprKind::Member { value, name } if matches!(&value.value, ExprKind::Identifier(base) if base == "event") => {
                 self.fields.get(&name.value).cloned()
             }

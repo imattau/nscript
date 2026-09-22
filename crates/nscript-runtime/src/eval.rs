@@ -55,6 +55,18 @@ pub trait EvalHost {
     fn declared_return(&self, _module: &str, _operation: &str) -> Option<String> {
         None
     }
+
+    /// The key the host holds under `label`, for a `key` declaration.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure when no such key is held.
+    fn host_key(&mut self, label: &str) -> Result<OperationValue, RuntimeError> {
+        Err(RuntimeError::OperationUnavailable {
+            module: "host".to_owned(),
+            operation: format!("key {label}"),
+        })
+    }
 }
 
 /// A run-time value.
@@ -253,6 +265,8 @@ pub struct Interpreter<'a, H: EvalHost> {
     host: &'a mut H,
     functions: BTreeMap<&'a str, &'a FunctionDeclaration>,
     modules: BTreeSet<&'a str>,
+    /// `key` declarations: name to the host label.
+    keys: BTreeMap<&'a str, &'a str>,
     scopes: Vec<BTreeMap<String, Value>>,
     limits: EvalLimits,
     steps: u64,
@@ -290,10 +304,29 @@ pub fn run_handler<'a, H: EvalHost>(
         .iter()
         .map(|item| item.path.as_str())
         .collect();
+    let keys = program
+        .ast
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Key(declaration) => match &declaration.value.value {
+                ExprKind::Call { arguments, .. } => match arguments.as_slice() {
+                    [Expr {
+                        value: ExprKind::Text(label),
+                        ..
+                    }] => Some((declaration.name.value.as_str(), label.as_str())),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
     let mut interpreter = Interpreter {
         host,
         functions,
         modules,
+        keys,
         scopes: vec![BTreeMap::from([("event".to_owned(), event)])],
         limits,
         steps: 0,
@@ -494,9 +527,16 @@ impl<H: EvalHost> Interpreter<'_, H> {
         }
     }
 
-    fn identifier(&self, name: &str) -> Result<Value, Stop> {
+    fn identifier(&mut self, name: &str) -> Result<Value, Stop> {
         if let Some(value) = self.lookup(name) {
             return Ok(value.clone());
+        }
+        if let Some(label) = self.keys.get(name).copied() {
+            return self
+                .host
+                .host_key(label)
+                .map(Value::Op)
+                .map_err(Stop::Error);
         }
         if name == "me" {
             return self
@@ -924,6 +964,12 @@ where
     fn declared_return(&self, module: &str, operation: &str) -> Option<String> {
         self.operations.declared_return(module, operation)
     }
+
+    fn host_key(&mut self, label: &str) -> Result<OperationValue, RuntimeError> {
+        self.operations
+            .host_key(label)
+            .map(OperationValue::DerivedKey)
+    }
 }
 
 /// Builds a [`crate::SignedEvent`] from JSON, for delivering a synthetic event
@@ -1046,6 +1092,10 @@ impl SimulatedOperations {
 }
 
 impl OperationHost for SimulatedOperations {
+    fn host_key(&mut self, label: &str) -> Result<crate::DerivedKey, RuntimeError> {
+        self.fake.host_key(label)
+    }
+
     fn call(
         &mut self,
         invocation: crate::InvocationId,
@@ -1100,6 +1150,10 @@ pub struct WithReturns<'a, O: OperationHost> {
 }
 
 impl<O: OperationHost> OperationHost for WithReturns<'_, O> {
+    fn host_key(&mut self, label: &str) -> Result<crate::DerivedKey, RuntimeError> {
+        self.inner.host_key(label)
+    }
+
     fn call(
         &mut self,
         invocation: crate::InvocationId,

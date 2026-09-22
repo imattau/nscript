@@ -1313,6 +1313,21 @@ pub trait PureFunctionHost {
 }
 
 pub trait OperationHost {
+    /// The key the host holds under `label`, for a script's `key name =
+    /// host("label")`. The script receives an opaque handle, never the bytes as
+    /// text. The default provisions nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::OperationUnavailable`] when no such key is held.
+    fn host_key(&mut self, label: &str) -> Result<DerivedKey, RuntimeError> {
+        let _ = label;
+        Err(RuntimeError::OperationUnavailable {
+            module: "host".to_owned(),
+            operation: "key".to_owned(),
+        })
+    }
+
     /// Invoke a declared NIP module operation with typed values.
     ///
     /// # Errors
@@ -2827,8 +2842,14 @@ where
                 let arguments = call
                     .arguments
                     .iter()
-                    .map(checked_to_operation)
-                    .collect::<Vec<_>>();
+                    .map(|argument| match argument {
+                        CheckedArgument::PubKey(name) if checked.keys.contains_key(name) => {
+                            host.host_key(&checked.keys[name])
+                                .map(OperationValue::DerivedKey)
+                        }
+                        other => Ok(checked_to_operation(other)),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
                 self.invoke_authorized_operation(
                     policy,
                     host,
@@ -3933,6 +3954,15 @@ fn convert_bits(data: &[u8], from: u8, to: u8, pad: bool) -> Option<Vec<u8>> {
 }
 
 impl OperationHost for FakeOperationHost {
+    /// A deterministic stand-in: the same label always yields the same key, and
+    /// it is not secret. For simulation and tests only.
+    fn host_key(&mut self, label: &str) -> Result<DerivedKey, RuntimeError> {
+        let mut digest = Sha256::new();
+        digest.update(b"nscript/simulated-host-key/");
+        digest.update(label.as_bytes());
+        DerivedKey::new(digest.finalize().to_vec())
+    }
+
     #[allow(clippy::too_many_lines)]
     fn call(
         &mut self,

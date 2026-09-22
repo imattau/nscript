@@ -78,6 +78,7 @@ impl Parser<'_> {
                 Some("signer") => self.parse_capability().map(Item::Signer),
                 Some("relay") => self.parse_capability().map(Item::Relay),
                 Some("relayset") => self.parse_capability().map(Item::RelaySet),
+                Some("key") => self.parse_key(),
                 Some("store") => self.parse_store().map(Item::Store),
                 Some("permissions") => self.parse_permissions(),
                 Some("stream") => self.parse_stream(),
@@ -303,6 +304,31 @@ impl Parser<'_> {
             span: start.join(value.span),
             value,
         })
+    }
+
+    /// `key name = host("label")`. The label names a key the host provisions;
+    /// the script only ever holds an opaque handle to it.
+    fn parse_key(&mut self) -> Option<Item> {
+        let declaration = self.parse_capability()?;
+        let ExprKind::Call { callee, arguments } = &declaration.value.value else {
+            self.error(
+                declaration.value.span,
+                "E1101",
+                "a key is declared `key name = host(\"label\")`",
+            );
+            return None;
+        };
+        let is_host = matches!(&callee.value, ExprKind::Identifier(name) if name == "host");
+        let labelled = matches!(arguments.as_slice(), [argument] if matches!(argument.value, ExprKind::Text(_)));
+        if !is_host || !labelled {
+            self.error(
+                declaration.value.span,
+                "E1101",
+                "a key is declared `key name = host(\"label\")`",
+            );
+            return None;
+        }
+        Some(Item::Key(declaration))
     }
 
     fn parse_store(&mut self) -> Option<StoreDeclaration> {

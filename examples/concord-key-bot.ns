@@ -1,0 +1,23 @@
+// A bot that answers "ping" in a channel whose key the host holds.
+// Run: nscript run examples/concord-key-bot.ns --as bot --event '{"event_type":"StreamMessage","content":"ping"}'
+use concord01
+use concord04
+
+permissions {
+    concord_read
+    concord_kick
+    concord_publish
+    read StreamMessage from chat
+    log
+}
+
+key channel_key = host("general")
+let chat = concord01.stream(channel_key)
+
+stream messages = select StreamMessage from chat
+
+on messages {
+    if event.content == "ping" {
+        say "pong" in channel_key
+    }
+}

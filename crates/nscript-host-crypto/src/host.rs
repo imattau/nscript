@@ -87,6 +87,8 @@ pub struct Nip44OperationHost {
     /// Fixed clock for tests; the system clock when `None`.
     pub fixed_time: Option<u64>,
     publisher: Option<(PublishTarget, Box<dyn RelayHost>)>,
+    /// Keys a script may bind with `key name = host("label")`.
+    keys: std::collections::BTreeMap<String, [u8; 32]>,
 }
 
 /// Where `publish_message` sends: one Channel of one Community.
@@ -117,7 +119,16 @@ impl Nip44OperationHost {
             author_secret,
             fixed_time: None,
             publisher: None,
+            keys: std::collections::BTreeMap::new(),
         }
+    }
+
+    /// Provisions the key a script's `key name = host("label")` binds. The
+    /// script receives an opaque handle; the bytes never reach it as text.
+    #[must_use]
+    pub fn with_key(mut self, label: &str, key: [u8; 32]) -> Self {
+        self.keys.insert(label.to_owned(), key);
+        self
     }
 
     /// Enables `publish_message`, sending to `target` through `relays`. The
@@ -295,6 +306,17 @@ impl Nip44OperationHost {
 }
 
 impl OperationHost for Nip44OperationHost {
+    fn host_key(&mut self, label: &str) -> Result<DerivedKey, RuntimeError> {
+        let key = self
+            .keys
+            .get(label)
+            .ok_or_else(|| RuntimeError::OperationUnavailable {
+                module: "host".to_owned(),
+                operation: format!("key {label}"),
+            })?;
+        DerivedKey::new(key.to_vec())
+    }
+
     fn call(
         &mut self,
         _invocation: InvocationId,

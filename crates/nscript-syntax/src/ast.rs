@@ -30,6 +30,8 @@ pub enum Item {
     Signer(CapabilityDeclaration),
     Relay(CapabilityDeclaration),
     RelaySet(CapabilityDeclaration),
+    /// `key name = host("label")`: a key the host holds, bound to a name.
+    Key(CapabilityDeclaration),
     Store(StoreDeclaration),
     Permissions(Spanned<Vec<Permission>>),
     Stream {

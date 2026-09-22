@@ -887,4 +887,21 @@ publish Note { content: "hello" }
             matches!(&declaration.value.value, ExprKind::Binary { operator, .. } if operator == "+")
         );
     }
+
+    #[test]
+    fn a_key_declaration_names_a_host_label() {
+        let (program, diagnostics) = parse_program("key room = host(\"general\")\n");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(matches!(&program.ast.items[0], Item::Key(k) if k.name.value == "room"));
+        for bad in [
+            "key room = 1\n",
+            "key room = host(1)\n",
+            "key room = other(\"x\")\n",
+        ] {
+            assert!(
+                parse_program(bad).1.iter().any(|d| d.code == "E1101"),
+                "{bad}"
+            );
+        }
+    }
 }
