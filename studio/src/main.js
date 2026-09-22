@@ -45,7 +45,7 @@ async function main() {
       "EventId", "Signature", "RelayUrl", "Timestamp", "Kind", "Nprofile",
       "Nevent", "Naddr", "Nsec", "Signer", "SecretKey", "Tag",
     ],
-    operators: "+-*/%=<>!",
+    operators: /[+\-*/%=<>!]/,
     tokenizer: {
       root: [
         [/[a-zA-Z_]\w*/, {
@@ -59,7 +59,7 @@ async function main() {
         [/"/, { token: "string", next: "@string" }],
         [/\/\/.*$/, "comment"],
         [/[{}()[\];,]/, "delimiter"],
-        [/@operators/, "operator"],
+        ["@operators", "operator"],
       ],
       string: [
         [/[^"]+/, "string"],
