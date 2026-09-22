@@ -1,0 +1,11 @@
+// NIP-36 sensitive content: a note carrying a content-warning reason.
+use nip36
+
+permissions {
+    content_warning
+}
+
+let result = nip36.publish_note_with_warning(NoteWithWarning {
+    content: "Graphic description of an accident";
+    reason: "graphic content";
+})

@@ -471,3 +471,78 @@ rather than intents — `nip19` (bech32 encode/decode, called as ordinary
 count query), `nip47` (wallet payment, lower-level than `zap`), `nip77`
 (relay sync) and `nip86` (relay admin). These stay `module.operation(...)`
 calls; a keyword would not make them more readable.
+
+## Four more NIP modules, deliberately unsugared
+
+`nip88` (polls), `nip92` (media attachment metadata, "imeta"), `nip36`
+(sensitive content) and `nip40` (expiration) are typed modules but, unlike
+everything above, none of them own a distinct Nostr event kind the way
+`nip23`'s article or `nip53`'s live event does:
+
+- NIP-88 defines two real kinds (1068 poll, 1018 response), so `nip88` gets
+  two operations, `publish_poll` and `respond_to_poll`, each with its own
+  permission (`poll`, `poll_response`).
+- NIP-92, NIP-36 and NIP-40 are each a *tag* attachable to any event kind
+  (`imeta`, `content-warning`, `expiration`), not a kind of their own. The
+  language's core `publish <Event> { ... }` path does not thread arbitrary
+  tags today (`nip01`'s `Note.tags` field is read-side only; nothing wires
+  a written tag list onto a published event yet), so each of these three is
+  scoped honestly to the one case the language already models well: a text
+  note carrying that tag. `nip92.publish_note_with_media`,
+  `nip36.publish_note_with_warning` and `nip40.publish_expiring_note` each
+  take a `content: Text` plus the tag's own fields, and publish a plain
+  note. They do not (and cannot yet) attach these tags to an article, a
+  poll, or any other event kind — that needs a general tag-carrying publish
+  path, which is unbuilt.
+
+```nostr
+use nip88
+
+permissions {
+    poll
+}
+
+let result = nip88.publish_poll(Poll {
+    question: "Best relay?";
+    options: [
+        PollOption { id: "a"; label: "relay.damus.io" },
+        PollOption { id: "b"; label: "nos.lol" },
+    ];
+    multiple_choice: false;
+    ends_at: 1700000000;
+})
+```
+
+```nostr
+use nip92
+
+permissions {
+    media
+}
+
+nip92.publish_note_with_media(NoteWithMedia {
+    content: "Check out this photo";
+    media: [
+        MediaAttachment {
+            url: "https://cdn.example/photo.jpg";
+            mime: "image/jpeg";
+            hash: "sha256:abc123";
+        },
+    ];
+})
+```
+
+None of the four get Layer 3 keywords: a poll's shape (a list of option
+records, a bool, a timestamp) doesn't compress into a short intent phrase
+the way `kick <member>` does, and the other three are exactly the
+`module.operation(...)` case the rest of this document already treats as
+not worth sugaring.
+
+Building this also closed a real gap: a plain `false`/`true` literal used as
+a record field or list element was silently dropped before reaching a
+module operation (`ExprKind::Bool` had no `CheckedArgument` case), so
+`multiple_choice: false` in a poll vanished from the checked arguments and
+the operation failed at run time with a shape error, even though `check`
+passed clean. `CheckedArgument::Bool` now carries it through, the same way
+`CheckedArgument::List` was added for `follow`/`relays` earlier in this
+document.

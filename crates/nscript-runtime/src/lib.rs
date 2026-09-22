@@ -1234,6 +1234,51 @@ pub struct SiteDeployment {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PollOption {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Poll {
+    pub question: String,
+    pub options: Vec<PollOption>,
+    pub multiple_choice: bool,
+    pub ends_at: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PollResponse {
+    pub poll: String,
+    pub option: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaAttachment {
+    pub url: String,
+    pub mime: String,
+    pub hash: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NoteWithMedia {
+    pub content: String,
+    pub media: Vec<MediaAttachment>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NoteWithWarning {
+    pub content: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpiringNote {
+    pub content: String,
+    pub expires_at: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     Integer(i64),
@@ -1295,6 +1340,11 @@ pub enum OperationValue {
     CalendarEvent(CalendarEvent),
     RelayStatus(RelayStatus),
     SiteDeployment(SiteDeployment),
+    Poll(Poll),
+    PollResponse(PollResponse),
+    NoteWithMedia(NoteWithMedia),
+    NoteWithWarning(NoteWithWarning),
+    ExpiringNote(ExpiringNote),
     PublishReport(PublishReport),
 }
 
@@ -3049,6 +3099,7 @@ fn checked_to_operation(argument: &CheckedArgument) -> OperationValue {
     match argument {
         CheckedArgument::Text(value) => OperationValue::Text(value.clone()),
         CheckedArgument::Integer(value) => OperationValue::Integer(*value),
+        CheckedArgument::Bool(value) => OperationValue::Bool(*value),
         CheckedArgument::PubKey(value) => OperationValue::PubKey(value.clone()),
         CheckedArgument::Record { name, fields } => OperationValue::Record {
             name: name.clone(),
@@ -4879,6 +4930,113 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip88", "publish_poll") => {
+                let [OperationValue::Poll(poll)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if poll.question.is_empty()
+                    || poll.options.len() < 2
+                    || poll
+                        .options
+                        .iter()
+                        .any(|option| option.id.is_empty() || option.label.is_empty())
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://poll".to_owned(),
+                        accepted: true,
+                        detail: "poll lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip88", "respond_to_poll") => {
+                let [OperationValue::PollResponse(response)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if response.poll.is_empty() || response.option.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://poll-response".to_owned(),
+                        accepted: true,
+                        detail: "poll response lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip92", "publish_note_with_media") => {
+                let [OperationValue::NoteWithMedia(note)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if note.content.is_empty()
+                    || note.media.is_empty()
+                    || note
+                        .media
+                        .iter()
+                        .any(|item| item.url.is_empty() || item.mime.is_empty())
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://note-with-media".to_owned(),
+                        accepted: true,
+                        detail: "imeta note lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip36", "publish_note_with_warning") => {
+                let [OperationValue::NoteWithWarning(note)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if note.content.is_empty() || note.reason.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://content-warning".to_owned(),
+                        accepted: true,
+                        detail: "sensitive-content note lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip40", "publish_expiring_note") => {
+                let [OperationValue::ExpiringNote(note)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if note.content.is_empty() || note.expires_at <= 0 {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://expiring-note".to_owned(),
+                        accepted: true,
+                        detail: "expiring note lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip25", "publish_reaction") => {
                 let [OperationValue::Reaction(_reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -5250,6 +5408,49 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             (Some(read), Some(write)) => OperationValue::RelayList(RelayList { read, write }),
             _ => value.clone(),
         },
+        "Poll" => match (
+            text("question"),
+            record_poll_options(fields, "options"),
+            record_bool(fields, "multiple_choice"),
+            integer("ends_at"),
+        ) {
+            (Some(question), Some(options), Some(multiple_choice), Some(ends_at)) => {
+                OperationValue::Poll(Poll {
+                    question,
+                    options,
+                    multiple_choice,
+                    ends_at,
+                })
+            }
+            _ => value.clone(),
+        },
+        "PollResponse" => match (text("poll"), text("option")) {
+            (Some(poll), Some(option)) => {
+                OperationValue::PollResponse(PollResponse { poll, option })
+            }
+            _ => value.clone(),
+        },
+        "NoteWithMedia" => match (text("content"), record_media(fields, "media")) {
+            (Some(content), Some(media)) => {
+                OperationValue::NoteWithMedia(NoteWithMedia { content, media })
+            }
+            _ => value.clone(),
+        },
+        "NoteWithWarning" => match (text("content"), text("reason")) {
+            (Some(content), Some(reason)) => {
+                OperationValue::NoteWithWarning(NoteWithWarning { content, reason })
+            }
+            _ => value.clone(),
+        },
+        "ExpiringNote" => match (text("content"), integer("expires_at")) {
+            (Some(content), Some(expires_at)) => {
+                OperationValue::ExpiringNote(ExpiringNote {
+                    content,
+                    expires_at,
+                })
+            }
+            _ => value.clone(),
+        },
         _ => value.clone(),
     }
 }
@@ -5276,6 +5477,72 @@ fn record_pubkey(fields: &[(String, OperationValue)], key: &str) -> Option<Strin
     fields.iter().find_map(|(field, value)| {
         (field == key).then_some(match value {
             OperationValue::PubKey(value) => Some(value.clone()),
+            _ => None,
+        })?
+    })
+}
+
+fn record_bool(fields: &[(String, OperationValue)], key: &str) -> Option<bool> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::Bool(value) => Some(*value),
+            _ => None,
+        })?
+    })
+}
+
+/// A `List<PollOption>` field: each element is still a generic, un-normalized
+/// `OperationValue::Record` (only the top-level argument passes through
+/// `normalize_record`), so this reads its `id`/`label` fields directly.
+fn record_poll_options(
+    fields: &[(String, OperationValue)],
+    key: &str,
+) -> Option<Vec<PollOption>> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::List(items) => items
+                .iter()
+                .map(|item| match item {
+                    OperationValue::Record { name, fields } if name == "PollOption" => {
+                        match (record_text(fields, "id"), record_text(fields, "label")) {
+                            (Some(id), Some(label)) => Some(PollOption { id, label }),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        })?
+    })
+}
+
+/// A `List<MediaAttachment>` field; see [`record_poll_options`] for why each
+/// element is read directly rather than through `normalize_record`.
+fn record_media(
+    fields: &[(String, OperationValue)],
+    key: &str,
+) -> Option<Vec<MediaAttachment>> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::List(items) => items
+                .iter()
+                .map(|item| match item {
+                    OperationValue::Record { name, fields } if name == "MediaAttachment" => {
+                        match (
+                            record_text(fields, "url"),
+                            record_text(fields, "mime"),
+                            record_text(fields, "hash"),
+                        ) {
+                            (Some(url), Some(mime), Some(hash)) => {
+                                Some(MediaAttachment { url, mime, hash })
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect(),
             _ => None,
         })?
     })
@@ -5437,6 +5704,91 @@ mod tests {
             fields: vec![("people".to_owned(), OperationValue::Text("x".to_owned()))],
         };
         assert_eq!(normalize_record(&malformed), malformed);
+    }
+
+    #[test]
+    fn a_list_of_records_normalizes_a_poll_or_a_note_with_media() {
+        let option = |id: &str, label: &str| OperationValue::Record {
+            name: "PollOption".to_owned(),
+            fields: vec![
+                ("id".to_owned(), OperationValue::Text(id.to_owned())),
+                ("label".to_owned(), OperationValue::Text(label.to_owned())),
+            ],
+        };
+        let poll = OperationValue::Record {
+            name: "Poll".to_owned(),
+            fields: vec![
+                (
+                    "question".to_owned(),
+                    OperationValue::Text("Best relay?".to_owned()),
+                ),
+                (
+                    "options".to_owned(),
+                    OperationValue::List(vec![option("a", "relay.damus.io"), option("b", "nos.lol")]),
+                ),
+                ("multiple_choice".to_owned(), OperationValue::Bool(false)),
+                ("ends_at".to_owned(), OperationValue::Integer(1_700_000_000)),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&poll),
+            OperationValue::Poll(Poll {
+                question: "Best relay?".to_owned(),
+                options: vec![
+                    PollOption {
+                        id: "a".to_owned(),
+                        label: "relay.damus.io".to_owned(),
+                    },
+                    PollOption {
+                        id: "b".to_owned(),
+                        label: "nos.lol".to_owned(),
+                    },
+                ],
+                multiple_choice: false,
+                ends_at: 1_700_000_000,
+            })
+        );
+
+        let media = OperationValue::Record {
+            name: "NoteWithMedia".to_owned(),
+            fields: vec![
+                (
+                    "content".to_owned(),
+                    OperationValue::Text("look".to_owned()),
+                ),
+                (
+                    "media".to_owned(),
+                    OperationValue::List(vec![OperationValue::Record {
+                        name: "MediaAttachment".to_owned(),
+                        fields: vec![
+                            (
+                                "url".to_owned(),
+                                OperationValue::Text("https://cdn.example/a.jpg".to_owned()),
+                            ),
+                            (
+                                "mime".to_owned(),
+                                OperationValue::Text("image/jpeg".to_owned()),
+                            ),
+                            (
+                                "hash".to_owned(),
+                                OperationValue::Text("sha256:abc".to_owned()),
+                            ),
+                        ],
+                    }]),
+                ),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&media),
+            OperationValue::NoteWithMedia(NoteWithMedia {
+                content: "look".to_owned(),
+                media: vec![MediaAttachment {
+                    url: "https://cdn.example/a.jpg".to_owned(),
+                    mime: "image/jpeg".to_owned(),
+                    hash: "sha256:abc".to_owned(),
+                }],
+            })
+        );
     }
 
     // RFC 0002 §3: fold queries as pure functions. Every `OperationHost`

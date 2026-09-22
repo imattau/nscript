@@ -1,0 +1,17 @@
+// NIP-92 media attachments (imeta): a note carrying typed media metadata.
+use nip92
+
+permissions {
+    media
+}
+
+let result = nip92.publish_note_with_media(NoteWithMedia {
+    content: "Check out this photo";
+    media: [
+        MediaAttachment {
+            url: "https://cdn.example/photo.jpg";
+            mime: "image/jpeg";
+            hash: "sha256:abc123";
+        },
+    ];
+})

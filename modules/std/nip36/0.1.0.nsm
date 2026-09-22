@@ -1,0 +1,14 @@
+module nip36 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/36.md"
+
+record NoteWithWarning {
+    field content: Text
+    field reason: Text
+}
+
+error SensitiveContentError {
+    field message: Text
+}
+
+operation publish_note_with_warning(note: NoteWithWarning) -> Result<PublishReport,SensitiveContentError> effect Sign,Relay permission content_warning

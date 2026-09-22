@@ -1,0 +1,23 @@
+// NIP-88 polls: publishing a poll and recording a response are separate,
+// separately permissioned operations.
+use nip88
+
+permissions {
+    poll
+    poll_response
+}
+
+let result = nip88.publish_poll(Poll {
+    question: "Best relay?";
+    options: [
+        PollOption { id: "a"; label: "relay.damus.io" },
+        PollOption { id: "b"; label: "nos.lol" },
+    ];
+    multiple_choice: false;
+    ends_at: 1700000000;
+})
+
+let vote = nip88.respond_to_poll(PollResponse {
+    poll: "0000000000000000000000000000000000000000000000000000000000000001";
+    option: "a";
+})

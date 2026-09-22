@@ -1,0 +1,11 @@
+// NIP-40 expiration: a note carrying a relay-hint expiration timestamp.
+use nip40
+
+permissions {
+    expiration
+}
+
+let result = nip40.publish_expiring_note(ExpiringNote {
+    content: "This note is temporary";
+    expires_at: 1700003600;
+})

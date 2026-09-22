@@ -34,6 +34,7 @@ pub struct CheckedPublication {
 pub enum CheckedArgument {
     Text(String),
     Integer(i64),
+    Bool(bool),
     PubKey(String),
     Record {
         name: String,
@@ -1740,6 +1741,7 @@ fn checked_argument(expression: &Expr) -> Option<CheckedArgument> {
     match &expression.value {
         ExprKind::Text(value) => Some(CheckedArgument::Text(value.clone())),
         ExprKind::Integer(value) => Some(CheckedArgument::Integer(*value)),
+        ExprKind::Bool(value) => Some(CheckedArgument::Bool(*value)),
         ExprKind::Identifier(value) => Some(CheckedArgument::PubKey(value.clone())),
         ExprKind::Construct { name, fields } => Some(CheckedArgument::Record {
             name: name.value.clone(),
