@@ -1,0 +1,18 @@
+module nipa3 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/A3.md"
+
+record PaymentTarget {
+    field payment_type: Text
+    field address: Text
+}
+
+record PaymentTargets {
+    field targets: List<PaymentTarget>
+}
+
+error PaymentTargetError {
+    field message: Text
+}
+
+operation publish_payment_targets(targets: PaymentTargets) -> Result<PublishReport,PaymentTargetError> effect Sign,Relay permission payment_targets

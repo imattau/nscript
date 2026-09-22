@@ -1552,6 +1552,36 @@ pub struct BridgedNote {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileServerPreferences {
+    pub servers: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MintAnnouncement {
+    pub mint_pubkey: String,
+    pub url: String,
+    pub nuts: String,
+    pub network: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MintRecommendation {
+    pub mint: String,
+    pub review: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentTarget {
+    pub payment_type: String,
+    pub address: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentTargets {
+    pub targets: Vec<PaymentTarget>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct P2POrder {
     pub identifier: String,
     pub order_type: String,
@@ -1678,6 +1708,10 @@ pub enum OperationValue {
     // plus two `Int`s (160 bytes) would make this the largest
     // `OperationValue` variant.
     P2POrder(Box<P2POrder>),
+    FileServerPreferences(FileServerPreferences),
+    MintAnnouncement(MintAnnouncement),
+    MintRecommendation(MintRecommendation),
+    PaymentTargets(PaymentTargets),
     PublishReport(PublishReport),
 }
 
@@ -3371,6 +3405,7 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
     match (module, function) {
         ("concord05", "invite_is_valid") => Some(invite_is_valid as PureFunction),
         ("concord06", "commitment_matches") => Some(commitment_matches as PureFunction),
+        ("nip05", "identifier_matches") => Some(nip05_identifier_matches as PureFunction),
         _ => None,
     }
 }
@@ -3402,6 +3437,35 @@ fn invite_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, Runti
         Err(_) => false,
     };
     Ok(OperationValue::Bool(valid))
+}
+
+/// NIP-05: whether a fetched `/.well-known/nostr.json` response's `names`
+/// mapping for `local_part` matches `pubkey`. This is the verification the
+/// spec actually asks for — the DNS fetch itself is ordinary host I/O
+/// (`fetch text from ...`), not something this function does; it only
+/// compares data the script already holds. Hex pubkeys are compared
+/// case-insensitively, matching how relays and clients already normalize
+/// them elsewhere in this crate.
+fn nip05_identifier_matches(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(local_part),
+        OperationValue::Text(response_json),
+        OperationValue::PubKey(pubkey),
+    ] = arguments
+    else {
+        return Err(invalid("identifier_matches"));
+    };
+    let matches = serde_json::from_str::<serde_json::Value>(response_json)
+        .ok()
+        .and_then(|response| {
+            response
+                .get("names")?
+                .get(local_part)?
+                .as_str()
+                .map(str::to_owned)
+        })
+        .is_some_and(|found| found.eq_ignore_ascii_case(pubkey));
+    Ok(OperationValue::Bool(matches))
 }
 
 /// CORD-06 §4 continuity: whether a key the caller already holds, compared at
@@ -6129,6 +6193,89 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip96", "publish_file_server_preferences") => {
+                let [OperationValue::FileServerPreferences(preferences)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if preferences.servers.is_empty()
+                    || preferences.servers.iter().any(String::is_empty)
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://file-server-preferences".to_owned(),
+                        accepted: true,
+                        detail: "file server preferences lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip87", "publish_mint_announcement") => {
+                let [OperationValue::MintAnnouncement(announcement)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if announcement.mint_pubkey.is_empty() || announcement.url.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://mint-announcement".to_owned(),
+                        accepted: true,
+                        detail: "mint announcement lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip87", "publish_mint_recommendation") => {
+                let [OperationValue::MintRecommendation(recommendation)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if recommendation.mint.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://mint-recommendation".to_owned(),
+                        accepted: true,
+                        detail: "mint recommendation lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipa3", "publish_payment_targets") => {
+                let [OperationValue::PaymentTargets(targets)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if targets.targets.is_empty()
+                    || targets
+                        .targets
+                        .iter()
+                        .any(|target| target.payment_type.is_empty() || target.address.is_empty())
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://payment-targets".to_owned(),
+                        accepted: true,
+                        detail: "payment targets lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip25", "publish_reaction") => {
                 let [OperationValue::Reaction(_reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -6976,6 +7123,38 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             })),
             _ => value.clone(),
         },
+        "FileServerPreferences" => match record_strings(fields, "servers") {
+            Some(servers) => {
+                OperationValue::FileServerPreferences(FileServerPreferences { servers })
+            }
+            None => value.clone(),
+        },
+        "MintAnnouncement" => match (
+            text("mint_pubkey"),
+            text("url"),
+            text("nuts"),
+            text("network"),
+        ) {
+            (Some(mint_pubkey), Some(url), Some(nuts), Some(network)) => {
+                OperationValue::MintAnnouncement(MintAnnouncement {
+                    mint_pubkey,
+                    url,
+                    nuts,
+                    network,
+                })
+            }
+            _ => value.clone(),
+        },
+        "MintRecommendation" => match (text("mint"), text("review")) {
+            (Some(mint), Some(review)) => {
+                OperationValue::MintRecommendation(MintRecommendation { mint, review })
+            }
+            _ => value.clone(),
+        },
+        "PaymentTargets" => match record_payment_targets(fields, "targets") {
+            Some(targets) => OperationValue::PaymentTargets(PaymentTargets { targets }),
+            None => value.clone(),
+        },
         _ => value.clone(),
     }
 }
@@ -7137,6 +7316,36 @@ fn record_identities(
                         match (record_text(fields, "platform"), record_text(fields, "proof")) {
                             (Some(platform), Some(proof)) => {
                                 Some(ExternalIdentity { platform, proof })
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        })?
+    })
+}
+
+/// A `List<PaymentTarget>` field; see [`record_poll_options`] for why each
+/// element is read directly rather than through `normalize_record`.
+fn record_payment_targets(
+    fields: &[(String, OperationValue)],
+    key: &str,
+) -> Option<Vec<PaymentTarget>> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::List(items) => items
+                .iter()
+                .map(|item| match item {
+                    OperationValue::Record { name, fields } if name == "PaymentTarget" => {
+                        match (
+                            record_text(fields, "payment_type"),
+                            record_text(fields, "address"),
+                        ) {
+                            (Some(payment_type), Some(address)) => {
+                                Some(PaymentTarget { payment_type, address })
                             }
                             _ => None,
                         }
@@ -7713,6 +7922,91 @@ mod tests {
                 payment_method: "bank transfer".to_owned(),
                 premium: 2,
             }))
+        );
+    }
+
+    #[test]
+    fn a_list_of_records_normalizes_payment_targets() {
+        let targets = OperationValue::Record {
+            name: "PaymentTargets".to_owned(),
+            fields: vec![(
+                "targets".to_owned(),
+                OperationValue::List(vec![OperationValue::Record {
+                    name: "PaymentTarget".to_owned(),
+                    fields: vec![
+                        (
+                            "payment_type".to_owned(),
+                            OperationValue::Text("bitcoin".to_owned()),
+                        ),
+                        (
+                            "address".to_owned(),
+                            OperationValue::Text("bc1qexample".to_owned()),
+                        ),
+                    ],
+                }]),
+            )],
+        };
+        assert_eq!(
+            normalize_record(&targets),
+            OperationValue::PaymentTargets(PaymentTargets {
+                targets: vec![PaymentTarget {
+                    payment_type: "bitcoin".to_owned(),
+                    address: "bc1qexample".to_owned(),
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn nip05_identifier_matches_only_the_hex_pubkey_the_json_names() {
+        let response = OperationValue::Text(
+            r#"{"names":{"bob":"0000000000000000000000000000000000000000000000000000000000000001"}}"#
+                .to_owned(),
+        );
+        let matching = [
+            OperationValue::Text("bob".to_owned()),
+            response.clone(),
+            OperationValue::PubKey(
+                "0000000000000000000000000000000000000000000000000000000000000001".to_owned(),
+            ),
+        ];
+        assert_eq!(
+            nip05_identifier_matches(&matching),
+            Ok(OperationValue::Bool(true))
+        );
+
+        let wrong_pubkey = [
+            OperationValue::Text("bob".to_owned()),
+            response.clone(),
+            OperationValue::PubKey(
+                "0000000000000000000000000000000000000000000000000000000000000002".to_owned(),
+            ),
+        ];
+        assert_eq!(
+            nip05_identifier_matches(&wrong_pubkey),
+            Ok(OperationValue::Bool(false))
+        );
+
+        let unknown_name = [
+            OperationValue::Text("carol".to_owned()),
+            response,
+            OperationValue::PubKey(
+                "0000000000000000000000000000000000000000000000000000000000000001".to_owned(),
+            ),
+        ];
+        assert_eq!(
+            nip05_identifier_matches(&unknown_name),
+            Ok(OperationValue::Bool(false))
+        );
+
+        let malformed_json = [
+            OperationValue::Text("bob".to_owned()),
+            OperationValue::Text("not json".to_owned()),
+            OperationValue::PubKey("1".repeat(64)),
+        ];
+        assert_eq!(
+            nip05_identifier_matches(&malformed_json),
+            Ok(OperationValue::Bool(false))
         );
     }
 

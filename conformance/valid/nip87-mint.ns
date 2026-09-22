@@ -1,0 +1,19 @@
+// NIP-87 Cashu discoverability: announcing a mint and recommending one.
+// Fedimint announcements (kind 38173) are not modelled.
+use nip87
+
+permissions {
+    mint_discovery
+}
+
+let announcement = nip87.publish_mint_announcement(MintAnnouncement {
+    mint_pubkey: "8888888888888888888888888888888888888888888888888888888888888888";
+    url: "https://mint.example";
+    nuts: "1,2,3,7,8,9";
+    network: "mainnet";
+})
+
+let recommendation = nip87.publish_mint_recommendation(MintRecommendation {
+    mint: "38172:8888888888888888888888888888888888888888888888888888888888888888:mint.example";
+    review: "Reliable, low fees";
+})

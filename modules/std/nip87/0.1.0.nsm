@@ -1,0 +1,22 @@
+module nip87 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/87.md"
+
+record MintAnnouncement {
+    field mint_pubkey: Text
+    field url: Text
+    field nuts: Text
+    field network: Text
+}
+
+record MintRecommendation {
+    field mint: Text
+    field review: Text
+}
+
+error MintDiscoveryError {
+    field message: Text
+}
+
+operation publish_mint_announcement(announcement: MintAnnouncement) -> Result<PublishReport,MintDiscoveryError> effect Sign,Relay permission mint_discovery
+operation publish_mint_recommendation(recommendation: MintRecommendation) -> Result<PublishReport,MintDiscoveryError> effect Sign,Relay permission mint_discovery

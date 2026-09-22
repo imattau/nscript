@@ -1,0 +1,12 @@
+// NIP-96 HTTP file storage: publishing preferred upload servers (kind
+// 10096). The server descriptor JSON and the actual HTTP upload/response
+// flow are ordinary web fetches, not modelled here.
+use nip96
+
+permissions {
+    file_server_preferences
+}
+
+let result = nip96.publish_file_server_preferences(FileServerPreferences {
+    servers: ["https://storage.example"];
+})

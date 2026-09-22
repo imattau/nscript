@@ -1,0 +1,14 @@
+// NIP-A3 payment targets: announcing receiving addresses (kind 10133).
+// This publishes an intent to be paid; it does not move funds.
+use nipa3
+
+permissions {
+    payment_targets
+}
+
+let result = nipa3.publish_payment_targets(PaymentTargets {
+    targets: [
+        PaymentTarget { payment_type: "bitcoin"; address: "bc1qexample" },
+        PaymentTarget { payment_type: "lightning"; address: "alice@getalby.com" },
+    ];
+})

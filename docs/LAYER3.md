@@ -764,3 +764,39 @@ None get Layer 3 sugar keywords, for the same reason as the rest of this
 section. `P2POrder` (six `Text` fields plus two `Int`s, 160 bytes) was
 boxed up front, the fourth time this `clippy::result_large_err` shape has
 come up (`Listing`, `Repository`, `GeocacheListing`).
+
+## Four more: NIP-05, NIP-96, NIP-87, NIP-A3
+
+`nip05` is the first module in this run of batches that is not an
+operation at all. NIP-05 isn't something a script publishes — it is a
+verification a client performs after fetching a well-known document —
+so it is a `function`, the same kind RFC 0002 §3 introduced for Concord's
+fold queries:
+
+- `nip05.identifier_matches(local_part, response_json, pubkey) -> Bool`
+  compares a fetched `/.well-known/nostr.json` document's `names` mapping
+  against a pubkey, case-insensitively (hex pubkeys). It takes no
+  permission and no effect, exactly like `concord05.invite_is_valid` and
+  `concord06.commitment_matches` — the fetch itself is ordinary host I/O
+  (`fetch text from ...`), not something this function does; it only
+  compares data the script already holds, and is only callable inside a
+  handler body, the same restriction those two fold queries already have.
+
+The other three are ordinary operations:
+
+- `nip96` (kind 10096): `publish_file_server_preferences` takes a
+  `List<Text>` of preferred upload server URLs. The server descriptor
+  JSON at `/.well-known/nostr/nip96.json` and the actual HTTP
+  upload/response flow are web fetches outside Nostr entirely, not
+  modelled here.
+- `nip87` (Cashu mint discoverability): `publish_mint_announcement` (kind
+  38172: mint pubkey, URL, supported nuts, network) and
+  `publish_mint_recommendation` (kind 38000: which mint, a review).
+  Fedimint announcements (kind 38173) are not modelled. Neither operation
+  moves ecash; both only announce or recommend a mint.
+- `nipa3` (payment targets, kind 10133): `publish_payment_targets` takes a
+  `List<PaymentTarget { payment_type, address }>`. Like `nip99` and
+  `nip69`, this announces where to send payment; it does not execute one.
+
+None get Layer 3 sugar keywords, for the same reason as the rest of this
+section.

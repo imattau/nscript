@@ -1,0 +1,17 @@
+// NIP-05: `identifier_matches` is a pure function (like `concord05`'s and
+// `concord06`'s fold queries) — it takes no permission and no effect, since
+// it only compares data the script already holds. Fetching the
+// `/.well-known/nostr.json` document itself is ordinary host I/O
+// (`fetch text from ...`), not something this module does.
+use nip01
+use nip05
+
+permissions {
+    log
+}
+
+on Note {
+    if nip05.identifier_matches("bob", event.content, event.author) {
+        print("identifier verified")
+    }
+}

@@ -1,0 +1,13 @@
+module nip96 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/96.md"
+
+record FileServerPreferences {
+    field servers: List<Text>
+}
+
+error FileServerError {
+    field message: Text
+}
+
+operation publish_file_server_preferences(preferences: FileServerPreferences) -> Result<PublishReport,FileServerError> effect Sign,Relay permission file_server_preferences
