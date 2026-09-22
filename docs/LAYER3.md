@@ -642,3 +642,33 @@ section. `Repository`'s five `Text` fields (120 bytes) landed it right at
 the `clippy::result_large_err` threshold once wrapped in `OperationValue`
 (the 8-byte discriminant pushes it to exactly 128), so it is boxed the same
 way `Listing` was.
+
+## Four more: NIP-64, NIP-7D, NIP-F4, NIP-CC
+
+- `nip64` (chess, kind 64): `nip64.publish_chess_game` takes a single
+  `pgn: Text` field. NIP-64's actual and only structural rule is that the
+  whole event content is one PGN string — the Seven Tag Roster (`White`,
+  `Black`, `Result`, ...) lives *inside* that PGN text as its own header
+  syntax, not as separate Nostr tags, so there is nothing else for this
+  module to structure without generating PGN text itself, which it does
+  not do.
+- `nip7d` (forum threads, kind 11): `nip7d.publish_thread` takes a title
+  and the opening message. Replies (kind 1111) reuse NIP-22's `Comment`
+  shape rather than a second copy of it here.
+- `nipf4` (podcasts): `publish_podcast_show` (kind 10154) and
+  `publish_podcast_episode` (kind 54) cover the two events that actually
+  carry content. Authored-podcast verification (kind 10064, a user
+  claiming a podcast keypair) and favourites (kind 10054, a NIP-51 list)
+  are not modelled.
+- `nipcc` (geocaching): `publish_geocache` (kind 37516) and
+  `publish_found_log` (kind 7516) cover listing a cache and logging a
+  find. Comment-style logs (kind 1111, again NIP-22's `Comment`), the
+  cryptographically signed verification event (kind 7517, which needs the
+  cache's own signing key — the same key-material exclusion every other
+  module here already has) and curation lists (kind 37517) are not
+  modelled.
+
+None get Layer 3 sugar keywords. `GeocacheListing` (five `Text` fields plus
+two `Int`s, 136 bytes) was boxed up front this time, having already been
+caught twice by the same `clippy::result_large_err` threshold in the
+previous two batches (`Listing`, `Repository`).

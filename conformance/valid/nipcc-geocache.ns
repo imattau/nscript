@@ -1,0 +1,24 @@
+// NIP-CC geocaching: a listing (kind 37516) and a found log (kind 7516).
+// Comment logs use NIP-22's Comment shape; the signed verification event
+// and curation lists are not modelled.
+use nipcc
+
+permissions {
+    geocache
+    geocache_log
+}
+
+let listing = nipcc.publish_geocache(GeocacheListing {
+    identifier: "melbourne-park-1";
+    name: "Park Bench Cache";
+    geohash: "r1r0fs";
+    difficulty: 2;
+    terrain: 1;
+    size: "small";
+    description: "Hidden near the third bench from the entrance.";
+})
+
+let log = nipcc.publish_found_log(FoundLog {
+    cache: "37516:aaaa:melbourne-park-1";
+    message: "Found it! Great spot.";
+})

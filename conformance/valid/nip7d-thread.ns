@@ -1,0 +1,12 @@
+// NIP-7D forum threads: a kind:11 thread. Replies use NIP-22's Comment
+// shape (kind 1111), not a separate reply record here.
+use nip7d
+
+permissions {
+    forum_thread
+}
+
+let result = nip7d.publish_thread(ForumThread {
+    title: "What are you building with NScript?";
+    content: "Curious what people are shipping so far.";
+})

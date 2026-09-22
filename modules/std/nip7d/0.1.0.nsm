@@ -1,0 +1,14 @@
+module nip7d @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/7D.md"
+
+record ForumThread {
+    field title: Text
+    field content: Text
+}
+
+error ForumError {
+    field message: Text
+}
+
+operation publish_thread(thread: ForumThread) -> Result<PublishReport,ForumError> effect Sign,Relay permission forum_thread

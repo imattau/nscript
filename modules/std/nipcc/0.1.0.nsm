@@ -1,0 +1,25 @@
+module nipcc @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/CC.md"
+
+record GeocacheListing {
+    field identifier: Text
+    field name: Text
+    field geohash: Text
+    field difficulty: Int
+    field terrain: Int
+    field size: Text
+    field description: Text
+}
+
+record FoundLog {
+    field cache: Text
+    field message: Text
+}
+
+error GeocacheError {
+    field message: Text
+}
+
+operation publish_geocache(listing: GeocacheListing) -> Result<PublishReport,GeocacheError> effect Sign,Relay permission geocache
+operation publish_found_log(log: FoundLog) -> Result<PublishReport,GeocacheError> effect Sign,Relay permission geocache_log

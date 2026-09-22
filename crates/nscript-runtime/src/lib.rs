@@ -1400,6 +1400,50 @@ pub struct ChatReply {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChessGame {
+    pub pgn: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForumThread {
+    pub title: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PodcastShow {
+    pub title: String,
+    pub description: String,
+    pub image: String,
+    pub website: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PodcastEpisode {
+    pub title: String,
+    pub description: String,
+    pub content: String,
+    pub audio_url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GeocacheListing {
+    pub identifier: String,
+    pub name: String,
+    pub geohash: String,
+    pub difficulty: i64,
+    pub terrain: i64,
+    pub size: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FoundLog {
+    pub cache: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     Integer(i64),
@@ -1486,6 +1530,14 @@ pub enum OperationValue {
     PostApproval(PostApproval),
     ChatMessage(ChatMessage),
     ChatReply(ChatReply),
+    ChessGame(ChessGame),
+    ForumThread(ForumThread),
+    PodcastShow(PodcastShow),
+    PodcastEpisode(PodcastEpisode),
+    // Boxed like `Listing`/`Repository`: five `Text` fields plus two `Int`s
+    // (136 bytes) would make this the largest `OperationValue` variant.
+    GeocacheListing(Box<GeocacheListing>),
+    FoundLog(FoundLog),
     PublishReport(PublishReport),
 }
 
@@ -5472,6 +5524,124 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip64", "publish_chess_game") => {
+                let [OperationValue::ChessGame(game)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if game.pgn.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://chess".to_owned(),
+                        accepted: true,
+                        detail: "chess game lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip7d", "publish_thread") => {
+                let [OperationValue::ForumThread(thread)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if thread.title.is_empty() || thread.content.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://forum".to_owned(),
+                        accepted: true,
+                        detail: "forum thread lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipf4", "publish_podcast_show") => {
+                let [OperationValue::PodcastShow(show)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if show.title.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://podcast".to_owned(),
+                        accepted: true,
+                        detail: "podcast show lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipf4", "publish_podcast_episode") => {
+                let [OperationValue::PodcastEpisode(episode)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if episode.title.is_empty() || episode.audio_url.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://podcast-episode".to_owned(),
+                        accepted: true,
+                        detail: "podcast episode lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipcc", "publish_geocache") => {
+                let [OperationValue::GeocacheListing(listing)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if listing.identifier.is_empty()
+                    || listing.geohash.is_empty()
+                    || !(1..=5).contains(&listing.difficulty)
+                    || !(1..=5).contains(&listing.terrain)
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://geocache".to_owned(),
+                        accepted: true,
+                        detail: "geocache listing lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nipcc", "publish_found_log") => {
+                let [OperationValue::FoundLog(log)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if log.cache.is_empty() || log.message.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://geocache-log".to_owned(),
+                        accepted: true,
+                        detail: "found log lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip25", "publish_reaction") => {
                 let [OperationValue::Reaction(_reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -6059,6 +6229,80 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             }
             _ => value.clone(),
         },
+        "ChessGame" => match text("pgn") {
+            Some(pgn) => OperationValue::ChessGame(ChessGame { pgn }),
+            None => value.clone(),
+        },
+        "ForumThread" => match (text("title"), text("content")) {
+            (Some(title), Some(content)) => {
+                OperationValue::ForumThread(ForumThread { title, content })
+            }
+            _ => value.clone(),
+        },
+        "PodcastShow" => match (
+            text("title"),
+            text("description"),
+            text("image"),
+            text("website"),
+        ) {
+            (Some(title), Some(description), Some(image), Some(website)) => {
+                OperationValue::PodcastShow(PodcastShow {
+                    title,
+                    description,
+                    image,
+                    website,
+                })
+            }
+            _ => value.clone(),
+        },
+        "PodcastEpisode" => match (
+            text("title"),
+            text("description"),
+            text("content"),
+            text("audio_url"),
+        ) {
+            (Some(title), Some(description), Some(content), Some(audio_url)) => {
+                OperationValue::PodcastEpisode(PodcastEpisode {
+                    title,
+                    description,
+                    content,
+                    audio_url,
+                })
+            }
+            _ => value.clone(),
+        },
+        "GeocacheListing" => match (
+            text("identifier"),
+            text("name"),
+            text("geohash"),
+            integer("difficulty"),
+            integer("terrain"),
+            text("size"),
+            text("description"),
+        ) {
+            (
+                Some(identifier),
+                Some(name),
+                Some(geohash),
+                Some(difficulty),
+                Some(terrain),
+                Some(size),
+                Some(description),
+            ) => OperationValue::GeocacheListing(Box::new(GeocacheListing {
+                identifier,
+                name,
+                geohash,
+                difficulty,
+                terrain,
+                size,
+                description,
+            })),
+            _ => value.clone(),
+        },
+        "FoundLog" => match (text("cache"), text("message")) {
+            (Some(cache), Some(message)) => OperationValue::FoundLog(FoundLog { cache, message }),
+            _ => value.clone(),
+        },
         _ => value.clone(),
     }
 }
@@ -6621,6 +6865,46 @@ mod tests {
                 description: "desc".to_owned(),
                 moderators: vec!["alice".to_owned()],
             })
+        );
+    }
+
+    #[test]
+    fn a_geocache_listing_normalizes_its_integer_and_text_fields() {
+        let listing = OperationValue::Record {
+            name: "GeocacheListing".to_owned(),
+            fields: vec![
+                (
+                    "identifier".to_owned(),
+                    OperationValue::Text("park-1".to_owned()),
+                ),
+                (
+                    "name".to_owned(),
+                    OperationValue::Text("Park Bench Cache".to_owned()),
+                ),
+                (
+                    "geohash".to_owned(),
+                    OperationValue::Text("r1r0fs".to_owned()),
+                ),
+                ("difficulty".to_owned(), OperationValue::Integer(2)),
+                ("terrain".to_owned(), OperationValue::Integer(1)),
+                ("size".to_owned(), OperationValue::Text("small".to_owned())),
+                (
+                    "description".to_owned(),
+                    OperationValue::Text("near the bench".to_owned()),
+                ),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&listing),
+            OperationValue::GeocacheListing(Box::new(GeocacheListing {
+                identifier: "park-1".to_owned(),
+                name: "Park Bench Cache".to_owned(),
+                geohash: "r1r0fs".to_owned(),
+                difficulty: 2,
+                terrain: 1,
+                size: "small".to_owned(),
+                description: "near the bench".to_owned(),
+            }))
         );
     }
 

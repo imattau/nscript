@@ -1,0 +1,23 @@
+// NIP-F4 podcasts: show metadata (kind 10154) and an episode (kind 54).
+// Authored-podcast verification (kind 10064) and favorites (kind 10054)
+// are not modelled.
+use nipf4
+
+permissions {
+    podcast
+    podcast_episode
+}
+
+let show = nipf4.publish_podcast_show(PodcastShow {
+    title: "The NScript Show";
+    description: "A podcast about scripting Nostr";
+    image: "https://cdn.example/cover.jpg";
+    website: "https://example.com/podcast";
+})
+
+let episode = nipf4.publish_podcast_episode(PodcastEpisode {
+    title: "Episode 1: Getting started";
+    description: "An introduction to NScript";
+    content: "Show notes go here.";
+    audio_url: "https://cdn.example/ep1.mp3";
+})

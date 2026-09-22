@@ -1,0 +1,10 @@
+// NIP-64 chess: a kind:64 note carrying a PGN-formatted game.
+use nip64
+
+permissions {
+    chess
+}
+
+let result = nip64.publish_chess_game(ChessGame {
+    pgn: "[Event \"Casual game\"]\n[White \"Alice\"]\n[Black \"Bob\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0";
+})
