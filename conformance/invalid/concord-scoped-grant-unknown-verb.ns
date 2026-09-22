@@ -1,0 +1,10 @@
+// error: E3001 unknown-concord-verb
+use concord04
+
+key devs = host("devs")
+
+permissions {
+    concord Frobnicate in devs
+}
+
+kick alice

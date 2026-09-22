@@ -1,6 +1,6 @@
 # RFC 0002: Language surface for Concord and other module-defined protocols
 
-Status: **Draft — read side and fold queries (section 3) implemented (see Implementation notes); scoped grants (section 2) still a proposal**
+Status: **Draft — read side, fold queries (section 3) and scoped grants (section 2) implemented (see Implementation notes)**
 
 ## Abstract
 
@@ -199,7 +199,8 @@ with fake hosts. What remains:
   modelled (see `docs/HANDLERS.md`): a handler can `match` on an operation's
   `Ok`/`Err`, use `?`, and a kick the Roster refuses reaches the script as an
   `Err` it can read.
-- **Scoped grants (section 2)** are untouched.
+- **Scoped grants (section 2)** are now implemented; see the later
+  implementation notes below.
 
 Writing the evaluator's first handler also exposed a parser bug: a lowercase
 name before a block, as in `if ready { ... }`, was read as a record literal, so
@@ -252,4 +253,40 @@ evaluator runs; a top-level call is collected like any other operation call
 and would fail as unavailable, since `run_operations` does not know about
 `is_pure_function`. Whether that also belongs in `select` predicates (open
 question 4) is untouched. `can_kick`/`can_ban` were not migrated to `function`
-form. Section 2 (scoped grants) remains a proposal.
+form.
+
+## Implementation notes (2026-09-22): scoped grants (section 2)
+
+This answers open question 2 in the minimal direction: permissions stay flat
+names, and scoped grants are sugar over them, not a descriptor-schema change.
+No module descriptor changed.
+
+**Grammar.** `concord <Verb> [in <scope>]` extends the existing
+`Permission::Named` production (`identifier, [identifier], ["in", identifier]`
+in `spec/grammar.ebnf`) with an optional scope, parsed only when the
+permission's first word is `concord` — every other `Named` form (`storage
+SeenEvents`, `follow_list`, and so on) is unaffected byte-for-byte.
+
+**Checker.** `concord Kick`/`concord Ban` synthesize exactly the flat
+`concord_kick`/`concord_ban` permission name `concord04`'s descriptor already
+declares, so `E3001` (missing permission) and everything downstream of
+`program_permissions` needed no other change. A verb outside `{Kick, Ban}` is
+`E3001` ("unknown concord verb"); a missing verb, or a scope naming
+something the program never declared, is `E1101`.
+
+**What this does not do, honestly.** Open question 3 (where a scope value
+comes from, and how it is provisioned under the hardened profile) is still
+open, and so is the actual point of scoped grants: narrowing authority to
+*one* community or channel. `concord04.kick_member` takes no scope argument,
+and the runtime is single-community per script instance, so there is nothing
+today for `in devs` to narrow against — a scoped grant and its flat
+equivalent are currently identical at run time. Building real narrowing needs
+a host that can hold more than one community's authority at once and an
+operation signature that says which one a call targets; declaring that
+without an implementation to back it would let `in devs` look like it
+restricts something it does not, which is worse than not having the syntax.
+What is real: the scope name must exist (`E1101` catches a typo or a
+forgotten declaration before the script ever runs), and the security
+property the RFC asked for already holds by construction — a grant only ever
+adds a permission an existing flat form could already grant, so it can never
+widen authority beyond what the program could already have asked for.

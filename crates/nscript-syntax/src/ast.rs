@@ -128,6 +128,9 @@ pub enum Permission {
     Named {
         operation: Spanned<String>,
         argument: Option<Spanned<String>>,
+        /// `in <scope>` (RFC 0002 §2), e.g. `concord Kick in devs`. Only the
+        /// `concord` namespace parses this today.
+        scope: Option<Spanned<String>>,
     },
     Http(Spanned<String>),
 }

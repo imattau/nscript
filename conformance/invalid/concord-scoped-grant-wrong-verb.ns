@@ -1,0 +1,11 @@
+// error: E3001 missing-permission
+// A scope grants only the verb it names: `Ban` does not also grant `Kick`.
+use concord04
+
+key devs = host("devs")
+
+permissions {
+    concord Ban in devs
+}
+
+kick alice

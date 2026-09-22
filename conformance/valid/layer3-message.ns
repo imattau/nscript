@@ -1,0 +1,7 @@
+use nip29
+
+permissions {
+    group_message
+}
+
+message "hello" in "general"

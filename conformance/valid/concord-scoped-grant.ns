@@ -1,0 +1,12 @@
+// RFC 0002 §2: `concord Kick in devs` grants exactly what `concord_kick`
+// would today (there is no multi-scope host yet to narrow it), but requires
+// the scope name to be a real, declared program value.
+use concord04
+
+key devs = host("devs")
+
+permissions {
+    concord Kick in devs
+}
+
+kick alice

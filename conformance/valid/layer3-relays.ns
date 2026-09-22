@@ -1,0 +1,7 @@
+use nip65
+
+permissions {
+    relay_list
+}
+
+relays read ["wss://a.example"] write ["wss://b.example"]

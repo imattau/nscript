@@ -1,0 +1,7 @@
+use nip5a
+
+permissions {
+    deploy_site
+}
+
+deploy "example.com" from "dist/"

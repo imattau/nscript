@@ -20,7 +20,7 @@ pub(crate) fn parse(tokens: &[Token]) -> (AstProgram, Vec<Diagnostic>) {
 }
 
 /// Statement keywords that introduce a Layer 3 intent form (`docs/LAYER3.md`).
-pub(crate) const LAYER3_FORMS: [&str; 26] = [
+pub(crate) const LAYER3_FORMS: [&str; 32] = [
     "send",
     "reply",
     "repost",
@@ -47,6 +47,12 @@ pub(crate) const LAYER3_FORMS: [&str; 26] = [
     "kick",
     "ban",
     "on",
+    "follow",
+    "article",
+    "message",
+    "relays",
+    "deploy",
+    "save",
 ];
 
 struct Parser<'a> {
@@ -422,9 +428,19 @@ impl Parser<'_> {
                     } else {
                         self.take_name()
                     };
+                    // `concord <Verb> in <scope>` (RFC 0002 §2): only the
+                    // `concord` namespace takes a scope, so no other
+                    // two-word permission (`storage SeenEvents`, and so on)
+                    // is affected.
+                    let scope = if operation.value == "concord" && self.eat_word("in") {
+                        Some(self.take_name()?)
+                    } else {
+                        None
+                    };
                     Permission::Named {
                         operation,
                         argument,
+                        scope,
                     }
                 }
             };
@@ -1929,6 +1945,108 @@ impl Parser<'_> {
                     },
                     span,
                 })
+            }
+            // Layer 3 sugar over other typed NIP modules, same shape as
+            // `kick`/`ban`/`say`: a `module.operation(...)` call with the
+            // same permission, effect and capability checks as writing it
+            // by hand.
+            Some("follow") => {
+                self.index += 1;
+                let people = self.expression_or_error(0, "the people to follow")?;
+                let span = people.span;
+                let list = Self::construct("FollowList", vec![("people", people)], span);
+                StatementKind::Expression(Self::module_call(
+                    "nip02",
+                    "publish_follow_list",
+                    vec![list],
+                    span,
+                ))
+            }
+            Some("article") => {
+                self.index += 1;
+                let identifier = self.expression_or_error(0, "the article's identifier")?;
+                self.expect_word("titled")?;
+                let title = self.expression_or_error(0, "the article's title")?;
+                self.expect_word("content")?;
+                let content = self.expression_or_error(0, "the article's content")?;
+                let span = identifier.span.join(content.span);
+                let article = Self::construct(
+                    "Article",
+                    vec![
+                        ("identifier", identifier),
+                        ("title", title),
+                        ("content", content),
+                    ],
+                    span,
+                );
+                StatementKind::Expression(Self::module_call(
+                    "nip23",
+                    "publish_article",
+                    vec![article],
+                    span,
+                ))
+            }
+            Some("message") => {
+                self.index += 1;
+                // Above `in`'s precedence, so the separator is not swallowed
+                // as a membership test (as `say` does for Concord).
+                let content = self.expression_or_error(5, "the message to send")?;
+                self.expect_word("in")?;
+                let group = self.expression_or_error(0, "the group to send it in")?;
+                let span = content.span.join(group.span);
+                let message =
+                    Self::construct("GroupMessage", vec![("group", group), ("content", content)], span);
+                StatementKind::Expression(Self::module_call(
+                    "nip29",
+                    "publish_group_message",
+                    vec![message],
+                    span,
+                ))
+            }
+            Some("relays") => {
+                self.index += 1;
+                self.expect_word("read")?;
+                let read = self.expression_or_error(0, "the read relays")?;
+                self.expect_word("write")?;
+                let write = self.expression_or_error(0, "the write relays")?;
+                let span = read.span.join(write.span);
+                let list = Self::construct("RelayList", vec![("read", read), ("write", write)], span);
+                StatementKind::Expression(Self::module_call(
+                    "nip65",
+                    "publish_relay_list",
+                    vec![list],
+                    span,
+                ))
+            }
+            Some("deploy") => {
+                self.index += 1;
+                let domain = self.expression_or_error(0, "the domain to deploy")?;
+                self.expect_word("from")?;
+                let source = self.expression_or_error(0, "the site's source")?;
+                let span = domain.span.join(source.span);
+                let deployment =
+                    Self::construct("SiteDeployment", vec![("domain", domain), ("source", source)], span);
+                StatementKind::Expression(Self::module_call(
+                    "nip5a",
+                    "publish_site",
+                    vec![deployment],
+                    span,
+                ))
+            }
+            Some("save") => {
+                self.index += 1;
+                let identifier = self.expression_or_error(0, "the data's identifier")?;
+                self.expect_word("as")?;
+                let content = self.expression_or_error(0, "the data to save")?;
+                let span = identifier.span.join(content.span);
+                let data =
+                    Self::construct("AppData", vec![("identifier", identifier), ("content", content)], span);
+                StatementKind::Expression(Self::module_call(
+                    "nip78",
+                    "publish_app_data",
+                    vec![data],
+                    span,
+                ))
             }
             _ => StatementKind::Expression(self.parse_expression(0)?),
         };

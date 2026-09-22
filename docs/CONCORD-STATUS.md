@@ -19,7 +19,7 @@ library — key derivation, the presence rumor, the broker auth grant, and the
 rendezvous tie-break — with the SFU connection and media pipeline themselves
 left as host/service integration, per the plan.
 
-378 tests pass across the workspace (one further test is ignored because it
+394 tests pass across the workspace (one further test is ignored because it
 needs network access). `cargo clippy --workspace --all-targets` is clean under
 the workspace's pedantic lints.
 
@@ -178,6 +178,32 @@ inside handler bodies today; see `rfcs/0002-concord-language-surface.md`
 ("Implementation notes: fold queries") for what a top-level call and `select`
 predicates still lack.
 
+## Scoped grants (RFC 0002 §2)
+
+`concord Kick in devs` parses and checks: the verb must be `Kick` or `Ban`
+(`E3001` otherwise), and the scope must be a name the program actually
+declares (`E1101` otherwise). It grants exactly the flat `concord_kick`/
+`concord_ban` permission `concord04` already declares — no descriptor
+changed. Honestly, the scope does not yet narrow anything at run time: there
+is no host that holds more than one community's authority at once, and
+`concord04.kick_member` takes no scope argument, so `in devs` and no scope at
+all are currently equivalent. See `rfcs/0002-concord-language-surface.md`
+("Implementation notes: scoped grants") for what real narrowing would need.
+
+## NIP module Layer 3 sugar beyond Concord
+
+Six more forms, each following the same pattern as `kick`/`ban`/`say`:
+`follow [alice, bob]` (`nip02`), `article "id" titled "T" content "body"`
+(`nip23`), `message "hi" in "group"` (`nip29`), `relays read [...] write
+[...]` (`nip65`), `deploy "domain" from "source"` (`nip5a`), and `save "id"
+as "content"` (`nip78`). `follow` and `relays` needed a real capability gap
+closed first: a module operation argument had never been allowed to be a
+list — `OperationValue`/`CheckedArgument` gained a `List` variant, threaded
+through the checker, the evaluator, and the generic-record-to-typed-struct
+normalization every `FakeOperationHost` call goes through. See
+`docs/LAYER3.md` for the full set, and what stays deliberately unsugared
+(infrastructure modules like `nip19`, `nip44`, `nip46`).
+
 ## Not done, and limits
 
 - **Not confirmed in an Armada client.** Everything above was verified by this
@@ -267,8 +293,9 @@ messages as the identity in `keyfile`.
 ## Suggested next steps
 
 1. Look at the live community in an Armada client and report what renders.
-2. Review RFC 0002 for scoped grants (section 2), the one Layer 3 piece
-   Concord still lacks; the read side and fold queries (section 3) are done.
+2. If real scope narrowing is wanted, design a multi-community authority host
+   and a scope argument on `concord04`'s operations — RFC 0002's own open
+   question 3, still unresolved.
 3. Raise the 120-blob arithmetic with the Concord authors.
 4. Decide whether to run a live moderation test using a second throwaway
    identity as the target, and whether to drive a Refounding from a ban.

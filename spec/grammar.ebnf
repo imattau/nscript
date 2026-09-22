@@ -47,7 +47,12 @@ permission       = "read", type, [ "from", identifier ], terminator
                  | "storage", identifier, terminator
                  | "http", string, terminator
                  | ( "clock" | "filesystem" | "payment" | "secret_key"
-                   | "raw_tags" | "log" ), terminator ;
+                   | "raw_tags" | "log" ), terminator
+                 | "concord", identifier, [ "in", identifier ], terminator
+                   (* RFC 0002 §2: verb, then an optional scope name *)
+                 | identifier, [ identifier ], terminator ;
+                   (* any other flat permission name a module descriptor
+                      declares, e.g. "concord_kick" or "follow_list" *)
 
 statement        = expression, terminator
                  | send_stmt | return_stmt | for_stmt

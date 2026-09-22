@@ -337,10 +337,15 @@ fn render_permission(permission: &nscript_syntax::ast::Permission) -> String {
         Permission::Named {
             operation,
             argument,
+            scope,
         } => suffix(
-            operation.value.clone(),
-            "",
-            argument.as_ref().map(|item| item.value.as_str()),
+            suffix(
+                operation.value.clone(),
+                "",
+                argument.as_ref().map(|item| item.value.as_str()),
+            ),
+            "in",
+            scope.as_ref().map(|item| item.value.as_str()),
         ),
         Permission::Http(origin) => format!("http {}", origin.value),
     }
@@ -360,7 +365,16 @@ fn suffix(mut base: String, preposition: &str, value: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{NostrIr, emit_wasm};
+    use super::{NostrIr, emit_wasm, permission_strings};
+
+    #[test]
+    fn a_scoped_concord_grant_renders_with_its_scope_suffix() {
+        let (program, diagnostics) = nscript_syntax::parse_program(
+            "use concord04\nkey devs = host(\"devs\")\npermissions { concord Kick in devs }\n",
+        );
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(permission_strings(&program), vec!["concord Kick in devs"]);
+    }
 
     #[test]
     fn wasm_artifact_is_valid_container_with_capability_metadata() {

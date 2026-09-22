@@ -1,0 +1,7 @@
+use nip02
+
+permissions {
+    follow_list
+}
+
+follow [alice, bob]

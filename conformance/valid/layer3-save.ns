@@ -1,0 +1,7 @@
+use nip78
+
+permissions {
+    app_data
+}
+
+save "preferences" as "{\"theme\":\"dark\"}"

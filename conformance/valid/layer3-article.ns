@@ -1,0 +1,7 @@
+use nip23
+
+permissions {
+    article
+}
+
+article "post-1" titled "My Post" content "Body text"

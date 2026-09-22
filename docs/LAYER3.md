@@ -356,20 +356,118 @@ The rule is general, not just for Layer 3. Two parser guarantees back it:
 The words `kick`, `ban` and `say` are recognised only at the start of a
 statement; they remain ordinary names elsewhere (`let ban = 1`).
 
-Not yet sugar: reading a stream (`on chat.message { }`) and scoped grants
-(`concord Kick in devs`). Those need the generic mechanisms proposed in
-[RFC 0002](../rfcs/0002-concord-language-surface.md), not another keyword.
-
-The next Layer 3 forms are deliberately syntax sugar over existing typed NIP
-modules:
+## Concord: scoped grants
 
 ```nostr
-send "Hello" to alice
-reply to event { content: "Agreed" }
-repost event
-search Note for "nostr"
+use concord04
+
+key devs = host("devs")
+
+permissions {
+    concord Kick in devs
+}
+
+kick alice
 ```
 
-Each form must retain the same permission, effect, and capability checks as its
-underlying module call. Layer 3 syntax is therefore an intent-oriented facade,
-not a second protocol or an authority bypass.
+`concord <Verb> in <scope>` (RFC 0002 §2) grants exactly what the flat
+`concord_kick`/`concord_ban` permission would — there is no multi-scope
+authority host yet for `in devs` to narrow against, so a scoped grant and its
+flat equivalent currently behave identically at run time. What the checker
+does enforce: the verb must be `Kick` or `Ban` (`E3001` otherwise), and the
+scope must be a name the program actually declares — a `key`, `let`, or other
+capability (`E1101` for an unknown one). The scope's `in` clause is optional;
+`concord Kick` alone is a plain grant of `concord_kick`. This is additive:
+existing programs granting the flat `concord_kick`/`concord_ban` names are
+unaffected, and a scoped grant can only ever add to a program's capability
+set, never widen it beyond what the flat form already could.
+
+Reading a stream did not end up needing new syntax either: `stream messages =
+select StreamMessage from chat` and `on messages { }` already parse and check
+(see the "Current state" example under [RFC
+0002](../rfcs/0002-concord-language-surface.md)'s implementation notes), so no
+dedicated `on chat.message { }` keyword was added.
+
+## NIP module sugar beyond Concord
+
+```nostr
+use nip02
+
+permissions {
+    follow_list
+}
+
+follow [alice, bob]
+```
+
+`follow <people>` lowers to `nip02.publish_follow_list(FollowList { people:
+<people> })`. `<people>` is a list literal; passing a list through a Layer 3
+form (and through a module operation generally) works end to end now, not
+just scalars and records.
+
+```nostr
+use nip23
+
+permissions {
+    article
+}
+
+article "post-1" titled "My Post" content "Body text"
+```
+
+```nostr
+use nip29
+
+permissions {
+    group_message
+}
+
+message "hello" in "general"
+```
+
+`message <text> in <group>` lowers to `nip29.publish_group_message`. It is a
+distinct keyword from Concord's `say <text> in <stream>`: the two forms lower
+to different modules, and the parser cannot tell the two apart from the
+argument alone.
+
+```nostr
+use nip65
+
+permissions {
+    relay_list
+}
+
+relays read ["wss://a.example"] write ["wss://b.example"]
+```
+
+```nostr
+use nip5a
+
+permissions {
+    deploy_site
+}
+
+deploy "example.com" from "dist/"
+```
+
+```nostr
+use nip78
+
+permissions {
+    app_data
+}
+
+save "preferences" as "{\"theme\":\"dark\"}"
+```
+
+Every form above follows the same rule as the rest of Layer 3: an incomplete
+statement is `E1101`, never a silent no-op, and each keyword is recognised
+only at the start of a statement (`let follow = 1` still works).
+
+Not yet sugar, and not planned as sugar: modules that are infrastructure
+rather than intents — `nip19` (bech32 encode/decode, called as ordinary
+`function`s), `nip42`/`nip46`/`nip98` (auth/signing handshakes), `nip44`/
+`nip59` (encryption primitives Concord builds on), `nip45` (a read-only
+count query), `nip47` (wallet payment, lower-level than `zap`), `nip77`
+(relay sync) and `nip86` (relay admin). These stay `module.operation(...)`
+calls; a keyword would not make them more readable.

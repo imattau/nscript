@@ -199,6 +199,12 @@ impl Value {
             Self::Int(value) => Ok(OperationValue::Integer(*value)),
             Self::Bool(value) => Ok(OperationValue::Bool(*value)),
             Self::PubKey(value) => Ok(OperationValue::PubKey(value.clone())),
+            Self::List(items) => Ok(OperationValue::List(
+                items
+                    .iter()
+                    .map(Value::to_operation)
+                    .collect::<Result<_, Stop>>()?,
+            )),
             Self::Op(value) => Ok(value.clone()),
             Self::Record { name, fields } if name == "StreamMessage" => {
                 let text = |field: &str| {
@@ -237,6 +243,9 @@ impl Value {
             OperationValue::Integer(value) => Self::Int(value),
             OperationValue::Bool(value) => Self::Bool(value),
             OperationValue::PubKey(value) => Self::PubKey(value),
+            OperationValue::List(items) => {
+                Self::List(items.into_iter().map(Value::from_operation).collect())
+            }
             OperationValue::PublishReport(report) => Self::Record {
                 name: "PublishReport".to_owned(),
                 fields: vec![("accepted".to_owned(), Self::Bool(report.accepted()))],

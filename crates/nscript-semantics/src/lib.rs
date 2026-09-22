@@ -39,6 +39,7 @@ pub enum CheckedArgument {
         name: String,
         fields: Vec<(String, CheckedArgument)>,
     },
+    List(Vec<CheckedArgument>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -149,6 +150,7 @@ pub fn analyze(program: &Program) -> Vec<Diagnostic> {
     }
     let (_, typed_diagnostics) = check(program);
     diagnostics.extend(typed_diagnostics);
+    validate_scoped_grants(program, &mut diagnostics);
 
     diagnostics.sort_by_key(|diagnostic| (diagnostic.span.start, diagnostic.code));
     diagnostics.dedup_by(|left, right| {
@@ -379,6 +381,21 @@ fn program_permissions(program: &Program) -> BTreeSet<String> {
         if let Item::Permissions(block) = item {
             for permission in &block.value {
                 match permission {
+                    // `concord Kick in devs` (RFC 0002 §2) grants exactly
+                    // what the flat `concord_kick` would: the scope is
+                    // recorded for `validate_scoped_grants` to check the
+                    // name exists, but does not yet narrow anything a real
+                    // host enforces (there is no multi-scope authority host
+                    // today; see `docs/LAYER3.md`). A grant only ever adds
+                    // to the program's capability set here, never widens it
+                    // beyond what the flat form already could.
+                    Permission::Named {
+                        operation,
+                        argument: Some(verb),
+                        ..
+                    } if operation.value == "concord" => {
+                        permissions.insert(format!("concord_{}", verb.value.to_lowercase()));
+                    }
                     Permission::Typed { operation, .. } | Permission::Named { operation, .. } => {
                         permissions.insert(operation.value.clone());
                     }
@@ -391,6 +408,61 @@ fn program_permissions(program: &Program) -> BTreeSet<String> {
         }
     }
     permissions
+}
+
+/// `concord <Verb> [in <scope>]` (RFC 0002 §2): the verb must be a Concord
+/// operation this compiler knows, and a scope, if given, must already be a
+/// name the program declares — `let`, `key`, or another capability. Neither
+/// requires a module to be imported for the syntax to be valid, matching
+/// `Named`'s existing permission forms.
+fn validate_scoped_grants(program: &Program, diagnostics: &mut Vec<Diagnostic>) {
+    let locals = program_locals(program);
+    for item in &program.ast.items {
+        let Item::Permissions(block) = item else {
+            continue;
+        };
+        for permission in &block.value {
+            let Permission::Named {
+                operation,
+                argument,
+                scope,
+            } = permission
+            else {
+                continue;
+            };
+            if operation.value != "concord" {
+                continue;
+            }
+            match argument {
+                Some(verb) if matches!(verb.value.as_str(), "Kick" | "Ban") => {}
+                Some(verb) => diagnostics.push(Diagnostic {
+                    code: "E3001",
+                    message: format!(
+                        "unknown concord verb `{}`; expected `Kick` or `Ban`",
+                        verb.value
+                    ),
+                    span: verb.span,
+                }),
+                None => diagnostics.push(Diagnostic {
+                    code: "E1101",
+                    message: "a concord grant names a verb, e.g. `concord Kick`".to_owned(),
+                    span: operation.span,
+                }),
+            }
+            if let Some(scope) = scope
+                && !locals.contains(&scope.value)
+            {
+                diagnostics.push(Diagnostic {
+                    code: "E1101",
+                    message: format!(
+                        "unknown scope `{}`; declare it first (`let {} = ...` or `key {} = host(...)`)",
+                        scope.value, scope.value, scope.value
+                    ),
+                    span: scope.span,
+                });
+            }
+        }
+    }
 }
 
 fn validate_item_calls(
@@ -1676,6 +1748,9 @@ fn checked_argument(expression: &Expr) -> Option<CheckedArgument> {
                 .filter_map(|(field, value)| Some((field.value.clone(), checked_argument(value)?)))
                 .collect(),
         }),
+        ExprKind::List(items) => Some(CheckedArgument::List(
+            items.iter().filter_map(checked_argument).collect(),
+        )),
         _ => None,
     }
 }
@@ -1745,6 +1820,23 @@ mod tests {
             codes("publish Note { content: \"hi\" }\n"),
             ["E2203", "E2204"]
         );
+    }
+
+    #[test]
+    fn a_scoped_concord_grant_needs_a_known_verb_and_a_declared_scope() {
+        assert!(codes("key devs = host(\"devs\")\npermissions { concord Kick in devs }\n").is_empty());
+        // No `in <scope>` at all is still a valid grant (RFC 0002 §2 makes
+        // the scope optional).
+        assert!(codes("permissions { concord Kick }\n").is_empty());
+        assert_eq!(
+            codes("key devs = host(\"devs\")\npermissions { concord Frobnicate in devs }\n"),
+            ["E3001"]
+        );
+        assert_eq!(
+            codes("permissions { concord Kick in nowhere }\n"),
+            ["E1101"]
+        );
+        assert_eq!(codes("permissions {\n    concord\n}\n"), ["E1101"]);
     }
 
     #[test]

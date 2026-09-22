@@ -1,0 +1,9 @@
+// error: E1101 incomplete-layer3-statement
+// `follow` with no list is an error, never a silent no-op.
+use nip02
+
+permissions {
+    follow_list
+}
+
+follow

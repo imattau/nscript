@@ -489,6 +489,10 @@ mod tests {
                     .collect();
                 format!("{} {{ {} }}", name.value, fields.join("; "))
             }
+            ExprKind::List(items) => {
+                let items: Vec<_> = items.iter().map(render).collect();
+                format!("[{}]", items.join(", "))
+            }
             other => format!("{other:?}"),
         }
     }
@@ -559,6 +563,34 @@ publish Note { content: "hello" }
         assert_eq!(
             lowered("say \"hi\" in chat\n"),
             "concord01.publish_message(chat, StreamMessage { author: me; content: \"hi\" })"
+        );
+    }
+
+    #[test]
+    fn nip_layer3_forms_lower_to_typed_module_operations() {
+        assert_eq!(
+            lowered("article \"post-1\" titled \"T\" content \"body\"\n"),
+            "nip23.publish_article(Article { identifier: \"post-1\"; title: \"T\"; content: \"body\" })"
+        );
+        assert_eq!(
+            lowered("message \"hi\" in \"general\"\n"),
+            "nip29.publish_group_message(GroupMessage { group: \"general\"; content: \"hi\" })"
+        );
+        assert_eq!(
+            lowered("deploy \"example.com\" from \"dist/\"\n"),
+            "nip5a.publish_site(SiteDeployment { domain: \"example.com\"; source: \"dist/\" })"
+        );
+        assert_eq!(
+            lowered("save \"prefs\" as \"dark\"\n"),
+            "nip78.publish_app_data(AppData { identifier: \"prefs\"; content: \"dark\" })"
+        );
+        assert_eq!(
+            lowered("relays read [\"wss://a\"] write [\"wss://b\"]\n"),
+            "nip65.publish_relay_list(RelayList { read: [\"wss://a\"]; write: [\"wss://b\"] })"
+        );
+        assert_eq!(
+            lowered("follow [alice, bob]\n"),
+            "nip02.publish_follow_list(FollowList { people: [alice, bob] })"
         );
     }
 

@@ -1,0 +1,8 @@
+// error: E1101 unknown-scope
+use concord04
+
+permissions {
+    concord Kick in nowhere
+}
+
+kick alice

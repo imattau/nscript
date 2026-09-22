@@ -1239,6 +1239,7 @@ pub enum OperationValue {
     Integer(i64),
     Bool(bool),
     PubKey(String),
+    List(Vec<OperationValue>),
     Record {
         name: String,
         fields: Vec<(String, OperationValue)>,
@@ -3056,6 +3057,9 @@ fn checked_to_operation(argument: &CheckedArgument) -> OperationValue {
                 .map(|(field, value)| (field.clone(), checked_to_operation(value)))
                 .collect(),
         },
+        CheckedArgument::List(items) => {
+            OperationValue::List(items.iter().map(checked_to_operation).collect())
+        }
     }
 }
 
@@ -5238,6 +5242,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             }
             _ => value.clone(),
         },
+        "FollowList" => match record_strings(fields, "people") {
+            Some(people) => OperationValue::FollowList(FollowList { people }),
+            None => value.clone(),
+        },
+        "RelayList" => match (record_strings(fields, "read"), record_strings(fields, "write")) {
+            (Some(read), Some(write)) => OperationValue::RelayList(RelayList { read, write }),
+            _ => value.clone(),
+        },
         _ => value.clone(),
     }
 }
@@ -5264,6 +5276,26 @@ fn record_pubkey(fields: &[(String, OperationValue)], key: &str) -> Option<Strin
     fields.iter().find_map(|(field, value)| {
         (field == key).then_some(match value {
             OperationValue::PubKey(value) => Some(value.clone()),
+            _ => None,
+        })?
+    })
+}
+
+/// A `List<PubKey>` or `List<Text>` field: either scalar unwraps the same way,
+/// since a follow list or a relay list is just strings by the time it is
+/// here.
+fn record_strings(fields: &[(String, OperationValue)], key: &str) -> Option<Vec<String>> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::List(items) => items
+                .iter()
+                .map(|item| match item {
+                    OperationValue::Text(text) | OperationValue::PubKey(text) => {
+                        Some(text.clone())
+                    }
+                    _ => None,
+                })
+                .collect(),
             _ => None,
         })?
     })
@@ -5357,6 +5389,55 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_list_valued_field_normalizes_a_follow_or_relay_list() {
+        let follow = OperationValue::Record {
+            name: "FollowList".to_owned(),
+            fields: vec![(
+                "people".to_owned(),
+                OperationValue::List(vec![
+                    OperationValue::PubKey("alice".to_owned()),
+                    OperationValue::PubKey("bob".to_owned()),
+                ]),
+            )],
+        };
+        assert_eq!(
+            normalize_record(&follow),
+            OperationValue::FollowList(FollowList {
+                people: vec!["alice".to_owned(), "bob".to_owned()]
+            })
+        );
+
+        let relays = OperationValue::Record {
+            name: "RelayList".to_owned(),
+            fields: vec![
+                (
+                    "read".to_owned(),
+                    OperationValue::List(vec![OperationValue::Text("wss://a".to_owned())]),
+                ),
+                (
+                    "write".to_owned(),
+                    OperationValue::List(vec![OperationValue::Text("wss://b".to_owned())]),
+                ),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&relays),
+            OperationValue::RelayList(RelayList {
+                read: vec!["wss://a".to_owned()],
+                write: vec!["wss://b".to_owned()],
+            })
+        );
+
+        // A field that isn't a list at all falls through unnormalized rather
+        // than panicking.
+        let malformed = OperationValue::Record {
+            name: "FollowList".to_owned(),
+            fields: vec![("people".to_owned(), OperationValue::Text("x".to_owned()))],
+        };
+        assert_eq!(normalize_record(&malformed), malformed);
+    }
 
     // RFC 0002 §3: fold queries as pure functions. Every `OperationHost`
     // answers these identically (they are default trait methods), so a
