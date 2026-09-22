@@ -1,34 +1,33 @@
 // A poll-close bot: tallies `vote` tags on the closing note with a `for`
-// loop and reassignable counters, then publishes the outcome as a real
+// loop and reassignable counters, then publishes the tally as a real
 // signed reply.
 //
 // Try it:
 //
 //   nscript run examples/poll-tally-bot.ns \
 //       --event '{"content": "closing the poll", "tags": [["t", "poll-close"], ["vote", "yes"], ["vote", "yes"], ["vote", "no"]]}'
-//       (2 yes, 1 no: publishes "Poll closed: yes wins")
+//       (2 yes, 1 no: publishes "Poll closed: 2 yes, 1 no - yes wins")
 //
 //   nscript run examples/poll-tally-bot.ns \
 //       --event '{"content": "closing the poll", "tags": [["t", "poll-close"], ["vote", "yes"], ["vote", "no"]]}'
-//       (tied: publishes "Poll closed: tied")
+//       (tied: publishes "Poll closed: 1 yes, 1 no - tied")
 //
 // `event.tags` iterates as one "name=value" text per tag (see
 // docs/HANDLERS.md), so a `vote` tag arrives as the text "vote=yes" or
 // "vote=no" and is matched with `contains` rather than read as a
 // structured pair.
 //
-// One thing this still could NOT do, found while writing it: publish the
-// actual tally (e.g. "2 yes, 1 no") rather than just who won. `+` only
-// joins two `Text`s or two `Int`s (see `arithmetic` in
-// crates/nscript-runtime/src/eval.rs) - there is no int-to-text
-// conversion, so `"count: " + yes` fails at run time with
-// `` `+` needs two ints, found a text and a int `` even though it checks
-// clean. This bot reports only who won, not the actual tally, until that
-// conversion exists.
+// An earlier version of this file could not publish the actual tally
+// counts (only who won): `+` only joins two `Text`s or two `Int`s (see
+// `arithmetic` in crates/nscript-runtime/src/eval.rs), and there was no
+// int-to-text conversion, so `"count: " + yes` failed at run time despite
+// checking clean. `text(value)` now exists for exactly this — it renders
+// any value the same way `print` already does — so the tally below uses
+// `text(yes)` / `text(no)` to build the real count into the message.
 //
-// (An earlier version of this file also had to work around `else if` not
+// (That same earlier version also had to work around `else if` not
 // parsing, despite `spec/grammar.ebnf`'s own `if_stmt` production
-// allowing it. That parser bug is now fixed, so the three-way branch
+// allowing it. That parser bug is fixed too, so the three-way branch
 // below is a normal `if` / `else if` / `else` chain.)
 use nip01
 use nip46
@@ -62,7 +61,7 @@ on Note where tags.t contains "poll-close" {
         outcome = "no wins"
     }
     let result = publish Note {
-        content: "Poll closed: " + outcome,
+        content: "Poll closed: " + text(yes) + " yes, " + text(no) + " no - " + outcome,
     } to public with account
     print(result.accepted)
 }

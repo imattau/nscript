@@ -19,15 +19,17 @@ applies inside a handler exactly as it does outside one.
 | Construct | Notes |
 |---|---|
 | `let`, assignment to a declared name | lexically scoped |
-| `if` / `else`, `for` over a list, `return` | conditions must be `Bool` |
+| `if` / `else` / `else if`, `for` over a list, `return` | conditions must be `Bool` |
 | integer arithmetic `+ - * / %` | overflow and division by zero are errors |
+| `+` on two `Text`s | joins them; `+` on one `Text` and one `Int` (either order) is an error — use `text(x)` to convert first |
 | `==`, `!=`, `< > <= >=`, `and`/`or` (short-circuit), `!` | ordering is for ints and text |
 | `contains`, `in` | text in text, element in list |
 | `Ok(x)`, `Err(x)`, `?`, `match` | see Results below |
 | text and list literals, records (`Name { field: value }`), indexing | |
 | `event.id`, `event.author`, `event.content`, `event.kind`, `event.created_at`, `event.tags` | `tags` iterates as `name=value` text |
 | `me` | the program's principal; an error if none is configured |
-| `print(x)`, `len(x)` | |
+| `print(x)`, `len(x)`, `text(x)` | `text(x)` renders any value the same way `print` does, as `Text` — the explicit conversion `+` needs to concatenate a non-`Text` value, e.g. `"count: " + text(n)` |
+| `publish <record> [to <relayset>] [with <signer>]` | see below |
 | user `fn`s | recursion allowed; a function sees only its own parameters |
 | `module.operation(args)` and the Layer 3 forms that lower to it | arguments become typed `OperationValue`s (`PubKey`, `Text`, `Integer`, `StreamMessage`, records) |
 

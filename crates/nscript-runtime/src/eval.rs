@@ -765,6 +765,21 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 self.host.print(&value.display())?;
                 Ok(Value::Unit)
             }
+            // `+` deliberately stays strict (two `Text`s or two `Int`s, per
+            // `arithmetic`, below) rather than silently coercing — the same
+            // choice this crate already made for `CheckedArgument::Bool` and
+            // `::List`, added as their own explicit shapes rather than
+            // letting some other type quietly stand in. `text(value)` is the
+            // explicit conversion a script reaches for instead, e.g.
+            // `"count: " + text(yes)`. It reuses `Value::display`, the same
+            // rendering `print` already uses, so `text(x)` and printing `x`
+            // never disagree.
+            ExprKind::Identifier(name) if name == "text" => {
+                let [value] = arguments.as_slice() else {
+                    return Err(fail("`text` takes one argument"));
+                };
+                Ok(Value::Text(value.display()))
+            }
             ExprKind::Identifier(name) if name == "len" => match arguments.as_slice() {
                 [Value::List(items)] => {
                     Ok(Value::Int(i64::try_from(items.len()).unwrap_or(i64::MAX)))
@@ -2422,14 +2437,17 @@ mod tests {
 
         assert_eq!(
             tally(&[["vote", "yes"], ["vote", "yes"], ["vote", "no"]]),
-            "Poll closed: yes wins"
+            "Poll closed: 2 yes, 1 no - yes wins"
         );
         assert_eq!(
             tally(&[["vote", "no"], ["vote", "no"]]),
-            "Poll closed: no wins"
+            "Poll closed: 0 yes, 2 no - no wins"
         );
-        assert_eq!(tally(&[["vote", "yes"], ["vote", "no"]]), "Poll closed: tied");
-        assert_eq!(tally(&[]), "Poll closed: tied");
+        assert_eq!(
+            tally(&[["vote", "yes"], ["vote", "no"]]),
+            "Poll closed: 1 yes, 1 no - tied"
+        );
+        assert_eq!(tally(&[]), "Poll closed: 0 yes, 0 no - tied");
     }
 
     #[test]
@@ -2458,6 +2476,36 @@ mod tests {
             assert_eq!(log.records.len(), 1, "kind={kind}");
             assert_eq!(log.records[0].message, expected, "kind={kind}");
         }
+    }
+
+    #[test]
+    fn text_renders_a_value_the_same_way_print_does_and_lets_plus_concatenate_it() {
+        let source = "permissions {\n    log\n}\n\non Note {\n    let count = 3\n    print(\"count: \" + text(count))\n    print(text(true))\n    print(text(\"already text\"))\n    print(text(event.author))\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = runtime();
+        let policy = policy_for(&checked);
+        let event = event_from_json(&serde_json::json!({"author": "alice"})).unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &event,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        let messages: Vec<_> = log.records.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            ["count: 3", "true", "already text", "alice"],
+            "{messages:?}"
+        );
     }
 
     /// What one evaluated cycle produced.
