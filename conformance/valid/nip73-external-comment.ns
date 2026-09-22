@@ -1,0 +1,13 @@
+// NIP-73 external content ids: a comment targeting an external identifier
+// (e.g. a book's ISBN) rather than another Nostr event.
+use nip73
+
+permissions {
+    external_comment
+}
+
+let result = nip73.publish_external_comment(ExternalComment {
+    content: "Loved this book";
+    target_id: "isbn:9780765382030";
+    target_kind: "isbn";
+})

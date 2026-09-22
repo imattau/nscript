@@ -1,0 +1,12 @@
+// NIP-27 text note references: mentioning profiles in a note's content adds
+// the corresponding `p` tags.
+use nip27
+
+permissions {
+    mention
+}
+
+let result = nip27.publish_note_with_mentions(NoteWithMentions {
+    content: "hello nostr:alice";
+    mentions: [alice, bob];
+})

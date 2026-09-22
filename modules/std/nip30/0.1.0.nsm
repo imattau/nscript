@@ -1,0 +1,19 @@
+module nip30 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/30.md"
+
+record CustomEmoji {
+    field shortcode: Text
+    field url: Text
+}
+
+record NoteWithEmoji {
+    field content: Text
+    field emoji: List<CustomEmoji>
+}
+
+error EmojiError {
+    field message: Text
+}
+
+operation publish_note_with_emoji(note: NoteWithEmoji) -> Result<PublishReport,EmojiError> effect Sign,Relay permission emoji

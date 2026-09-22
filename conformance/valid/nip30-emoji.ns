@@ -1,0 +1,17 @@
+// NIP-30 custom emoji: a note carrying `emoji` tags for its `:shortcode:`
+// references.
+use nip30
+
+permissions {
+    emoji
+}
+
+let result = nip30.publish_note_with_emoji(NoteWithEmoji {
+    content: "gm :gleasonator:";
+    emoji: [
+        CustomEmoji {
+            shortcode: "gleasonator";
+            url: "https://cdn.example/gleasonator.png";
+        },
+    ];
+})

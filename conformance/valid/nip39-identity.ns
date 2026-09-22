@@ -1,0 +1,16 @@
+// NIP-39 external identity claims: proofs of control over other platforms'
+// identities, published as `i` tags on kind 10011.
+use nip39
+
+permissions {
+    identity_claims
+}
+
+let result = nip39.publish_identity_claims(IdentityClaims {
+    claims: [
+        ExternalIdentity {
+            platform: "github:example";
+            proof: "https://gist.github.com/example/deadbeef";
+        },
+    ];
+})

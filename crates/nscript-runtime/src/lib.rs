@@ -1279,6 +1279,42 @@ pub struct ExpiringNote {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NoteWithMentions {
+    pub content: String,
+    pub mentions: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CustomEmoji {
+    pub shortcode: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NoteWithEmoji {
+    pub content: String,
+    pub emoji: Vec<CustomEmoji>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExternalIdentity {
+    pub platform: String,
+    pub proof: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IdentityClaims {
+    pub claims: Vec<ExternalIdentity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExternalComment {
+    pub content: String,
+    pub target_id: String,
+    pub target_kind: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationValue {
     Text(String),
     Integer(i64),
@@ -1345,6 +1381,10 @@ pub enum OperationValue {
     NoteWithMedia(NoteWithMedia),
     NoteWithWarning(NoteWithWarning),
     ExpiringNote(ExpiringNote),
+    NoteWithMentions(NoteWithMentions),
+    NoteWithEmoji(NoteWithEmoji),
+    IdentityClaims(IdentityClaims),
+    ExternalComment(ExternalComment),
     PublishReport(PublishReport),
 }
 
@@ -5037,6 +5077,96 @@ impl OperationHost for FakeOperationHost {
                     }],
                 }))
             }
+            ("nip27", "publish_note_with_mentions") => {
+                let [OperationValue::NoteWithMentions(note)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if note.content.is_empty() || note.mentions.is_empty() {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://note-with-mentions".to_owned(),
+                        accepted: true,
+                        detail: "mention note lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip30", "publish_note_with_emoji") => {
+                let [OperationValue::NoteWithEmoji(note)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if note.content.is_empty()
+                    || note.emoji.is_empty()
+                    || note
+                        .emoji
+                        .iter()
+                        .any(|item| item.shortcode.is_empty() || item.url.is_empty())
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://note-with-emoji".to_owned(),
+                        accepted: true,
+                        detail: "emoji note lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip39", "publish_identity_claims") => {
+                let [OperationValue::IdentityClaims(claims)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if claims.claims.is_empty()
+                    || claims
+                        .claims
+                        .iter()
+                        .any(|claim| claim.platform.is_empty() || claim.proof.is_empty())
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://identity-claims".to_owned(),
+                        accepted: true,
+                        detail: "identity claims lowered".to_owned(),
+                    }],
+                }))
+            }
+            ("nip73", "publish_external_comment") => {
+                let [OperationValue::ExternalComment(comment)] = arguments else {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                };
+                if comment.content.is_empty()
+                    || comment.target_id.is_empty()
+                    || comment.target_kind.is_empty()
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
+                Ok(OperationValue::PublishReport(PublishReport {
+                    outcomes: vec![RelayOutcome {
+                        relay: "fake://external-comment".to_owned(),
+                        accepted: true,
+                        detail: "external comment lowered".to_owned(),
+                    }],
+                }))
+            }
             ("nip25", "publish_reaction") => {
                 let [OperationValue::Reaction(_reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
@@ -5451,6 +5581,32 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             }
             _ => value.clone(),
         },
+        "NoteWithMentions" => match (text("content"), record_strings(fields, "mentions")) {
+            (Some(content), Some(mentions)) => {
+                OperationValue::NoteWithMentions(NoteWithMentions { content, mentions })
+            }
+            _ => value.clone(),
+        },
+        "NoteWithEmoji" => match (text("content"), record_emoji(fields, "emoji")) {
+            (Some(content), Some(emoji)) => {
+                OperationValue::NoteWithEmoji(NoteWithEmoji { content, emoji })
+            }
+            _ => value.clone(),
+        },
+        "IdentityClaims" => match record_identities(fields, "claims") {
+            Some(claims) => OperationValue::IdentityClaims(IdentityClaims { claims }),
+            None => value.clone(),
+        },
+        "ExternalComment" => match (text("content"), text("target_id"), text("target_kind")) {
+            (Some(content), Some(target_id), Some(target_kind)) => {
+                OperationValue::ExternalComment(ExternalComment {
+                    content,
+                    target_id,
+                    target_kind,
+                })
+            }
+            _ => value.clone(),
+        },
         _ => value.clone(),
     }
 }
@@ -5536,6 +5692,57 @@ fn record_media(
                         ) {
                             (Some(url), Some(mime), Some(hash)) => {
                                 Some(MediaAttachment { url, mime, hash })
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        })?
+    })
+}
+
+/// A `List<CustomEmoji>` field; see [`record_poll_options`] for why each
+/// element is read directly rather than through `normalize_record`.
+fn record_emoji(fields: &[(String, OperationValue)], key: &str) -> Option<Vec<CustomEmoji>> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::List(items) => items
+                .iter()
+                .map(|item| match item {
+                    OperationValue::Record { name, fields } if name == "CustomEmoji" => {
+                        match (record_text(fields, "shortcode"), record_text(fields, "url")) {
+                            (Some(shortcode), Some(url)) => {
+                                Some(CustomEmoji { shortcode, url })
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        })?
+    })
+}
+
+/// A `List<ExternalIdentity>` field; see [`record_poll_options`] for why each
+/// element is read directly rather than through `normalize_record`.
+fn record_identities(
+    fields: &[(String, OperationValue)],
+    key: &str,
+) -> Option<Vec<ExternalIdentity>> {
+    fields.iter().find_map(|(field, value)| {
+        (field == key).then_some(match value {
+            OperationValue::List(items) => items
+                .iter()
+                .map(|item| match item {
+                    OperationValue::Record { name, fields } if name == "ExternalIdentity" => {
+                        match (record_text(fields, "platform"), record_text(fields, "proof")) {
+                            (Some(platform), Some(proof)) => {
+                                Some(ExternalIdentity { platform, proof })
                             }
                             _ => None,
                         }
@@ -5786,6 +5993,71 @@ mod tests {
                     url: "https://cdn.example/a.jpg".to_owned(),
                     mime: "image/jpeg".to_owned(),
                     hash: "sha256:abc".to_owned(),
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn a_list_of_records_normalizes_emoji_and_identity_claims() {
+        let emoji = OperationValue::Record {
+            name: "NoteWithEmoji".to_owned(),
+            fields: vec![
+                ("content".to_owned(), OperationValue::Text("gm".to_owned())),
+                (
+                    "emoji".to_owned(),
+                    OperationValue::List(vec![OperationValue::Record {
+                        name: "CustomEmoji".to_owned(),
+                        fields: vec![
+                            (
+                                "shortcode".to_owned(),
+                                OperationValue::Text("wave".to_owned()),
+                            ),
+                            (
+                                "url".to_owned(),
+                                OperationValue::Text("https://cdn.example/wave.png".to_owned()),
+                            ),
+                        ],
+                    }]),
+                ),
+            ],
+        };
+        assert_eq!(
+            normalize_record(&emoji),
+            OperationValue::NoteWithEmoji(NoteWithEmoji {
+                content: "gm".to_owned(),
+                emoji: vec![CustomEmoji {
+                    shortcode: "wave".to_owned(),
+                    url: "https://cdn.example/wave.png".to_owned(),
+                }],
+            })
+        );
+
+        let claims = OperationValue::Record {
+            name: "IdentityClaims".to_owned(),
+            fields: vec![(
+                "claims".to_owned(),
+                OperationValue::List(vec![OperationValue::Record {
+                    name: "ExternalIdentity".to_owned(),
+                    fields: vec![
+                        (
+                            "platform".to_owned(),
+                            OperationValue::Text("github:example".to_owned()),
+                        ),
+                        (
+                            "proof".to_owned(),
+                            OperationValue::Text("https://gist.example/abc".to_owned()),
+                        ),
+                    ],
+                }]),
+            )],
+        };
+        assert_eq!(
+            normalize_record(&claims),
+            OperationValue::IdentityClaims(IdentityClaims {
+                claims: vec![ExternalIdentity {
+                    platform: "github:example".to_owned(),
+                    proof: "https://gist.example/abc".to_owned(),
                 }],
             })
         );

@@ -1,0 +1,14 @@
+module nip27 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/blob/master/27.md"
+
+record NoteWithMentions {
+    field content: Text
+    field mentions: List<PubKey>
+}
+
+error MentionError {
+    field message: Text
+}
+
+operation publish_note_with_mentions(note: NoteWithMentions) -> Result<PublishReport,MentionError> effect Sign,Relay permission mention

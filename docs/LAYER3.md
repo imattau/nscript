@@ -546,3 +546,35 @@ the operation failed at run time with a shape error, even though `check`
 passed clean. `CheckedArgument::Bool` now carries it through, the same way
 `CheckedArgument::List` was added for `follow`/`relays` earlier in this
 document.
+
+## Four more: NIP-27, NIP-30, NIP-39, NIP-73
+
+Same honest scoping as the previous four: each of these is, in real Nostr, a
+tag attachable to arbitrary event kinds, not a kind of its own, and the
+language's core publish path still has no general tag mechanism. Each module
+below covers the one case it models well and no more.
+
+- `nip27` (text note references): `nip27.publish_note_with_mentions` takes a
+  note's content plus a `List<PubKey>` of mentioned profiles, published as
+  `p` tags. It does not build `q` tags for mentioned *events* (NIP-27's other
+  half) — that needs an `EventId`/`nevent` reference shape this module
+  doesn't take yet.
+- `nip30` (custom emoji): `nip30.publish_note_with_emoji` takes content plus
+  a list of `CustomEmoji { shortcode, url }`, published as `emoji` tags. The
+  spec's optional third tag element (a `kind:pubkey:d-tag` pointer to a
+  NIP-51 emoji-set event) is not modelled.
+- `nip39` (external identity claims): `nip39.publish_identity_claims`
+  publishes one or more `ExternalIdentity { platform, proof }` pairs as `i`
+  tags on the claims event. Verifying a proof (fetching the gist, the tweet,
+  ...) is out of scope, as it always has been for every other module here —
+  the module publishes the claim, it does not check it.
+- `nip73` (external content IDs): modelled as a comment whose target is an
+  external identifier rather than another Nostr event —
+  `nip73.publish_external_comment(ExternalComment { content, target_id,
+  target_kind })` — since a comment on an external ID is the NIP's own
+  primary example and the shape NIP-22's `Comment` already established here.
+  A raw `i`/`k` tag pair on some other event kind is not exposed separately.
+
+None of the four get Layer 3 sugar keywords, for the same reason as `nip88`/
+`nip92`/`nip36`/`nip40`: each takes a list-of-records or multi-field shape
+that doesn't compress into a short intent phrase.
