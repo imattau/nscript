@@ -156,3 +156,12 @@ body {
   color: var(--muted);
   font: 11px/1.4 ui-monospace, monospace;
 }
+
+#lowering-panel {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  color: var(--muted);
+  font: 11px/1.4 ui-monospace, monospace;
+  max-height: 240px;
+  overflow-y: auto;
+}

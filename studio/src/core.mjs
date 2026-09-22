@@ -324,3 +324,33 @@ export function decodeBase64(base64) {
   }
   return bytes;
 }
+
+// Renders the deterministic IR the way the lowering inspector wants it: the
+// capability surface, the declared permissions, and the create → sign →
+// publish operation chain.
+export function describeIr(ir) {
+  const lines = [`schema ${ir.schema}`, `profile ${ir.profile}`];
+  for (const capability of ir.capabilities ?? []) {
+    lines.push(`capability ${capability.kind}:${capability.name}`);
+  }
+  for (const permission of ir.permissions ?? []) {
+    lines.push(`permission ${permission}`);
+  }
+  for (const operation of ir.operations ?? []) {
+    lines.push(describeIrOperation(operation));
+  }
+  return lines.join("\n");
+}
+
+function describeIrOperation(operation) {
+  switch (operation.op) {
+    case "create_event":
+      return `create_event(${operation.event}, kind ${operation.kind})`;
+    case "sign_event":
+      return `sign_event(${operation.event}, ${operation.signer})`;
+    case "publish_event":
+      return `publish_event(${operation.event}, ${operation.relayset})`;
+    default:
+      return JSON.stringify(operation);
+  }
+}

@@ -8,12 +8,14 @@ import {
   describeReport,
   buildChecklist,
   decodeBase64,
+  describeIr,
 } from "./core.mjs";
 
 const status = document.getElementById("status");
 const templateList = document.getElementById("template-list");
 const permissionsPanel = document.getElementById("permissions-panel");
 const problemsPanel = document.getElementById("problems-panel");
+const loweringPanel = document.getElementById("lowering-panel");
 const fixtureSelect = document.getElementById("fixture");
 const runPreview = document.getElementById("run-preview");
 const previewOutput = document.getElementById("preview-output");
@@ -182,6 +184,15 @@ async function main() {
     }
     if (mapped.groups.length === 0) {
       permissionsPanel.textContent = "no capabilities inferred";
+    }
+
+    const ir = client.ir(source);
+    if (ir.ok && ir.result.checked) {
+      loweringPanel.textContent = describeIr(ir.result.ir);
+    } else if (ir.ok) {
+      loweringPanel.textContent = "not lowered while diagnostics remain";
+    } else {
+      loweringPanel.textContent = `request failed: ${ir.error.message}`;
     }
   }
 

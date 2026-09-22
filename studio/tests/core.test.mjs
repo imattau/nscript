@@ -18,6 +18,7 @@ import {
   describeReport,
   buildChecklist,
   decodeBase64,
+  describeIr,
 } from "../src/core.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -122,4 +123,15 @@ test("build produces a manifest, lockfile, and downloadable wasm", () => {
     lock.result.lockfile.modules.some((module) => module.name === "nip17"),
     "nip17 in the lockfile",
   );
+});
+
+test("the lowering inspector renders the create/sign/publish chain", () => {
+  const source = "use nip01\nsigner account = nip46()\nrelayset public = configured\n\ndefaults {\n    signer: account\n    relays: public\n}\n\npermissions {\n    publish Note to public\n    sign Note with account\n    relay public\n}\n\npublish Note { content: \"hi\" }\n";
+  const ir = client.ir(source);
+  assert.ok(ir.ok && ir.result.checked, "ir lowers");
+  const text = describeIr(ir.result.ir);
+  assert.ok(text.includes("create_event"), text);
+  assert.ok(text.includes("sign_event"), text);
+  assert.ok(text.includes("publish_event"), text);
+  assert.ok(text.includes("permission relay"), text);
 });
