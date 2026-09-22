@@ -1,0 +1,54 @@
+// A support-ticket triage bot: labels urgent requests, then always
+// acknowledges with a real published reply — combining a `?`-propagating
+// module operation call with the core-language `publish` expression, now
+// that both are evaluated for real inside a handler.
+//
+// Try it:
+//
+//   nscript run examples/support-ticket-bot.ns
+//       (no --event: nothing happens — a handler's own `publish` and
+//       operation calls only run when the handler actually does)
+//
+//   nscript run examples/support-ticket-bot.ns \
+//       --event '{"content": "urgent: site is down", "tags": [["t", "support"]], "id": "e1"}'
+//       (labels the note urgent, then acknowledges it)
+//
+//   nscript run examples/support-ticket-bot.ns \
+//       --event '{"content": "how do I reset my password?", "tags": [["t", "support"]], "id": "e2"}'
+//       (not urgent: skips the label, still acknowledges)
+//
+//   nscript run examples/support-ticket-bot.ns --fail nip32.publish_label \
+//       --event '{"content": "urgent: site is down", "tags": [["t", "support"]], "id": "e3"}'
+//       (the label call fails; `?` aborts the handler before it acknowledges —
+//       the failure is reported, not swallowed, and nothing is published)
+use nip01
+use nip32
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    read Note from public
+    publish Note to public
+    sign Note with account
+    relay public
+    label
+    log
+}
+
+on Note where tags.t contains "support" {
+    if event.content contains "urgent" {
+        nip32.publish_label(Label {
+            target: event.id,
+            namespace: "nscript",
+            value: "urgent",
+        })?
+        print("labeled urgent")
+    }
+
+    let result = publish Note {
+        content: "Thanks - we received your support request and will respond within 24h.",
+    } to public with account
+    print(result.accepted)
+}

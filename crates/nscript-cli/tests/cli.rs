@@ -1036,6 +1036,61 @@ fn publish_from_inside_a_handler_only_fires_when_the_handler_actually_runs() {
 }
 
 #[test]
+fn the_support_ticket_bot_labels_urgent_tickets_and_always_acknowledges() {
+    let path = repository_path("examples/support-ticket-bot.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    // No event: nothing runs, nothing is published or labeled.
+    let output = run(&[]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("nip32."), "{stdout}");
+    assert!(!stdout.contains("log info: true"), "{stdout}");
+
+    // Urgent: labeled, then acknowledged with a real publish.
+    let output = run(&[
+        "--event",
+        r#"{"content":"urgent: site is down","tags":[["t","support"]],"id":"e1"}"#,
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("log info: labeled urgent"), "{stdout}");
+    assert!(stdout.contains("nip32.publish_label"), "{stdout}");
+    assert!(stdout.contains("log info: true"), "{stdout}");
+
+    // Not urgent: no label, but still acknowledged.
+    let output = run(&[
+        "--event",
+        r#"{"content":"how do I reset my password?","tags":[["t","support"]],"id":"e2"}"#,
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("nip32."), "{stdout}");
+    assert!(stdout.contains("log info: true"), "{stdout}");
+
+    // The label call fails: `?` aborts the handler before the
+    // acknowledgement, and the failure is reported, not swallowed.
+    let output = run(&[
+        "--fail",
+        "nip32.publish_label",
+        "--event",
+        r#"{"content":"urgent: site is down","tags":[["t","support"]],"id":"e3"}"#,
+    ]);
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("it returned an error"), "{stderr}");
+    assert!(!stdout.contains("log info: true"), "{stdout}");
+}
+
+#[test]
 fn a_key_must_be_declared_from_a_host_label() {
     let dir = std::env::temp_dir().join("nscript-key-decl");
     std::fs::create_dir_all(&dir).unwrap();
