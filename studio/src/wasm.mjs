@@ -60,6 +60,12 @@ export function createClient(instance) {
     run(source, modules = []) {
       return call({ op: "run", source, modules });
     },
+    manifest(source, publisher, name = "script", version = "0.1.0", modules = []) {
+      return call({ op: "manifest", source, publisher, name, version, modules });
+    },
+    lock(source, modules = []) {
+      return call({ op: "lock", source, modules });
+    },
   };
 }
 

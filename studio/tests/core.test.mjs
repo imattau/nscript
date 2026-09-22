@@ -16,6 +16,8 @@ import {
   mapFootprint,
   templates,
   describeReport,
+  buildChecklist,
+  decodeBase64,
 } from "../src/core.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -91,4 +93,33 @@ test("test event runs a template handler and formats a report", () => {
   const text = describeReport(response.result.report);
   assert.ok(text.includes("Matched: 1/1 handlers"));
   assert.ok(text.includes("log info: found:"));
+});
+
+test("build produces a manifest, lockfile, and downloadable wasm", () => {
+  const template = templates().find((item) => item.name === "Auto-reply bot");
+  const manifest = client.manifest(
+    template.source,
+    "npub1author",
+    "auto-responder",
+    "1.2.0",
+  );
+  assert.ok(manifest.ok, "manifest request succeeded");
+  assert.equal(manifest.result.checked, true);
+  const checklist = buildChecklist(manifest.result);
+  assert.ok(checklist.every((step) => step.ok), checklist.map((s) => `${s.step}:${s.ok}`).join(" "));
+  assert.equal(manifest.result.manifest.name, "auto-responder");
+  assert.equal(manifest.result.manifest.version, "1.2.0");
+  assert.equal(manifest.result.manifest.format, "npk");
+  assert.equal(manifest.result.manifest.sha256.length, 64);
+  const bytes = decodeBase64(manifest.result.wasm);
+  assert.equal(bytes.length, manifest.result.bytes);
+  assert.deepEqual([...bytes.subarray(0, 4)], [0x00, 0x61, 0x73, 0x6d], "wasm magic");
+
+  const lock = client.lock(template.source);
+  assert.ok(lock.result.lockfile);
+  assert.equal(lock.result.lockfile.lockfile_version, 1);
+  assert.ok(
+    lock.result.lockfile.modules.some((module) => module.name === "nip17"),
+    "nip17 in the lockfile",
+  );
 });

@@ -6,6 +6,8 @@ import {
   mapFootprint,
   templates,
   describeReport,
+  buildChecklist,
+  decodeBase64,
 } from "./core.mjs";
 
 const status = document.getElementById("status");
@@ -15,6 +17,8 @@ const problemsPanel = document.getElementById("problems-panel");
 const fixtureSelect = document.getElementById("fixture");
 const runPreview = document.getElementById("run-preview");
 const previewOutput = document.getElementById("preview-output");
+const buildButton = document.getElementById("build-button");
+const buildPanel = document.getElementById("build-panel");
 
 async function main() {
   const client = await loadWasm("./nscript_wasm.wasm").catch((error) => {
@@ -196,6 +200,67 @@ async function main() {
     }
     const { report } = response.result;
     previewOutput.textContent = report ? describeReport(report) : "no preview";
+  });
+
+  function download(bytes, filename) {
+    const url = URL.createObjectURL(
+      new Blob([bytes], { type: "application/wasm" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  buildButton.addEventListener("click", () => {
+    const source = editor.getValue();
+    const manifest = client.manifest(source, "npub1author", "script", "0.1.0");
+    if (!manifest.ok) {
+      buildPanel.textContent = `request failed: ${manifest.error.message}`;
+      return;
+    }
+    const lock = client.lock(source);
+    buildPanel.innerHTML = "";
+    for (const item of buildChecklist(manifest.result)) {
+      const row = document.createElement("div");
+      row.className = `item ${item.ok ? "item-granted" : "item-requested"}`;
+      row.textContent = `${item.ok ? "✓" : "✗"} ${item.step}`;
+      buildPanel.appendChild(row);
+    }
+    if (!manifest.result.checked) {
+      return;
+    }
+    const actions = document.createElement("div");
+    actions.className = "preview-row";
+
+    const downloadButton = document.createElement("button");
+    downloadButton.textContent = `Download script.wasm (${manifest.result.bytes} B)`;
+    downloadButton.addEventListener("click", () => {
+      download(decodeBase64(manifest.result.wasm), "script.wasm");
+    });
+    actions.appendChild(downloadButton);
+
+    const copyManifest = document.createElement("button");
+    copyManifest.textContent = "Copy manifest";
+    copyManifest.addEventListener("click", () => {
+      navigator.clipboard.writeText(JSON.stringify(manifest.result.manifest, null, 2));
+    });
+    actions.appendChild(copyManifest);
+
+    buildPanel.appendChild(actions);
+
+    const artifact = document.createElement("pre");
+    artifact.className = "build-json";
+    artifact.textContent = JSON.stringify(manifest.result.manifest, null, 2);
+    buildPanel.appendChild(artifact);
+
+    if (lock.ok && lock.result.lockfile) {
+      const lockfile = document.createElement("pre");
+      lockfile.className = "build-json";
+      lockfile.textContent = JSON.stringify(lock.result.lockfile, null, 2);
+      buildPanel.appendChild(lockfile);
+    }
   });
 
   refresh();

@@ -138,3 +138,21 @@ body {
   color: var(--text);
   font: 12px/1.5 ui-monospace, monospace;
 }
+
+#build-button {
+  background: var(--accent);
+  color: #0b0e14;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.build-json {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  color: var(--muted);
+  font: 11px/1.4 ui-monospace, monospace;
+}

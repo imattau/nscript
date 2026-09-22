@@ -20,6 +20,7 @@
 //! `analyze`, `inspect`, `ir`, `compile`, and `run`.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use nscript_runtime::{
     FakeClock, FakeLogHost, FakeOperationHost, FakeRelayHost, FakeSignerHost, FakeTimerHost,
@@ -28,6 +29,7 @@ use nscript_runtime::{
 use nscript_semantics::{CheckedProgram, check, footprint, infer};
 use nscript_syntax::{Diagnostic, Program};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 const ABI_VERSION: u32 = 1;
 
@@ -166,6 +168,8 @@ fn process_request(request: &str) -> String {
         "completions" => handle_completions(source, &modules, &value),
         "hover" => handle_hover(source, &modules, &value),
         "test_event" => handle_test_event(source, &modules, &value),
+        "manifest" => handle_manifest(source, &modules, &value),
+        "lock" => handle_lock(source, &modules),
         other => error_response(&format!("unknown operation `{other}`")),
     }
 }
@@ -624,6 +628,152 @@ fn parse_test_event(value: Option<&Value>) -> Option<SignedEvent> {
     })
 }
 
+/// Builds an npack-compatible manifest for the compiled artifact, mirroring the
+/// CLI's `package manifest` but with no file system: the wasm artifact is
+/// compiled in memory and its SHA-256 becomes the manifest hash.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+fn handle_manifest(source: &str, modules: &[ModuleSource], request: &Value) -> String {
+    let Some(publisher) = request.get("publisher").and_then(Value::as_str) else {
+        return error_response("manifest requires a `publisher`");
+    };
+    let name = request
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("script");
+    let version = request
+        .get("version")
+        .and_then(Value::as_str)
+        .unwrap_or("0.1.0");
+    let artifact = request
+        .get("artifact")
+        .and_then(Value::as_str)
+        .unwrap_or("script.wasm");
+    let checked = match checked_program(source, modules) {
+        Ok(checked) => checked,
+        Err(diagnostics) => {
+            return ok(json!({
+                "diagnostics": diagnostics,
+                "checked": false,
+                "manifest": null,
+            }));
+        }
+    };
+    let loaded = load(source, modules);
+    let ir = nscript_ir::lower(&loaded.program, &checked, &loaded.graph);
+    let wasm = nscript_ir::emit_wasm(&ir);
+    let digest = Sha256::digest(&wasm);
+    let mut sha256 = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut sha256, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    let dependencies = loaded
+        .program
+        .imports
+        .iter()
+        .map(|import| {
+            format!(
+                "{} {}",
+                import.path,
+                import.requirement.as_deref().unwrap_or("*")
+            )
+        })
+        .collect::<Vec<_>>();
+    let resolved_modules = loaded
+        .graph
+        .modules
+        .values()
+        .map(|module| {
+            json!({
+                "name": module.descriptor.id.name,
+                "version": module.descriptor.id.version.to_string(),
+                "sha256": nscript_modules::hash_hex(&module.descriptor.canonical_hash),
+            })
+        })
+        .collect::<Vec<_>>();
+    let manifest = json!({
+        "publisher": publisher,
+        "name": name,
+        "version": version,
+        "artifact": artifact,
+        "sha256": sha256,
+        "dependencies": dependencies,
+        "conflicts": [],
+        "artifact_event": Value::Null,
+        "os": "any",
+        "arch": "any",
+        "format": "npk",
+        "runtime_requires": ["nscript-runtime >=0.1"],
+        "provides": ["nscript-program"],
+        "post_install": [],
+        "nscript": {
+            "source": "script.ns",
+            "lockfile": Value::Null,
+            "resolved_modules": resolved_modules,
+            "effects": checked.effects.iter().map(|effect| format!("{effect:?}").to_lowercase()).collect::<Vec<_>>(),
+            "permissions_reviewed": true
+        }
+    });
+    ok(json!({
+        "diagnostics": [],
+        "checked": true,
+        "manifest": manifest,
+        "wasm": base64(&wasm),
+        "bytes": wasm.len(),
+        "sha256": sha256,
+    }))
+}
+
+/// Emits the deterministic lockfile for a source, mirroring the CLI's
+/// `package lock`.
+#[must_use]
+fn handle_lock(source: &str, modules: &[ModuleSource]) -> String {
+    let loaded = load(source, modules);
+    if !loaded.diagnostics.is_empty() {
+        return ok(json!({
+            "diagnostics": diagnostics_json(&loaded.diagnostics),
+            "checked": false,
+            "lockfile": null,
+        }));
+    }
+    let lock_modules = loaded
+        .graph
+        .modules
+        .values()
+        .map(|module| {
+            json!({
+                "name": module.descriptor.id.name,
+                "version": module.descriptor.id.version.to_string(),
+                "sha256": nscript_modules::hash_hex(&module.descriptor.canonical_hash),
+                "dependencies": module.descriptor.dependencies.iter().map(|dependency| {
+                    json!({
+                        "name": dependency.name,
+                        "requirement": dependency.requirement.to_string(),
+                    })
+                }).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let roots = loaded
+        .program
+        .imports
+        .iter()
+        .map(|import| {
+            json!({
+                "name": import.path,
+                "requirement": import.requirement.as_deref().unwrap_or("*"),
+            })
+        })
+        .collect::<Vec<_>>();
+    let lockfile = json!({
+        "lockfile_version": 1,
+        "source": "script.ns",
+        "roots": roots,
+        "modules": lock_modules,
+    });
+    ok(json!({ "diagnostics": [], "checked": true, "lockfile": lockfile }))
+}
+
 #[must_use]
 fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -808,5 +958,53 @@ mod tests {
         assert!(response["result"]["executed"].as_bool().unwrap());
         assert_eq!(response["result"]["report"]["dispatched"], 1);
         assert_eq!(response["result"]["report"]["logs"][0]["message"], "hello");
+    }
+
+    #[test]
+    fn manifest_builds_an_npack_compatible_package() {
+        let source = include_str!("../../../conformance/valid/hello-note.ns");
+        let request = serde_json::json!({
+            "op": "manifest",
+            "source": source,
+            "publisher": "npub1author",
+            "name": "hello-note",
+            "version": "0.1.0",
+        });
+        let response = result(&request.to_string());
+        assert!(response["result"]["checked"].as_bool().unwrap());
+        let manifest = &response["result"]["manifest"];
+        assert_eq!(manifest["publisher"], "npub1author");
+        assert_eq!(manifest["format"], "npk");
+        assert_eq!(manifest["sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            response["result"]["sha256"].as_str().unwrap(),
+            manifest["sha256"].as_str().unwrap()
+        );
+        assert!(
+            response["result"]["wasm"]
+                .as_str()
+                .unwrap()
+                .starts_with("AGFzbQ")
+        );
+    }
+
+    #[test]
+    fn lock_emits_a_deterministic_lockfile() {
+        let source = include_str!("../../../conformance/valid/nip17-send.ns");
+        let response = result(&format!(
+            r#"{{"op":"lock","source":{} }}"#,
+            serde_json::to_string(source).expect("source is a string")
+        ));
+        let lockfile = &response["result"]["lockfile"];
+        assert_eq!(lockfile["lockfile_version"], 1);
+        let names = lockfile["modules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|module| module["name"].as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"nip17"), "{names:?}");
+        assert!(names.contains(&"nip44"), "{names:?}");
+        assert!(names.contains(&"nip59"), "{names:?}");
     }
 }

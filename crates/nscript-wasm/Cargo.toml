@@ -18,6 +18,7 @@ nscript-runtime = { path = "../nscript-runtime", default-features = false }
 nscript-semantics = { path = "../nscript-semantics" }
 nscript-syntax = { path = "../nscript-syntax" }
 serde_json.workspace = true
+sha2.workspace = true
 
 [lints.rust]
 unsafe_code = "allow"

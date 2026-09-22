@@ -300,3 +300,27 @@ export function describeReport(report) {
   }
   return lines.join("\n");
 }
+
+// The Build checklist. `build` is the wasm `manifest` response (which also
+// carries the compiled wasm and the lockfile request is separate).
+export function buildChecklist(build) {
+  const clean = build?.checked === true;
+  const steps = [
+    { step: "Source", ok: clean },
+    { step: "Type check", ok: clean },
+    { step: "Permissions", ok: clean },
+    { step: "WASM build", ok: clean && build?.bytes > 0 },
+    { step: "Lockfile", ok: clean },
+    { step: "Manifest", ok: clean && build?.manifest != null },
+  ];
+  return steps;
+}
+
+export function decodeBase64(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
