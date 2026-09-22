@@ -214,9 +214,57 @@ A handler that loops or recurses without end stops with
 An unsupported construct is a stable `OperationUnavailable` or
 `EvaluationError`, never a silent skip.
 
-- **Not evaluated:** `select`, `fetch`, `latest`, `publish`, `sign`, decimals,
-  durations, and nested `on`/`every`/`at`/`Send`. Publication from inside a
-  handler is the largest remaining missing piece.
+- **Not evaluated:** `select`, `fetch`, `latest`, `sign` (standalone — see
+  below), decimals, durations, and nested `on`/`every`/`at`/`Send`.
+- **`publish <record> [to <relayset>] [with <signer>]` is evaluated.** It was
+  "the largest remaining missing piece" until it was wired up:
+  `EvalHost::publish` backs it, implemented on `RuntimeSession` by calling a
+  new `Runtime::publish_now` (the same create-sign-publish sequence
+  `Runtime::run`'s own startup pass already used, factored out so a handler
+  can call it live). `to`/`with` fall back to `defaults { relays: ...; signer:
+  ... }` when the script names neither, exactly as a top-level `publish`
+  already does. The record's own name is the event type, and only a
+  `content` field is carried — the same shape and the same limits a
+  top-level `publish` already has; a handler gets no more than that.
+  `examples/handler-publish-bot.ns` demonstrates it, both the case where no
+  event ever reaches the handler (nothing is published) and the case where
+  one does (a real signed, published reply).
+- **Fixing this also fixed a real bug, not just a missing feature.** The
+  checker's `check_publish` collects a `publish` expression into
+  `checked.publications` wherever it appears in the program, including
+  nested inside a handler body — it has to, since the same pass also does
+  that `publish`'s permission and effect checking. But `Runtime::run` used
+  to iterate `checked.publications` unconditionally at program startup, so
+  a `publish` written *inside* `on Note { ... }` fired once immediately,
+  regardless of whether any event was ever delivered to that handler — the
+  same bug `eval::top_level_operation_calls`'s doc comment already warned
+  a naive fix for handler-nested `module.operation(...)` calls would have.
+  `eval::top_level_publications` now applies the identical span-containment
+  filter `top_level_operation_calls` already used, and `Runtime::run` uses
+  it instead of the raw list. Confirmed with `nscript run` on a script with
+  no `--event` at all: before the fix, a handler-nested `publish` still
+  printed `publication 0: 1/1 relays accepted`; after, running with no
+  events prints nothing, and the same `publish` fires exactly once, only
+  when a matching event is actually delivered.
+- **`send <record> with <signer>` (no `to`) stays unsupported, deliberately,
+  not just unwired.** This is the form `private-message.ns` uses for NIP-17:
+  `send PrivateMessage { to: ..., content: ... } with account`. This crate
+  has no NIP-17 encrypt-and-gift-wrap logic, and reusing `publish`'s plain
+  create-sign-publish path for it would post the record's fields as an
+  ordinary, *unencrypted* event under its record name (`PrivateMessage` is
+  not a real Nostr kind) — silently leaking a "private" message in the
+  clear instead of failing loudly. That would be worse than the current
+  `OperationUnavailable`. `send <text> to <recipient>` is a different,
+  already-real case: the parser lowers it to `nip17.send_private(...)`, an
+  ordinary module call the evaluator already runs correctly, inside a
+  handler or out of one.
+- **Standalone `sign <record> with <signer>` also stays unsupported.**
+  Nothing in this codebase's examples or conformance fixtures uses it
+  outside of a `publish`, where the signer is passed straight through
+  instead (see above), so there is no established shape for what a bare
+  signed-event value should look like to a script, and inventing one with
+  no real consumer risked exactly the kind of speculative, unproven
+  scaffolding this project avoids elsewhere.
 - **`once(key) { ... }` is evaluated.** It was on this list until it was
   wired up: `EvalHost::claim_once` backs it, `RuntimeSession.idempotency`
   (an `Option<&mut dyn IdempotencyHost>`, its own lifetime independent of

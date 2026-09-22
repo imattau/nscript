@@ -994,6 +994,48 @@ fn once_makes_the_community_digest_bot_idempotent_across_a_redelivered_event() {
 }
 
 #[test]
+fn publish_from_inside_a_handler_only_fires_when_the_handler_actually_runs() {
+    let path = repository_path("examples/handler-publish-bot.ns");
+
+    // No event at all: the handler never runs, so its `publish` must not
+    // fire — this used to fire unconditionally at startup regardless of
+    // whether any event ever reached the handler it was written inside.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("publication"), "{stdout}");
+    assert!(!stdout.contains("log info: true"), "{stdout}");
+
+    // A matching event: the handler runs and really creates, signs and
+    // publishes a reply.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(&path)
+        .args([
+            "--event",
+            r#"{"content":"are you there?","tags":[["t","trigger"]]}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler Note: ok"), "{stdout}");
+    assert!(stdout.contains("log info: true"), "{stdout}");
+}
+
+#[test]
 fn a_key_must_be_declared_from_a_host_label() {
     let dir = std::env::temp_dir().join("nscript-key-decl");
     std::fs::create_dir_all(&dir).unwrap();

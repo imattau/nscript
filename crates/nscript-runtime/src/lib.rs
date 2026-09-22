@@ -2296,16 +2296,52 @@ where
     /// Returns the first signer, relay, cancellation, or resource failure.
     pub fn run(
         &mut self,
-        _program: &Program,
+        program: &Program,
         checked: &CheckedProgram,
     ) -> Result<Vec<PublishReport>, RuntimeError> {
         let invocation = self.next_invocation;
         self.next_invocation += 1;
         let mut reports = Vec::new();
-        for publication in &checked.publications {
+        // Only a top-level `publish`: the checker collects one wherever it
+        // appears (so a handler's own `publish` still gets its permission and
+        // effect checks), but one written inside a handler body must wait for
+        // that handler to actually run, not fire once here regardless of
+        // whether any event ever reaches it. See `eval::top_level_publications`.
+        for publication in eval::top_level_publications(Some(program), checked) {
             reports.push(self.execute_publication(invocation, publication)?);
         }
         Ok(reports)
+    }
+
+    /// Creates, signs and publishes an event right now, for a `publish`/`send`
+    /// expression evaluated live from inside a handler body (as opposed to
+    /// [`Runtime::run`]'s startup pass over the program's top-level
+    /// publications). Same event construction as a top-level `publish`: only
+    /// `content` is carried, and `kind` is inferred from `event_type` the same
+    /// small way (`"Note"` is kind 1, anything else kind 0) — a handler gets
+    /// the same publish capability top-level code already has, not more.
+    ///
+    /// # Errors
+    ///
+    /// Returns the signer's or the relay's failure, or
+    /// [`RuntimeError::PublicationRejected`] if no relay accepted it.
+    pub fn publish_now(
+        &mut self,
+        event_type: &str,
+        content: Option<String>,
+        relayset: &str,
+        signer: &str,
+    ) -> Result<PublishReport, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let publication = CheckedPublication {
+            event: event_type.to_owned(),
+            content,
+            signer: signer.to_owned(),
+            relayset: relayset.to_owned(),
+            span: nscript_syntax::Span::default(),
+        };
+        self.execute_publication(invocation, &publication)
     }
 
     /// Invoke a module operation through an approved host capability.
@@ -8562,6 +8598,38 @@ mod tests {
         let reports = runtime.run(&program, &checked).expect("one relay accepted");
         assert_eq!(reports[0].outcomes.len(), 2);
         assert_eq!(runtime.audit.entries.len(), 3);
+    }
+
+    #[test]
+    fn a_publish_written_inside_a_handler_does_not_fire_at_startup() {
+        // The checker collects a `publish` wherever it appears (so a
+        // handler's own permission/effect checks still apply), so without
+        // `eval::top_level_publications` filtering by handler span, `run`
+        // would fire this one immediately even though no event was ever
+        // delivered to the handler it is written inside.
+        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    read Note from public\n    publish Note to public\n    sign Note with account\n    relay public\n}\n\non Note where tags.t contains \"trigger\" {\n    publish Note {\n        content: \"should wait for the handler\",\n    } to public with account\n}\n";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("checks");
+        // The checker really did collect it — this is the regression this
+        // test guards against, not an absence of the publication entirely.
+        assert_eq!(checked.publications.len(), 1);
+
+        let mut relay = FakeRelayHost::default();
+        relay.relays.insert("fake://public".to_owned(), true);
+        let mut runtime = Runtime::new(
+            relay,
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let reports = runtime.run(&program, &checked).expect("startup succeeds");
+        assert!(
+            reports.is_empty(),
+            "a handler-nested publish must not fire at startup: {reports:?}"
+        );
+        assert!(runtime.relay.published.is_empty());
     }
 
     #[test]

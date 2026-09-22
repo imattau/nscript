@@ -84,6 +84,30 @@ pub trait EvalHost {
         })
     }
 
+    /// Creates, signs and publishes an event, backing `publish <record> [to
+    /// <relayset>] [with <signer>]` and `send <record> [with <signer>]`
+    /// evaluated live from inside a handler body. Same shape a top-level
+    /// `publish` already has (`event_type`/`content` only, kind inferred from
+    /// `event_type`): a handler gets the same publish capability top-level
+    /// code already has, not more.
+    ///
+    /// # Errors
+    ///
+    /// Returns the signer's or the relay's failure, or
+    /// [`RuntimeError::PublicationRejected`] if no relay accepted it.
+    fn publish(
+        &mut self,
+        _event_type: &str,
+        _content: Option<String>,
+        _relayset: &str,
+        _signer: &str,
+    ) -> Result<OperationValue, RuntimeError> {
+        Err(RuntimeError::OperationUnavailable {
+            module: "host".to_owned(),
+            operation: "publish".to_owned(),
+        })
+    }
+
     /// Whether `module.function` is a pure fold query (RFC 0002 §3), so the
     /// evaluator runs it via [`Self::call_pure_function`] instead of the
     /// gated [`Self::call_operation`]: no permission, no effect, no
@@ -320,10 +344,25 @@ pub struct Interpreter<'a, H: EvalHost> {
     modules: BTreeSet<&'a str>,
     /// `key` declarations: name to the host label.
     keys: BTreeMap<&'a str, &'a str>,
+    /// `defaults { signer: ...; relays: ... }`, used by a `publish`/`send`
+    /// that names no explicit `with`/`to`.
+    defaults_signer: Option<&'a str>,
+    defaults_relayset: Option<&'a str>,
     scopes: Vec<BTreeMap<String, Value>>,
     limits: EvalLimits,
     steps: u64,
     depth: usize,
+}
+
+/// A `publish`/`sign`'s `to`/`with` operand names a capability, never a
+/// computed value: only a bare identifier resolves, anything else falls
+/// through to `defaults { ... }` exactly as the checker's own
+/// `check_publish` already treats it (see `nscript-semantics`).
+fn capability_name(expression: &Expr) -> Option<&str> {
+    match &expression.value {
+        ExprKind::Identifier(name) => Some(name),
+        _ => None,
+    }
 }
 
 /// Runs a handler body with `event` bound, returning the value of a `return`
@@ -380,6 +419,8 @@ pub fn run_handler<'a, H: EvalHost>(
         functions,
         modules,
         keys,
+        defaults_signer: program.defaults.signer.as_ref().map(|(name, _)| name.as_str()),
+        defaults_relayset: program.defaults.relays.as_ref().map(|(name, _)| name.as_str()),
         scopes: vec![BTreeMap::from([("event".to_owned(), event)])],
         limits,
         steps: 0,
@@ -499,6 +540,16 @@ impl<H: EvalHost> Interpreter<'_, H> {
                     Ok(Flow::Next)
                 }
             }
+            // `send <record> with <signer>` (the form with no `to`, as
+            // `private-message.ns` uses for NIP-17) is deliberately still
+            // unsupported here, not merely unwired: this crate has no NIP-17
+            // encrypt-and-gift-wrap logic, and `publish`'s plain
+            // create-sign-publish path would post the record's fields as an
+            // unencrypted event under its record name — silently leaking a
+            // "private" message in the clear rather than failing loudly.
+            // `send <text> to <recipient>` is a different case, already real:
+            // the parser lowers it to `nip17.send_private(...)`, an ordinary
+            // module call the evaluator already runs correctly.
             StatementKind::On { .. }
             | StatementKind::Every { .. }
             | StatementKind::At { .. }
@@ -589,10 +640,60 @@ impl<H: EvalHost> Interpreter<'_, H> {
             },
             ExprKind::Match { value, arms } => self.match_expression(value, arms),
             ExprKind::Call { callee, arguments } => self.call(callee, arguments),
+            ExprKind::Publish {
+                value,
+                relays,
+                signer,
+            } => self.publish(value, relays.as_deref(), signer.as_deref()),
             other => Err(unsupported(
                 &format!("{other:?}").chars().take(24).collect::<String>(),
             )),
         }
+    }
+
+    /// Shared by `publish <record> [to <relayset>] [with <signer>]` and
+    /// `send <record> [with <signer>]`: evaluate the record, resolve the
+    /// relayset/signer name (falling back to `defaults { ... }` when the
+    /// script names none), and create, sign and publish it for real through
+    /// the host. `value`'s own record name is the event type — the same
+    /// `Note`/whatever the checker's `check_publish` infers structurally at
+    /// check time, but read here from the evaluated value instead, so it is
+    /// exact even when `value` is a variable rather than a literal record.
+    fn publish(
+        &mut self,
+        value: &Expr,
+        relays: Option<&Expr>,
+        signer: Option<&Expr>,
+    ) -> Result<Value, Stop> {
+        let Value::Record { name, fields } = self.expression(value)? else {
+            return Err(fail("publish needs a record value, e.g. `Note { ... }`"));
+        };
+        let content = fields
+            .into_iter()
+            .find_map(|(field, value)| {
+                (field == "content").then_some(match value {
+                    Value::Text(text) => Some(text),
+                    _ => None,
+                })
+            })
+            .flatten();
+        let relayset = relays
+            .and_then(capability_name)
+            .or(self.defaults_relayset)
+            .ok_or_else(|| {
+                fail("publish needs a relayset (`to <relayset>` or `defaults { relays: ... }`)")
+            })?;
+        let signer = signer
+            .and_then(capability_name)
+            .or(self.defaults_signer)
+            .ok_or_else(|| {
+                fail("publish needs a signer (`with <signer>` or `defaults { signer: ... }`)")
+            })?;
+        let report = self
+            .host
+            .publish(&name, content, relayset, signer)
+            .map_err(Stop::Error)?;
+        Ok(Value::from_operation(report))
     }
 
     fn identifier(&mut self, name: &str) -> Result<Value, Stop> {
@@ -1078,6 +1179,18 @@ where
             }),
         }
     }
+
+    fn publish(
+        &mut self,
+        event_type: &str,
+        content: Option<String>,
+        relayset: &str,
+        signer: &str,
+    ) -> Result<OperationValue, RuntimeError> {
+        self.runtime
+            .publish_now(event_type, content, relayset, signer)
+            .map(OperationValue::PublishReport)
+    }
 }
 
 /// Builds a [`crate::SignedEvent`] from JSON, for delivering a synthetic event
@@ -1307,17 +1420,9 @@ fn within(inner: nscript_syntax::Span, outer: nscript_syntax::Span) -> bool {
     inner.start >= outer.start && inner.end <= outer.end
 }
 
-/// The operation calls a program makes at startup: every collected call except
-/// those inside a handler body. The checker collects calls wherever they appear,
-/// so without this a handler's `kick event.author` would run once at startup,
-/// with its non-literal argument silently dropped.
-///
-/// `program` also excludes calls inside `fn` bodies, which run only when called.
-#[must_use]
-pub fn top_level_operation_calls<'a>(
-    program: Option<&Program>,
-    checked: &'a nscript_semantics::CheckedProgram,
-) -> Vec<&'a nscript_semantics::CheckedOperationCall> {
+/// Spans of every handler body and (given the program) every `fn` body: things
+/// that run later, deferred to an event or a call, never at startup.
+fn deferred_spans(program: Option<&Program>, checked: &nscript_semantics::CheckedProgram) -> Vec<nscript_syntax::Span> {
     let mut deferred: Vec<nscript_syntax::Span> = checked
         .handlers
         .iter()
@@ -1329,10 +1434,45 @@ pub fn top_level_operation_calls<'a>(
             _ => None,
         }));
     }
+    deferred
+}
+
+/// The operation calls a program makes at startup: every collected call except
+/// those inside a handler body. The checker collects calls wherever they appear,
+/// so without this a handler's `kick event.author` would run once at startup,
+/// with its non-literal argument silently dropped.
+///
+/// `program` also excludes calls inside `fn` bodies, which run only when called.
+#[must_use]
+pub fn top_level_operation_calls<'a>(
+    program: Option<&Program>,
+    checked: &'a nscript_semantics::CheckedProgram,
+) -> Vec<&'a nscript_semantics::CheckedOperationCall> {
+    let deferred = deferred_spans(program, checked);
     checked
         .operation_calls
         .iter()
         .filter(|call| !deferred.iter().any(|span| within(call.span, *span)))
+        .collect()
+}
+
+/// The `publish` expressions a program executes at startup: every collected
+/// publication except those inside a handler body (or, given the program, a
+/// `fn` body). The checker collects a `publish` wherever it appears, the same
+/// way it collects operation calls (see [`top_level_operation_calls`]), so
+/// without this a handler's `publish Note { ... } to public with account`
+/// would fire once at startup regardless of whether any event ever reaches
+/// the handler it is written inside.
+#[must_use]
+pub fn top_level_publications<'a>(
+    program: Option<&Program>,
+    checked: &'a nscript_semantics::CheckedProgram,
+) -> Vec<&'a nscript_semantics::CheckedPublication> {
+    let deferred = deferred_spans(program, checked);
+    checked
+        .publications
+        .iter()
+        .filter(|publication| !deferred.iter().any(|span| within(publication.span, *span)))
         .collect()
 }
 
@@ -2173,6 +2313,70 @@ mod tests {
             "{:?}",
             outcomes[0].result
         );
+    }
+
+    #[test]
+    fn publish_from_inside_a_handler_creates_signs_and_publishes_for_real() {
+        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    publish Note to public\n    sign Note with account\n    relay public\n    log\n}\n\non Note where tags.t contains \"trigger\" {\n    let result = publish Note {\n        content: \"reply: \" + event.content,\n    } to public with account\n    print(result.accepted)\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = Runtime::new(
+            FakeRelayHost {
+                relays: [("fake://public".to_owned(), true)].into_iter().collect(),
+                ..FakeRelayHost::default()
+            },
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let policy = policy_for(&checked);
+
+        // No event delivered at all: nothing published, matching
+        // `Runtime::run`'s own top-level-only startup pass.
+        assert!(runtime.relay.published.is_empty());
+
+        // An event that does not match the handler's predicate: still nothing.
+        let miss = event_from_json(&serde_json::json!({"content": "hi", "tags": []})).unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &miss,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert!(outcomes.is_empty());
+        assert!(runtime.relay.published.is_empty());
+
+        // A matching event: the handler runs, and `publish` really creates,
+        // signs and publishes, not just checks clean.
+        let hit = event_from_json(&serde_json::json!({
+            "content": "hi",
+            "tags": [["t", "trigger"]],
+        }))
+        .unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &hit,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        assert_eq!(log.records.last().unwrap().message, "true");
+        assert_eq!(runtime.signer.signed.len(), 1);
+        assert_eq!(runtime.signer.signed[0].unsigned.content, "reply: hi");
+        assert_eq!(runtime.relay.published.len(), 1);
+        assert_eq!(runtime.relay.published[0].unsigned.content, "reply: hi");
     }
 
     /// What one evaluated cycle produced.

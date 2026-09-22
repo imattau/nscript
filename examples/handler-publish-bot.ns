@@ -1,0 +1,33 @@
+// A bot that publishes a reply note from inside its own handler — the core
+// `publish <record> [to <relayset>] [with <signer>]` expression, not a
+// `module.operation(...)` call, evaluated for real when the handler runs.
+//
+// Try it:
+//
+//   nscript run examples/handler-publish-bot.ns
+//       (no --event: nothing is published — a publish written inside a
+//       handler only fires when that handler actually runs)
+//
+//   nscript run examples/handler-publish-bot.ns \
+//       --event '{"content": "are you there?", "tags": [["t", "trigger"]]}'
+//       (matches the handler: publishes a real reply)
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    read Note from public
+    publish Note to public
+    sign Note with account
+    relay public
+    log
+}
+
+on Note where tags.t contains "trigger" {
+    let result = publish Note {
+        content: "reply: " + event.content,
+    } to public with account
+    print(result.accepted)
+}
