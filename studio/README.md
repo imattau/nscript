@@ -39,6 +39,15 @@ npm run dev
 `npm test` runs the node harness (`tests/core.test.mjs`), which drives the real
 wasm artifact through the same glue the editor uses and checks the panel logic.
 
+For a real-browser smoke test (editor renders and accepts keyboard input), point
+`CHROME_PATH` at a Chromium binary and serve the built site:
+
+```bash
+npm run build
+./node_modules/.bin/vite preview --port 4173 &
+CHROME_PATH=/path/to/chrome node tests/input-check.mjs
+```
+
 ## What's not here yet
 
 Publishing/installing through npack/Nostr, the lowering/protocol inspector, the
