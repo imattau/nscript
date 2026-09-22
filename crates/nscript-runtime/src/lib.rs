@@ -3232,7 +3232,7 @@ where
     /// # Errors
     ///
     /// Returns the host's idempotency-store failure.
-    pub fn claim_once<H: IdempotencyHost>(
+    pub fn claim_once<H: IdempotencyHost + ?Sized>(
         &mut self,
         host: &mut H,
         key: &str,

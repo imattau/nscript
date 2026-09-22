@@ -215,8 +215,25 @@ An unsupported construct is a stable `OperationUnavailable` or
 `EvaluationError`, never a silent skip.
 
 - **Not evaluated:** `select`, `fetch`, `latest`, `publish`, `sign`, decimals,
-  durations, nested `on`/`every`/`at`/`once`, and `Send`. Publication
-  from inside a handler is the largest missing piece.
+  durations, and nested `on`/`every`/`at`/`Send`. Publication from inside a
+  handler is the largest remaining missing piece.
+- **`once(key) { ... }` is evaluated.** It was on this list until it was
+  wired up: `EvalHost::claim_once` backs it, `RuntimeSession.idempotency`
+  (an `Option<&mut dyn IdempotencyHost>`, its own lifetime independent of
+  the session's other fields) supplies the store, and both
+  `run_handlers_for_event` (an added `idempotency_host` parameter — `None`
+  if a caller has no `once` to support) and `dispatch_evaluated` (already
+  had one, for its own per-handler-and-event dedup) pass it through. A
+  redelivered key is claimed once; the second delivery's `once` block is
+  silently skipped, not an error — the same discipline the rest of this
+  document holds nested `on`/`every`/`at`/`Send` to, just the other way:
+  a *supported* construct never surprises you either. `nscript run` backs
+  it with one `InMemoryStorage` for the whole invocation (so `once` dedupes
+  across the `--event`s given to a single run, not across separate runs);
+  `test-event` already had one via `simulate_event`. See
+  `examples/community-digest-bot.ns` and
+  `conformance/valid/idempotent-handler.ns`, both of which now actually
+  exercise this with `nscript run --event`, not just `check`.
 - **The older interpreter** (`Runtime::execute_handler_body*`, and through it
   `run_handler_cycle_with_event_body`) is a separate, text-only path kept for its
   existing callers. It cannot call a module operation. New code should use

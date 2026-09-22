@@ -3,12 +3,15 @@
 // Try it:
 //
 //   nscript run examples/community-digest-bot.ns \
-//       --event '{"content": "buy spam now", "author": "mallory", "tags": [["t", "community"]]}' \
-//       --event '{"content": "check this out: http://example.com", "author": "alice", "tags": [["t", "community"]]}' \
-//       --event '{"content": "hello", "author": "bob", "tags": [["t", "community"]]}'
+//       --event '{"content": "buy spam now", "author": "mallory", "tags": [["t", "community"]], "id": "e1"}' \
+//       --event '{"content": "buy spam now", "author": "mallory", "tags": [["t", "community"]], "id": "e1"}' \
+//       --event '{"content": "check this out: http://example.com", "author": "alice", "tags": [["t", "community"]], "id": "e2"}' \
+//       --event '{"content": "hello", "author": "bob", "tags": [["t", "community"]], "id": "e3"}'
 //
 // Spam gets reported and its author muted. A link gets a reaction and is
 // cross-posted with typed media metadata. Anything else just gets a reaction.
+// `once(event.id)` makes the whole thing idempotent: redelivering the same
+// event id (the second `e1` above) does nothing the second time.
 use nip01
 use nip25
 use nip28
@@ -17,9 +20,12 @@ use nip92
 
 relayset public = configured
 
+store SeenEvents<Set<EventId>>
+
 permissions {
     read Note from public
     relay public
+    storage SeenEvents
     reaction
     channel_moderation
     report
@@ -28,35 +34,37 @@ permissions {
 }
 
 on Note where tags.t contains "community" {
-    if event.content contains "spam" {
-        nip56.publish_report(Report {
-            target: event.id,
-            category: "spam",
-            content: "automated spam report",
-        })
-        nip28.mute_user(MuteUser {
-            target: event.author,
-            reason: "posted spam",
-        })
-        print("muted " + event.author)
-    } else {
-        nip25.publish_reaction(Reaction {
-            target: event.id,
-            content: "👍",
-        })
-
-        if event.content contains "http" {
-            nip92.publish_note_with_media(NoteWithMedia {
-                content: "Shared: " + event.content,
-                media: [
-                    MediaAttachment {
-                        url: event.content,
-                        mime: "text/html",
-                        hash: "",
-                    },
-                ],
+    once(event.id) {
+        if event.content contains "spam" {
+            nip56.publish_report(Report {
+                target: event.id,
+                category: "spam",
+                content: "automated spam report",
             })
-            print("cross-posted a link from " + event.author)
+            nip28.mute_user(MuteUser {
+                target: event.author,
+                reason: "posted spam",
+            })
+            print("muted " + event.author)
+        } else {
+            nip25.publish_reaction(Reaction {
+                target: event.id,
+                content: "👍",
+            })
+
+            if event.content contains "http" {
+                nip92.publish_note_with_media(NoteWithMedia {
+                    content: "Shared: " + event.content,
+                    media: [
+                        MediaAttachment {
+                            url: event.content,
+                            mime: "text/html",
+                            hash: "",
+                        },
+                    ],
+                })
+                print("cross-posted a link from " + event.author)
+            }
         }
     }
 }

@@ -205,6 +205,7 @@ fn a_script_reads_a_real_channel_and_kicks_the_spammer() {
             operations: &mut moderation,
             log: &mut log,
             principal: Some(pk(&BOT)),
+            idempotency: None,
         };
         let event = Value::from_event(&message.to_signed_event());
         run_handler(&program, &body, event, &mut session, EvalLimits::default()).unwrap();
@@ -279,6 +280,7 @@ fn the_script_cannot_do_more_than_the_program_was_granted() {
         operations: &mut moderation,
         log: &mut log,
         principal: Some(pk(&BOT)),
+        idempotency: None,
     };
     let spam = nscript_runtime::SignedEvent {
         unsigned: nscript_runtime::UnsignedEvent {
@@ -370,6 +372,7 @@ fn a_script_branches_on_a_kick_the_roster_refuses() {
             operations: &mut with_types,
             log: &mut log,
             principal: Some(pk(&BOT)),
+            idempotency: None,
         };
         // The refusal is a value the script handled, so neither handler fails.
         run_handler(
@@ -468,6 +471,7 @@ fn a_stream_handler_receives_the_messages_the_reader_delivers() {
             &mut log,
             Some(&pk(&BOT)),
             EvalLimits::default(),
+            None,
         );
         assert_eq!(
             outcomes.len(),

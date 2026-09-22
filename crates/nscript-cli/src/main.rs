@@ -843,6 +843,11 @@ where
         return ExitCode::SUCCESS;
     }
     let mut failed = false;
+    // One store for the whole run, so `once(key) { ... }` inside a handler
+    // body dedupes across the `--event`s given to this single invocation,
+    // matching the idempotency primitive's intent (spec/language.md §8).
+    // It does not persist across separate `nscript run` invocations.
+    let mut idempotency = nscript_runtime::InMemoryStorage::default();
     for (index, value) in options.events.iter().enumerate() {
         let event = match nscript_runtime::eval::event_from_json(value) {
             Ok(event) => event,
@@ -867,6 +872,7 @@ where
             &mut log,
             options.principal.as_deref(),
             nscript_runtime::eval::EvalLimits::default(),
+            Some(&mut idempotency),
         );
         if outcomes.is_empty() {
             println!("  no handler matched");

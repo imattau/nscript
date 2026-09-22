@@ -68,6 +68,22 @@ pub trait EvalHost {
         })
     }
 
+    /// Atomically claims `key` for one delivery, backing `once(key) { ... }`
+    /// (spec/language.md §8's idempotency primitive). `Ok(true)` means this is
+    /// the first claim and the block should run; `Ok(false)` means `key` was
+    /// already claimed and the block is skipped — not an error, the same way
+    /// a missed `match` arm is an error but a skipped `once` is not.
+    ///
+    /// # Errors
+    ///
+    /// Returns the host's idempotency-store failure.
+    fn claim_once(&mut self, _key: &str) -> Result<bool, RuntimeError> {
+        Err(RuntimeError::OperationUnavailable {
+            module: "host".to_owned(),
+            operation: "once".to_owned(),
+        })
+    }
+
     /// Whether `module.function` is a pure fold query (RFC 0002 §3), so the
     /// evaluator runs it via [`Self::call_pure_function`] instead of the
     /// gated [`Self::call_operation`]: no permission, no effect, no
@@ -467,8 +483,23 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 }
                 Ok(Flow::Next)
             }
+            StatementKind::Once { key, body } => {
+                let key = match self.expression(key)? {
+                    Value::Text(text) | Value::PubKey(text) => text,
+                    other => {
+                        return Err(fail(format!(
+                            "`once` needs a text-like key, found a {}",
+                            other.kind()
+                        )));
+                    }
+                };
+                if self.host.claim_once(&key)? {
+                    self.block(body)
+                } else {
+                    Ok(Flow::Next)
+                }
+            }
             StatementKind::On { .. }
-            | StatementKind::Once { .. }
             | StatementKind::Every { .. }
             | StatementKind::At { .. }
             | StatementKind::Send { .. } => Err(unsupported("nested handler or send statement")),
@@ -952,7 +983,7 @@ fn arithmetic(operator: &str, left: &Value, right: &Value) -> Result<Value, Stop
 /// record and every module operation goes through
 /// [`Runtime::invoke_authorized_operation`], so the program's
 /// [`OperationPolicy`] applies inside a handler exactly as it does outside one.
-pub struct RuntimeSession<'a, R, S, C, A, O, L>
+pub struct RuntimeSession<'a, 'i, R, S, C, A, O, L>
 where
     R: RelayHost,
     S: SignerHost,
@@ -967,9 +998,17 @@ where
     pub log: &'a mut L,
     /// The value of `me`.
     pub principal: Option<String>,
+    /// Backing store for `once(key) { ... }` inside a handler body. `None`
+    /// means `once` fails with `OperationUnavailable`, the same as
+    /// [`EvalHost::claim_once`]'s own default — a caller that does not need
+    /// `once` (or has no idempotency store handy) sets this to `None` rather
+    /// than fabricating one. Its own lifetime, distinct from `'a`, since it
+    /// commonly comes from a different borrow than `runtime`/`operations`/
+    /// `log` (e.g. a loop over events reborrowing one long-lived store).
+    pub idempotency: Option<&'i mut dyn IdempotencyHost>,
 }
 
-impl<R, S, C, A, O, L> EvalHost for RuntimeSession<'_, R, S, C, A, O, L>
+impl<R, S, C, A, O, L> EvalHost for RuntimeSession<'_, '_, R, S, C, A, O, L>
 where
     R: RelayHost,
     S: SignerHost,
@@ -1028,6 +1067,16 @@ where
         arguments: &[OperationValue],
     ) -> Result<OperationValue, RuntimeError> {
         self.operations.call_pure_function(module, function, arguments)
+    }
+
+    fn claim_once(&mut self, key: &str) -> Result<bool, RuntimeError> {
+        match &mut self.idempotency {
+            Some(host) => self.runtime.claim_once(*host, key),
+            None => Err(RuntimeError::OperationUnavailable {
+                module: "host".to_owned(),
+                operation: "once".to_owned(),
+            }),
+        }
     }
 }
 
@@ -1301,6 +1350,13 @@ where
     /// Handlers are matched by [`Runtime::matches_subscription`]: event type,
     /// author and tag predicates. Only the handlers that matched appear in the
     /// result.
+    ///
+    /// `idempotency_host` backs a nested `once(key) { ... }` inside a
+    /// handler's own body (not the per-handler-and-event dedup
+    /// [`Runtime::dispatch_evaluated`] does at the subscription level — the
+    /// two are independent). Pass `None` for a caller that does not need
+    /// `once`; a script that reaches one anyway gets `OperationUnavailable`,
+    /// not a panic or a silent skip.
     #[allow(clippy::too_many_arguments)]
     pub fn run_handlers_for_event<O: OperationHost, L: LogHost>(
         &mut self,
@@ -1312,6 +1368,7 @@ where
         log: &mut L,
         principal: Option<&str>,
         limits: EvalLimits,
+        mut idempotency_host: Option<&mut dyn IdempotencyHost>,
     ) -> Vec<HandlerOutcome> {
         let requests = Self::handler_subscriptions(checked, None);
         let mut outcomes = Vec::new();
@@ -1319,12 +1376,17 @@ where
             if !Self::matches_subscription(request, event) {
                 continue;
             }
+            let idempotency: Option<&mut dyn IdempotencyHost> = match &mut idempotency_host {
+                Some(host) => Some(&mut **host),
+                None => None,
+            };
             let mut session = RuntimeSession {
                 runtime: self,
                 policy,
                 operations,
                 log,
                 principal: principal.map(str::to_owned),
+                idempotency,
             };
             let result = settle(run_handler(
                 program,
@@ -1424,6 +1486,11 @@ where
                 operations,
                 log: log_host,
                 principal: principal.map(str::to_owned),
+                // A nested `once(key) { ... }` inside the handler body claims
+                // against the same idempotency store as the per-handler,
+                // per-event claim just above, so a script's own finer-grained
+                // keys and the subscription-level dedup never collide.
+                idempotency: Some(idempotency_host),
             };
             settle(run_handler(
                 program,
@@ -1766,6 +1833,7 @@ mod tests {
             operations: &mut moderation,
             log: &mut log,
             principal: Some("bot".to_owned()),
+            idempotency: None,
         };
         let error = run_handler(
             &program,
@@ -1788,6 +1856,7 @@ mod tests {
             operations: &mut moderation,
             log: &mut log,
             principal: Some("bot".to_owned()),
+            idempotency: None,
         };
         run_handler(
             &program,
@@ -1935,6 +2004,7 @@ mod tests {
             &mut log,
             None,
             EvalLimits::default(),
+            None,
         );
         assert_eq!(outcomes.len(), 1);
         assert!(outcomes[0].result.is_ok());
@@ -1956,6 +2026,7 @@ mod tests {
             &mut log,
             None,
             EvalLimits::default(),
+            None,
         );
         assert_eq!(outcomes.len(), 1);
         assert_eq!(ops.calls.len(), 1, "no further call");
@@ -1973,7 +2044,8 @@ mod tests {
                     &mut ops,
                     &mut log,
                     None,
-                    EvalLimits::default()
+                    EvalLimits::default(),
+                    None,
                 )
                 .is_empty()
         );
@@ -1995,6 +2067,7 @@ mod tests {
             &mut log,
             None,
             EvalLimits::default(),
+            None,
         );
         assert_eq!(outcomes.len(), 2);
         assert!(matches!(
@@ -2003,6 +2076,103 @@ mod tests {
         ));
         assert!(outcomes[1].result.is_ok());
         assert_eq!(log.records.len(), 1);
+    }
+
+    #[test]
+    fn once_claims_a_key_so_a_redelivered_event_does_nothing_the_second_time() {
+        let source = "store SeenEvents<Set<EventId>>\n\npermissions {\n    storage SeenEvents\n    log\n}\n\non Note {\n    once(event.id) {\n        print(\"handled \" + event.id)\n    }\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = runtime();
+        let policy = policy_for(&checked);
+        let mut store = crate::InMemoryStorage::default();
+        let event = event_from_json(&serde_json::json!({"id": "e1"})).unwrap();
+
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &event,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            Some(&mut store),
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        assert_eq!(log.records.len(), 1);
+        assert_eq!(log.records[0].message, "handled e1");
+
+        // Same event id again: the handler still matches and runs (`ok`), but
+        // `once` claims nothing new, so the body is skipped and nothing is
+        // logged a second time.
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &event,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            Some(&mut store),
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        assert_eq!(log.records.len(), 1, "no second log line");
+
+        // A different event id claims its own key and runs.
+        let other = event_from_json(&serde_json::json!({"id": "e2"})).unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &other,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            Some(&mut store),
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        assert_eq!(log.records.len(), 2);
+        assert_eq!(log.records[1].message, "handled e2");
+    }
+
+    #[test]
+    fn once_with_no_idempotency_host_fails_with_operation_unavailable() {
+        let source = "store SeenEvents<Set<EventId>>\n\npermissions {\n    storage SeenEvents\n    log\n}\n\non Note {\n    once(event.id) {\n        print(\"handled\")\n    }\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = runtime();
+        let policy = policy_for(&checked);
+        let event = event_from_json(&serde_json::json!({"id": "e1"})).unwrap();
+
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &event,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(
+            matches!(
+                &outcomes[0].result,
+                Err(RuntimeError::OperationUnavailable { module, operation })
+                    if module == "host" && operation == "once"
+            ),
+            "{:?}",
+            outcomes[0].result
+        );
     }
 
     /// What one evaluated cycle produced.

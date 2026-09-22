@@ -129,6 +129,42 @@ fn run_reports_checked_handler_subscriptions() {
 }
 
 #[test]
+fn the_idempotent_handler_fixture_actually_dedupes_when_run() {
+    // Every other test touching this fixture only checks or inspects it, or
+    // runs it with no `--event` at all, so `once(event.id)` — the fixture's
+    // whole point — was never actually exercised. Deliver the same id twice.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("conformance/valid/idempotent-handler.ns"))
+        .args([
+            "--event",
+            r#"{"content":"hi","tags":[["t","nostrhost"]],"id":"e1"}"#,
+        ])
+        .args([
+            "--event",
+            r#"{"content":"hi again","tags":[["t","nostrhost"]],"id":"e1"}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.matches("handler Note: ok").count(),
+        2,
+        "both deliveries match: {stdout}"
+    );
+    assert_eq!(
+        stdout.matches("log info: hi").count(),
+        1,
+        "but the second delivery's `once` is already claimed: {stdout}"
+    );
+}
+
+#[test]
 fn generates_npack_compatible_manifest() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args([
@@ -919,6 +955,42 @@ fn the_community_digest_bot_moderates_reacts_and_cross_posts_media() {
     assert!(stdout.contains("nip25.publish_reaction"), "{stdout}");
     assert!(!stdout.contains("nip92."), "{stdout}");
     assert!(!stdout.contains("nip56."), "{stdout}");
+}
+
+#[test]
+fn once_makes_the_community_digest_bot_idempotent_across_a_redelivered_event() {
+    // The whole handler body is wrapped in `once(event.id) { ... }`, so
+    // redelivering the same event id within one `nscript run` invocation
+    // must not mute or report a second time.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("examples/community-digest-bot.ns"))
+        .args([
+            "--event",
+            r#"{"content":"buy spam now","author":"mallory","tags":[["t","community"]],"id":"e1"}"#,
+        ])
+        .args([
+            "--event",
+            r#"{"content":"buy spam now","author":"mallory","tags":[["t","community"]],"id":"e1"}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.matches("handler Note: ok").count(),
+        2,
+        "both deliveries match the subscription: {stdout}"
+    );
+    assert_eq!(
+        stdout.matches("nip28.mute_user").count(),
+        1,
+        "but only the first actually mutes: {stdout}"
+    );
 }
 
 #[test]
