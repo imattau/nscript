@@ -878,6 +878,50 @@ fn a_declared_key_is_an_opaque_handle_the_host_provisions() {
 }
 
 #[test]
+fn the_community_digest_bot_moderates_reacts_and_cross_posts_media() {
+    let path = repository_path("examples/community-digest-bot.ns");
+    let run = |event: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(["--event", event])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    // Spam is reported and its author muted, not reacted to.
+    let stdout = run(r#"{"content":"buy spam now","author":"mallory","tags":[["t","community"]]}"#);
+    assert!(stdout.contains("log info: muted mallory"), "{stdout}");
+    assert!(stdout.contains("nip56.publish_report"), "{stdout}");
+    assert!(stdout.contains("nip28.mute_user"), "{stdout}");
+    assert!(!stdout.contains("publish_reaction"), "{stdout}");
+
+    // A link gets a reaction and is cross-posted with a `List<Record>`
+    // `media` field, constructed from inside a handler body — the same
+    // record-in-a-list shape `nip88`'s `Poll` and `nip92` itself use, now
+    // proven to convert correctly through the handler evaluator's
+    // `Value`/`OperationValue` path, not just the top-level one.
+    let stdout = run(
+        r#"{"content":"check this out: http://example.com","author":"alice","tags":[["t","community"]]}"#,
+    );
+    assert!(stdout.contains("nip25.publish_reaction"), "{stdout}");
+    assert!(stdout.contains("nip92.publish_note_with_media"), "{stdout}");
+    assert!(stdout.contains("MediaAttachment"), "{stdout}");
+    assert!(stdout.contains("log info: cross-posted a link from alice"), "{stdout}");
+
+    // Anything else just gets a reaction, nothing more.
+    let stdout = run(r#"{"content":"hello","author":"bob","tags":[["t","community"]]}"#);
+    assert!(stdout.contains("nip25.publish_reaction"), "{stdout}");
+    assert!(!stdout.contains("nip92."), "{stdout}");
+    assert!(!stdout.contains("nip56."), "{stdout}");
+}
+
+#[test]
 fn a_key_must_be_declared_from_a_host_label() {
     let dir = std::env::temp_dir().join("nscript-key-decl");
     std::fs::create_dir_all(&dir).unwrap();
