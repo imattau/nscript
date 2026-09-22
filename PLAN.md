@@ -711,52 +711,69 @@ moderation host, and an independent Guestbook fold. Now wired into `nscript run`
 events to matching handlers in the simulator, with unimplemented operations
 recorded and answered from their declared return type. Handler and function
 bodies no longer run at startup (a handler's `kick event.author` used to fail
-the whole run). `select`, `fetch` and in-handler publication are not yet
-evaluated. Fixed a parser bug found on the way: a lowercase name before a block
+the whole run). `Result` values, `match`, `select` and in-handler publication
+are not yet evaluated. Fixed a parser bug found on the way: a lowercase name before a block
 (`if ready { .. }`) was read as a record literal.
-Added `Runtime::run_evaluated_cycle` and `dispatch_evaluated`: the subscription
-cycle (subscribe, poll, idempotent claim, storage transaction, audit) with the
-evaluator as the body engine, reporting a failing handler instead of aborting.
-Testing it exposed two runtime-wide keys that starved a second handler on the
-same stream: the poll dedupe and the idempotency claim were both keyed by event
-id alone. Both are now per subscription and per handler, in the original cycle
-too.
-`Result` values are modelled in the handler evaluator, as the spec describes:
-an operation declared `Result<T,E>` returns `Ok`/`Err`; only failures it
-legitimately reports (a Roster refusal, an unreachable relay, a rejected
-publication) become an `Err` a script can branch on, while a capability denial or
-a bad argument still aborts; `?` returns the error from the enclosing function or
-handler; `match` works on results; and a handler that ends with an `Err` rolls
-back. `nscript run --fail module.operation` exercises the `Err` path in the
-simulator. Proved against the real Roster: a kick of the owner is refused and
-reaches the script as an `Err` it can read. Found on the way: the parser accepted only binding, wildcard and variant
-patterns (fixed next).
-The parser now accepts every pattern form in the grammar: literals of every kind
-(with a leading minus on numbers), record patterns (`Note { author, content: c }`),
-and guards, which had been swallowing the `=` of `=>` as an assignment. A
-capitalised name with no payload is a unit variant, so `None` no longer parses as
-a catch-all binding. A match arm's value now ends at its line, so `-3 => ..` starts
-a pattern instead of subtracting from the previous arm; brackets inside an arm
-still span lines. The checker is guard-aware: a guarded arm is not a catch-all, and
-does not cover its variant, so a Result match handling `Ok` only under a guard is
-`E1301`, as is `Ok(1)` standing in for `Ok`. The evaluator's pattern tests moved
-from hand-built AST to real source. Not supported: an arm whose value is a block
-(the grammar allows it; the syntax tree has no block expression).
-A handler's `event` is now typed from its source (`crates/nscript-semantics/src/events.rs`).
-For `on Note` the type is the named event; for a stream handler it is the stream's
-element type (`stream messages = select StreamMessage from chat` makes `on messages`
-a `StreamMessage`), which also means a received `StreamMessage` now matches the
-handler, where before the handler's type was the stream's name and nothing could
-match it. Fields come from the module descriptors or the program's own `event`
-declarations, plus the signed event's own. `nscript check` now reports an unknown
-`event.field` or record-pattern field (`E1101`, listing the fields) and an argument
-whose known type differs from the operation's parameter (`E1001`: `kick
-event.content` passes a `Text` for a `PubKey`), following `let` bindings. Only plain
-scalars are compared and an undefined type or a rebound `event` is left alone, so a
-value the checker cannot type is never rejected.
 Spec research (`docs/cord/FINDINGS.md`, specs vendored in `docs/cord/`) shows
 the CORD-01 seal kinds and the CORD-02 community model need rework before
 CORD-04: state is versioned editions, not ad-hoc events.
+
+## Studio foundation: wasm compiler, capability footprint, and previews
+
+The first slice toward a browser-based authoring surface (NScript Studio).
+Studio itself is deferred; this tranche makes the compiler runnable in-browser
+and exposes the security-relevant analysis it will render.
+
+- `nscript-runtime` network hosts are now feature-gated: `rustls`/`tungstenite`
+  and `RealRelayHost`/`RealRelayPool` live behind the default `real-hosts`
+  feature. The fake-host runtime (relay, signer, clock, audit, storage, http,
+  timer, log) compiles to `wasm32-unknown-unknown` with
+  `default-features = false`, so dry-run and handler previews run client-side
+  with no server.
+- Added `crates/nscript-wasm`, a dependency-free JSON-in/JSON-out wasm ABI over
+  linear memory (`nscript_alloc`, `nscript_dealloc`, `nscript_handle`,
+  `nscript_free`, `nscript_abi`). Operations: `analyze`, `footprint`,
+  `inspect`, `ir`, `compile`, `run`. Built-in modules are already embedded in
+  the resolver, so analysis is fully offline. `scripts/wasm-conformance.sh`
+  drives the whole `conformance/valid` + `conformance/invalid` corpus through
+  the wasm artifact from Node.
+- Added `CapabilityFootprint` to `nscript-semantics`: the inferred capability
+  surface (effects + operation calls joined to module `effects`/`permission`
+  plus publications, handlers, schedules) grouped into Nostr, Network,
+  Payments, Storage, Secrets, and System, each item `granted`, `requested`, or
+  `forbidden`. Computed from `infer`, so it is available live while permission
+  errors still exist. `inspect --json` and the wasm `footprint`/`inspect`
+  operations expose it; adding `zap ...` without `permissions { zap }` reports
+  a `requested` payment capability.
+- Added `Runtime::simulate_event` for the concrete fake-host runtime and
+  `nscript test-event <file> --event <json>`: a synthetic signed event is
+  queued on every lowered subscription and one handler cycle runs against the
+  transactional/idempotency/logging fakes, reporting matched handlers,
+  lowered subscriptions, log records, and committed storage.
+
+### Studio foundation: editor analysis and the browser surface
+
+- Added `crates/nscript-lang`: the editor-analysis surface. `analyze` owns the
+  one resolution path (parse + custom modules + registry + resolve + structural
+  checks), retaining every registered module name even when the current import
+  does not resolve yet so a partial `use` line can still be completed.
+  `symbols` lists top-level declarations for an outline; `completions` offers
+  statement keywords, module names on a `use` line, module exports after
+  `module.`, and typed `event.`/stream members resolved through the enclosing
+  handler; `hover` explains modules, operations, functions, events, types, and
+  the `Signed<…>` handler binding. Tested against the conformance corpus.
+- `nscript-wasm` now delegates resolution to `nscript_lang::analyze` and
+  exposes the editor ops the Studio needs: `symbols`, `completions`, `hover`,
+  and `test_event` (the `simulate_event` evaluator path, with simulated module
+  calls and per-handler failures reported instead of stopping the cycle). The
+  node conformance harness exercises all of these through the real wasm
+  artifact.
+- Added `studio/`, the in-browser authoring surface: a Vite + Monaco editor
+  that fetches the wasm compiler and renders diagnostics, the live capability
+  footprint panel, module completions, hover cards, a synthetic-event preview,
+  and a New Script template gallery. The wasm glue and panel logic are plain
+  ESM and are exercised in node (`studio/tests/core.test.mjs`) without a
+  browser; `npm run build` produces the deployable static site.
 
 ## Deferred
 

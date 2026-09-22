@@ -21,6 +21,7 @@ fn main() -> ExitCode {
         }
         [command, rest @ ..] if command == "inspect" => inspect_program(rest, false),
         [command, rest @ ..] if command == "run" => run_program(rest),
+        [command, rest @ ..] if command == "test-event" => test_event(rest),
         [package, manifest, rest @ ..] if package == "package" && manifest == "manifest" => {
             package_manifest(rest)
         }
@@ -49,7 +50,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -456,6 +457,7 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
                     "tags": handler.tag_equals
                 }
             })).collect::<Vec<_>>(),
+            "footprint": nscript_semantics::footprint(&program, &checked, &graph, &[]),
         });
         println!(
             "{}",
@@ -891,6 +893,180 @@ where
     } else {
         ExitCode::SUCCESS
     }
+}
+
+fn test_event(arguments: &[String]) -> ExitCode {
+    let event_text = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--event")
+        .map(|pair| pair[1].clone());
+    let Some(event_text) = event_text else {
+        eprintln!("test-event requires --event <json>");
+        return ExitCode::from(2);
+    };
+    let Ok(event_value) = serde_json::from_str::<serde_json::Value>(&event_text) else {
+        eprintln!("test-event requires --event to be valid JSON");
+        return ExitCode::from(2);
+    };
+    // `--as <key>` is the value of `me`, as for `run`.
+    let principal = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--as")
+        .map(|pair| pair[1].clone());
+    let failing: Vec<(String, String)> = arguments
+        .windows(2)
+        .filter(|pair| pair[0] == "--fail")
+        .filter_map(|pair| {
+            pair[1]
+                .split_once('.')
+                .map(|(module, operation)| (module.to_owned(), operation.to_owned()))
+        })
+        .collect();
+    let mut compiler_arguments = Vec::new();
+    let mut argument_index = 0;
+    while argument_index < arguments.len() {
+        if matches!(
+            arguments[argument_index].as_str(),
+            "--event" | "--as" | "--fail"
+        ) {
+            argument_index += 2;
+            continue;
+        }
+        compiler_arguments.push(arguments[argument_index].clone());
+        argument_index += 1;
+    }
+    let Ok((path, program, graph, mut diagnostics)) = load_program(&compiler_arguments) else {
+        return ExitCode::from(2);
+    };
+    diagnostics.extend(analyze_with_modules(&program, &graph));
+    if !diagnostics.is_empty() {
+        return finish(&path, diagnostics);
+    }
+    let (checked, typed_diagnostics) = check(&program);
+    if !typed_diagnostics.is_empty() {
+        return finish(&path, typed_diagnostics);
+    }
+    let checked = checked.expect("a diagnostic-free program is checked");
+    let Ok(event) = parse_test_event(&event_value) else {
+        eprintln!(
+            "invalid --event: expected an object with event_type, kind, content, tags, created_at, signer, id, signature"
+        );
+        return ExitCode::from(2);
+    };
+    let mut relay = nscript_runtime::FakeRelayHost::default();
+    let mut storage = nscript_runtime::InMemoryStorage::default();
+    let mut logs = nscript_runtime::FakeLogHost::default();
+    // Handlers run under the evaluator, so they can call module operations; the
+    // simulator records those no host implements rather than sending them.
+    let mut operations = simulated_operations(&graph, &failing);
+    match nscript_runtime::Runtime::<
+        nscript_runtime::FakeRelayHost,
+        nscript_runtime::FakeSignerHost,
+        nscript_runtime::FakeClock,
+        nscript_runtime::RecordingAudit,
+    >::simulate_event(
+        &program,
+        &checked,
+        &mut relay,
+        &mut storage,
+        &mut logs,
+        &mut operations,
+        principal.as_deref(),
+        &event,
+    ) {
+        Ok(report) => print_simulation_report(&report, &storage),
+        Err(error) => {
+            eprintln!("error[R1002]: {error:?}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Prints what a simulated event did, and returns the exit code: failure if any
+/// handler failed.
+fn print_simulation_report(
+    report: &nscript_runtime::SimulationReport,
+    storage: &nscript_runtime::InMemoryStorage,
+) -> ExitCode {
+    println!(
+        "matched: {}/{} handlers",
+        report.dispatched,
+        report.subscriptions.len()
+    );
+    for subscription in &report.subscriptions {
+        println!("subscription {subscription}");
+    }
+    for record in &report.logs {
+        println!("log {}: {}", record.level, record.message);
+    }
+    for call in &report.operations {
+        println!("{}", describe_operation_call(call));
+    }
+    for (key, value) in &storage.values {
+        println!("storage {key} = {value}");
+    }
+    for failure in &report.failures {
+        eprintln!(
+            "error[R1004]: handler {} failed: {}",
+            failure.handler,
+            describe_handler_error(&failure.error)
+        );
+    }
+    if report.failures.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn parse_test_event(value: &serde_json::Value) -> Result<nscript_runtime::SignedEvent, ()> {
+    let as_text = |key: &str, default: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(default)
+            .to_owned()
+    };
+    let kind = value
+        .get("kind")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1);
+    let Ok(kind) = u16::try_from(kind) else {
+        return Err(());
+    };
+    let tags = value
+        .get("tags")
+        .and_then(serde_json::Value::as_array)
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|tag| {
+                    let array = tag.as_array()?;
+                    let name = array.first()?.as_str()?;
+                    let value = array
+                        .get(1)
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("");
+                    Some((name.to_owned(), value.to_owned()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(nscript_runtime::SignedEvent {
+        unsigned: nscript_runtime::UnsignedEvent {
+            event_type: as_text("event_type", "Note"),
+            kind,
+            content: as_text("content", ""),
+            tags,
+            created_at: value
+                .get("created_at")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+        },
+        signer: as_text("signer", "alice"),
+        id: as_text("id", "test-event"),
+        signature: as_text("signature", "sig"),
+    })
 }
 
 fn load_program(

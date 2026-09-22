@@ -40,7 +40,13 @@ cargo run -p nscript-cli -- compile --emit ir conformance/valid/hello-note.ns
 cargo run -p nscript-cli -- module check conformance/modules/valid/nip10.nsm
 cargo run -p nscript-cli -- module hash conformance/modules/valid/nip10.nsm
 cargo run -p nscript-cli -- module describe conformance/modules/valid/nip10.nsm
+cargo run -p nscript-cli -- test-event conformance/valid/handler-print.ns --event '{"kind":1,"content":"hello"}'
 ```
+
+The compiler front end also builds to `wasm32-unknown-unknown` for in-browser
+authoring. `scripts/wasm-conformance.sh` builds the artifact and runs the full
+`conformance/valid` and `conformance/invalid` corpus through the wasm ABI with
+Node.
 
 Additional modules are resolved locally from deterministic
 `<root>/<module>/<version>.nsm` layouts:
@@ -249,7 +255,12 @@ remain staged until successful completion.
 - [`rfcs/`](rfcs/) contains companion proposals, including package distribution.
 - [`conformance/`](conformance/) contains executable examples and negative tests
   for future implementations.
-- `crates/` contains the Rust syntax, semantics, IR, reference runtime, and CLI front end.
+- `crates/` contains the Rust syntax, semantics, IR, reference runtime, CLI front
+  end, a WebAssembly build of the compiler front end for in-browser tooling, and
+  `nscript-lang`, the editor-analysis surface (symbols, completions, hover).
+- [`studio/`](studio/) is the in-browser authoring surface: a Monaco editor that
+  runs the wasm compiler locally with live diagnostics, a permission footprint
+  panel, and a synthetic-event preview.
 
 ## Status
 

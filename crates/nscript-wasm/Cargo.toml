@@ -1,0 +1,27 @@
+[package]
+name = "nscript-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "NScript compiler front end compiled to WebAssembly"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+nscript-ir = { path = "../nscript-ir" }
+nscript-lang = { path = "../nscript-lang" }
+nscript-modules = { path = "../nscript-modules" }
+nscript-runtime = { path = "../nscript-runtime", default-features = false }
+nscript-semantics = { path = "../nscript-semantics" }
+nscript-syntax = { path = "../nscript-syntax" }
+serde_json.workspace = true
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

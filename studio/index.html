@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NScript Studio</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <header>
+          <h1>NScript Studio</h1>
+          <p class="status" id="status">loading wasm…</p>
+        </header>
+        <section id="templates">
+          <h2>New script</h2>
+          <ul id="template-list"></ul>
+        </section>
+        <section id="permissions">
+          <h2>Permissions</h2>
+          <div id="permissions-panel"></div>
+        </section>
+        <section id="problems">
+          <h2>Problems</h2>
+          <div id="problems-panel"></div>
+        </section>
+      </aside>
+      <main id="main">
+        <div id="editor"></div>
+        <section id="preview">
+          <h2>Preview</h2>
+          <div class="preview-row">
+            <select id="fixture"></select>
+            <button id="run-preview">Test Event</button>
+          </div>
+          <pre id="preview-output"></pre>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

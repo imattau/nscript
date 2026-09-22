@@ -9,14 +9,15 @@ rust-version.workspace = true
 [dependencies]
 nscript-semantics = { path = "../nscript-semantics" }
 nscript-syntax = { path = "../nscript-syntax" }
-rustls.workspace = true
+rustls = { workspace = true, optional = true }
 serde_json.workspace = true
 sha2.workspace = true
-tungstenite.workspace = true
+tungstenite = { workspace = true, optional = true }
 wasmi = { version = "0.38", optional = true }
 
 [features]
-default = []
+default = ["real-hosts"]
+real-hosts = ["dep:rustls", "dep:tungstenite"]
 wasm-engine = ["dep:wasmi"]
 
 [lints]

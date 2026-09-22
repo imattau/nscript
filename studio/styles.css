@@ -1,0 +1,140 @@
+:root {
+  --bg: #0f1117;
+  --panel: #161a22;
+  --border: #262c3a;
+  --text: #d6dae2;
+  --muted: #8b93a5;
+  --accent: #6ea8fe;
+  --ok: #5cb85c;
+  --warn: #e0a23a;
+  --bad: #e05252;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, sans-serif;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  height: 100vh;
+}
+
+#sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 12px;
+}
+
+#sidebar header h1 {
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+
+.status {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
+#sidebar section {
+  margin-bottom: 20px;
+}
+
+#sidebar h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.template {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  cursor: pointer;
+}
+
+.template:hover {
+  border-color: var(--accent);
+}
+
+.group {
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.item {
+  padding-left: 8px;
+}
+
+.item-granted {
+  color: var(--ok);
+}
+
+.item-requested {
+  color: var(--warn);
+}
+
+.item-forbidden {
+  color: var(--bad);
+}
+
+.problem {
+  color: var(--bad);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#main {
+  display: grid;
+  grid-template-rows: 1fr 200px;
+}
+
+#editor {
+  height: 100%;
+}
+
+#preview {
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  padding: 10px 14px;
+}
+
+#preview h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.preview-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+#preview-output {
+  margin: 0;
+  white-space: pre-wrap;
+  color: var(--text);
+  font: 12px/1.5 ui-monospace, monospace;
+}

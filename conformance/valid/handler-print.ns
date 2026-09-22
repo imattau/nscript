@@ -1,0 +1,13 @@
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+on Note {
+    print(event.content)
+}

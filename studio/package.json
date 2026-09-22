@@ -1,0 +1,19 @@
+{
+  "name": "nscript-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "wasm": "sh -c 'mkdir -p public && cp ../target/wasm32-unknown-unknown/release/nscript_wasm.wasm public/nscript_wasm.wasm'",
+    "predev": "npm run wasm",
+    "dev": "vite",
+    "prebuild": "npm run wasm",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test tests/core.test.mjs"
+  },
+  "devDependencies": {
+    "monaco-editor": "^0.52.2",
+    "vite": "^6.3.5"
+  }
+}

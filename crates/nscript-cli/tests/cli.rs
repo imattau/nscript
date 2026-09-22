@@ -663,6 +663,67 @@ fn run_bounds_a_runaway_handler() {
     assert!(stderr.contains("ResourceLimit"), "{stderr}");
 }
 
+#[test]
+fn test_event_runs_a_handler_that_calls_a_module_operation() {
+    let path = repository_path("examples/concord-moderation-bot.ns");
+    let run = |event: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .args(["test-event"])
+            .arg(&path)
+            .args(["--event", event])
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        )
+    };
+    let (ok, stdout) = run(r#"{"content":"buy spam now","signer":"mallory"}"#);
+    assert!(ok);
+    assert!(stdout.contains("matched: 1/1 handlers"), "{stdout}");
+    assert!(stdout.contains("log info: kicking mallory"), "{stdout}");
+    assert!(
+        stdout.contains(r#"operation concord04.kick_member(PubKey("mallory"))  [simulated]"#),
+        "{stdout}"
+    );
+    let (ok, stdout) = run(r#"{"content":"hello"}"#);
+    assert!(ok);
+    assert!(!stdout.contains("operation "), "{stdout}");
+}
+
+#[test]
+fn test_event_reports_a_failing_handler_and_runs_every_matching_handler() {
+    let source = "permissions {\n    log\n}\n\non Note {\n    print(me)\n}\n\non Note {\n    print(\"second\")\n}\n";
+    let path = std::env::temp_dir().join(format!("nscript-test-event-{}.ns", std::process::id()));
+    std::fs::write(&path, source).unwrap();
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("test-event")
+            .arg(&path)
+            .args(["--event", "{}"])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let failed = run(&[]);
+    assert!(!failed.status.success());
+    let stdout = String::from_utf8_lossy(&failed.stdout);
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(stdout.contains("matched: 2/2 handlers"), "{stdout}");
+    assert!(
+        stdout.contains("log info: second"),
+        "the second handler still ran: {stdout}"
+    );
+    assert!(
+        stderr.contains("`me` is not configured (pass --as <key>)"),
+        "{stderr}"
+    );
+    let fine = run(&["--as", "my-key"]);
+    assert!(fine.status.success());
+    assert!(String::from_utf8_lossy(&fine.stdout).contains("log info: my-key"));
+    let _ = std::fs::remove_file(path);
+}
+
 const BOT_WITH_ERRORS: &str =
     include_str!("../../../examples/concord-moderation-bot-with-errors.ns");
 
@@ -722,6 +783,27 @@ fn run_rejects_a_malformed_fail_option() {
     assert!(
         stderr.contains("--fail expects module.operation"),
         "{stderr}"
+    );
+}
+
+#[test]
+fn test_event_can_make_an_operation_fail_to_exercise_error_handling() {
+    let path = repository_path("examples/concord-moderation-bot-with-errors.ns");
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("test-event")
+        .arg(&path)
+        .args(["--event", r#"{"content":"spam","signer":"mallory"}"#])
+        .args(["--fail", "concord04.kick_member"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "the script handled the error itself"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("log info: could not kick mallory: publication rejected"),
+        "{stdout}"
     );
 }
 

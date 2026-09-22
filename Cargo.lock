@@ -428,6 +428,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nscript-lang"
+version = "0.1.0"
+dependencies = [
+ "nscript-modules",
+ "nscript-semantics",
+ "nscript-syntax",
+ "semver",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nscript-modules"
 version = "0.1.0"
 dependencies = [
@@ -456,6 +468,7 @@ dependencies = [
  "nscript-modules",
  "nscript-syntax",
  "semver",
+ "serde",
 ]
 
 [[package]]
@@ -463,6 +476,19 @@ name = "nscript-syntax"
 version = "0.1.0"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "nscript-wasm"
+version = "0.1.0"
+dependencies = [
+ "nscript-ir",
+ "nscript-lang",
+ "nscript-modules",
+ "nscript-runtime",
+ "nscript-semantics",
+ "nscript-syntax",
+ "serde_json",
 ]
 
 [[package]]

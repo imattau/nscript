@@ -16,7 +16,10 @@ pub mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::{fs, net::TcpStream, path::PathBuf, thread, time::Duration};
+use std::{fs, path::PathBuf};
+
+#[cfg(feature = "real-hosts")]
+use std::{net::TcpStream, thread, time::Duration};
 
 use nscript_semantics::{
     CheckedArgument, CheckedHandler, CheckedProgram, CheckedPublication, CheckedScheduleKind,
@@ -25,9 +28,13 @@ use nscript_syntax::{
     Program,
     ast::{ExprKind, Item, StatementKind},
 };
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(feature = "real-hosts")]
+use serde_json::json;
 use sha2::{Digest, Sha256};
+#[cfg(feature = "real-hosts")]
 use tungstenite::stream::MaybeTlsStream;
+#[cfg(feature = "real-hosts")]
 use tungstenite::{Message, WebSocket, client::connect};
 
 pub type InvocationId = u64;
@@ -2878,10 +2885,9 @@ where
                     .arguments
                     .iter()
                     .map(|argument| match argument {
-                        CheckedArgument::PubKey(name) if checked.keys.contains_key(name) => {
-                            host.host_key(&checked.keys[name])
-                                .map(OperationValue::DerivedKey)
-                        }
+                        CheckedArgument::PubKey(name) if checked.keys.contains_key(name) => host
+                            .host_key(&checked.keys[name])
+                            .map(OperationValue::DerivedKey),
                         other => Ok(checked_to_operation(other)),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -2997,12 +3003,18 @@ fn invalid(function: &'static str) -> RuntimeError {
 /// bundle is data the script already holds, and no secret is exposed, only a
 /// yes/no.
 fn invite_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
-    let [OperationValue::Text(bundle_json), OperationValue::Integer(now_ms)] = arguments else {
+    let [
+        OperationValue::Text(bundle_json),
+        OperationValue::Integer(now_ms),
+    ] = arguments
+    else {
         return Err(invalid("invite_is_valid"));
     };
     let now_ms = u64::try_from(*now_ms).map_err(|_| invalid("invite_is_valid"))?;
     let valid = match crate::invite::parse_invite(bundle_json) {
-        Ok(invite) => invite.expires_at.is_none_or(|expires_at| now_ms < expires_at),
+        Ok(invite) => invite
+            .expires_at
+            .is_none_or(|expires_at| now_ms < expires_at),
         Err(_) => false,
     };
     Ok(OperationValue::Bool(valid))
@@ -3015,8 +3027,11 @@ fn invite_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, Runti
 /// never leaves the opaque [`DerivedKey`] handle, only the comparison's
 /// result does.
 fn commitment_matches(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
-    let [OperationValue::DerivedKey(held_key), OperationValue::Integer(held_epoch), OperationValue::Text(commitment)] =
-        arguments
+    let [
+        OperationValue::DerivedKey(held_key),
+        OperationValue::Integer(held_epoch),
+        OperationValue::Text(commitment),
+    ] = arguments
     else {
         return Err(invalid("commitment_matches"));
     };
@@ -3059,6 +3074,7 @@ fn payment_amount(arguments: &[OperationValue]) -> Option<i64> {
     }
 }
 
+#[cfg(feature = "real-hosts")]
 #[derive(Debug)]
 /// Minimal production relay adapter for `ws://` and `wss://` Nostr relays.
 ///
@@ -3073,10 +3089,13 @@ pub struct RealRelayHost {
 }
 
 /// How long a relay read may block before the relay counts as unavailable.
+#[cfg(feature = "real-hosts")]
 const RELAY_IO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Frames skipped while waiting for the `OK` that answers a publish.
+#[cfg(feature = "real-hosts")]
 const MAX_FRAMES_BEFORE_OK: usize = 64;
 
+#[cfg(feature = "real-hosts")]
 fn set_read_timeout(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, timeout: Duration) {
     match socket.get_mut() {
         MaybeTlsStream::Plain(stream) => {
@@ -3094,6 +3113,7 @@ fn set_read_timeout(socket: &mut WebSocket<MaybeTlsStream<TcpStream>>, timeout: 
 /// tungstenite's `rustls-tls-native-roots` feature selects no provider, so a
 /// `wss://` connect panics until one is installed. A provider the host
 /// application already installed is left untouched.
+#[cfg(feature = "real-hosts")]
 fn open_socket(relay: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, RuntimeError> {
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         // A concurrent installer winning the race is equally fine.
@@ -3107,6 +3127,7 @@ fn open_socket(relay: &str) -> Result<WebSocket<MaybeTlsStream<TcpStream>>, Runt
     Ok(socket)
 }
 
+#[cfg(feature = "real-hosts")]
 impl RealRelayHost {
     /// Bounds how long a read may block before the relay counts as
     /// unavailable (default ten seconds).
@@ -3237,6 +3258,7 @@ impl RealRelayHost {
     }
 }
 
+#[cfg(feature = "real-hosts")]
 impl RelayHost for RealRelayHost {
     fn publish(
         &mut self,
@@ -3283,6 +3305,7 @@ impl RelayHost for RealRelayHost {
     }
 }
 
+#[cfg(feature = "real-hosts")]
 impl SubscriptionHost for RealRelayHost {
     fn subscribe(
         &mut self,
@@ -3356,12 +3379,14 @@ impl SubscriptionHost for RealRelayHost {
 
 /// Reusable connection pool for multiple Nostr relays.
 #[derive(Debug, Default)]
+#[cfg(feature = "real-hosts")]
 pub struct RealRelayPool {
     relays: BTreeMap<String, RealRelayHost>,
     handles: BTreeMap<u64, (String, SubscriptionHandle)>,
     next_handle: u64,
 }
 
+#[cfg(feature = "real-hosts")]
 impl RealRelayPool {
     #[must_use]
     pub fn new() -> Self {
@@ -3409,6 +3434,7 @@ impl RealRelayPool {
     }
 }
 
+#[cfg(feature = "real-hosts")]
 impl RelayHost for RealRelayPool {
     fn publish(
         &mut self,
@@ -3441,6 +3467,7 @@ impl RelayHost for RealRelayPool {
     }
 }
 
+#[cfg(feature = "real-hosts")]
 impl SubscriptionHost for RealRelayPool {
     fn subscribe(
         &mut self,
@@ -5248,6 +5275,85 @@ impl AuditHost for RecordingAudit {
     }
 }
 
+/// The result of running one handler cycle against a synthetic event.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SimulationReport {
+    /// How many handlers dispatched the event (after type/kind/author matching).
+    pub dispatched: usize,
+    /// The lowered subscription event types, in handler order.
+    pub subscriptions: Vec<String>,
+    /// Structured log records produced by executing handler bodies.
+    pub logs: Vec<LogRecord>,
+    /// The module operations the handlers called during this event. Those no
+    /// host implements are answered from their declared return type and marked
+    /// simulated.
+    pub operations: Vec<eval::SimulatedCall>,
+    /// Handlers that ran and failed. A failed body is rolled back and reported
+    /// here, and does not stop the other handlers.
+    pub failures: Vec<eval::HandlerFailure>,
+}
+
+impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
+    /// Runs one handler cycle with a synthetic signed event queued on every
+    /// lowered subscription, returning the deterministic preview a Studio
+    /// "Test Event" uses. No relay, signer, or other external host is
+    /// contacted; handler bodies run against the same transactional,
+    /// idempotency, and logging fakes the conformance suite uses.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first subscription, polling, idempotency, storage, logging,
+    /// or handler-body failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_event(
+        program: &nscript_syntax::Program,
+        checked: &CheckedProgram,
+        relay: &mut FakeRelayHost,
+        storage: &mut InMemoryStorage,
+        log: &mut FakeLogHost,
+        operations: &mut eval::SimulatedOperations,
+        principal: Option<&str>,
+        event: &SignedEvent,
+    ) -> Result<SimulationReport, RuntimeError> {
+        let mut runtime = Self::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock { now: 1_700_000_000 },
+            RecordingAudit::default(),
+        );
+        let subscriptions = Self::handler_subscriptions(checked, Some("public"));
+        for handle in 1..=subscriptions.len() {
+            relay
+                .queued_events
+                .insert(handle as u64, vec![event.clone()]);
+        }
+        let mut claims = InMemoryStorage::default();
+        let calls_before = operations.calls.len();
+        let cycle = runtime.run_evaluated_cycle(
+            program,
+            checked,
+            Some("public"),
+            relay,
+            &mut claims,
+            storage,
+            log,
+            operations,
+            principal,
+            eval::EvalLimits::default(),
+        )?;
+        Ok(SimulationReport {
+            dispatched: cycle.dispatched,
+            subscriptions: subscriptions
+                .into_iter()
+                .map(|request| request.event_type)
+                .collect(),
+            logs: log.records.clone(),
+            operations: operations.calls[calls_before..].to_vec(),
+            failures: cycle.failures,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5277,7 +5383,10 @@ mod tests {
             host.call_pure_function(
                 "concord05",
                 "invite_is_valid",
-                &[OperationValue::Text(bundle.clone()), OperationValue::Integer(1_000)]
+                &[
+                    OperationValue::Text(bundle.clone()),
+                    OperationValue::Integer(1_000)
+                ]
             ),
             Ok(OperationValue::Bool(true))
         );
@@ -6385,6 +6494,119 @@ mod tests {
     }
 
     #[test]
+    fn simulate_event_previews_a_synthetic_event_without_hosts() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    print(event.content)\n}";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "hello preview".to_owned(),
+                tags: Vec::new(),
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "preview-1".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        let mut relay = FakeRelayHost::default();
+        let mut storage = InMemoryStorage::default();
+        let mut logs = FakeLogHost::default();
+        let mut operations = eval::SimulatedOperations::default();
+        let report =
+            Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::simulate_event(
+                &program,
+                &checked,
+                &mut relay,
+                &mut storage,
+                &mut logs,
+                &mut operations,
+                None,
+                &event,
+            )
+            .expect("preview executes");
+        assert_eq!(report.dispatched, 1);
+        assert_eq!(report.subscriptions, ["Note"]);
+        assert_eq!(report.logs.len(), 1);
+        assert_eq!(report.logs[0].message, "hello preview");
+    }
+
+    fn simulate(
+        source: &str,
+        event: &SignedEvent,
+        principal: Option<&str>,
+    ) -> (SimulationReport, InMemoryStorage) {
+        let (program, _) = nscript_syntax::parse_program(source);
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let mut relay = FakeRelayHost::default();
+        let mut storage = InMemoryStorage::default();
+        let mut logs = FakeLogHost::default();
+        let mut operations = eval::SimulatedOperations::default();
+        let report =
+            Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::simulate_event(
+                &program,
+                &checked,
+                &mut relay,
+                &mut storage,
+                &mut logs,
+                &mut operations,
+                principal,
+                event,
+            )
+            .expect("preview executes");
+        (report, storage)
+    }
+
+    fn preview_event(content: &str) -> SignedEvent {
+        SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: content.to_owned(),
+                tags: Vec::new(),
+                created_at: 100,
+            },
+            signer: "mallory".to_owned(),
+            id: "preview".to_owned(),
+            signature: "sig".to_owned(),
+        }
+    }
+
+    #[test]
+    fn simulate_event_lets_a_handler_call_module_operations() {
+        let source = "use concord04\npermissions {\n    concord_kick\n    log\n}\non Note {\n    if event.content contains \"spam\" {\n        kick event.author\n    }\n}";
+        let (report, _) = simulate(source, &preview_event("buy spam"), None);
+        assert_eq!(report.dispatched, 1);
+        assert_eq!(report.operations.len(), 1);
+        assert_eq!(report.operations[0].operation, "kick_member");
+        assert_eq!(
+            report.operations[0].arguments,
+            vec![OperationValue::PubKey("mallory".to_owned())]
+        );
+        assert!(report.operations[0].simulated);
+        let (quiet, _) = simulate(source, &preview_event("hello"), None);
+        assert!(quiet.operations.is_empty());
+    }
+
+    #[test]
+    fn simulate_event_reports_a_failing_handler_without_hiding_the_others() {
+        let source = "permissions {\n    log\n}\non Note {\n    print(me)\n}\non Note {\n    print(\"second\")\n}";
+        let (report, _) = simulate(source, &preview_event("x"), None);
+        assert_eq!(report.dispatched, 2, "both handlers ran");
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.logs.len(), 1, "the second handler's log survived");
+        // With a principal the same program has no failure.
+        let (fine, _) = simulate(source, &preview_event("x"), Some("my-key"));
+        assert!(fine.failures.is_empty());
+        assert_eq!(fine.logs.len(), 2);
+    }
+
+    #[test]
     fn handler_body_iterates_event_tags() {
         let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\non Note {\n    for tag in event.tags {\n        print(tag)\n    }\n}";
         let program = nscript_syntax::parse_program(source).0;
@@ -6422,6 +6644,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "real-hosts")]
     fn real_relay_adapter_decodes_nip01_event_frames() {
         let frame = serde_json::json!({
             "id": "event-1",
@@ -6443,6 +6666,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "real-hosts")]
     fn real_relay_adapter_reports_connection_failures() {
         assert!(matches!(
             RealRelayHost::connect("ws://127.0.0.1:1"),
@@ -6452,6 +6676,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "real-hosts")]
     fn real_relay_adapter_accepts_secure_relay_urls() {
         assert!(matches!(
             RealRelayHost::connect("wss://127.0.0.1:1"),
@@ -6462,6 +6687,7 @@ mod tests {
 
     /// A minimal local relay: accepts one WebSocket client and runs `script`
     /// against it, returning the `ws://` URL to connect to.
+    #[cfg(feature = "real-hosts")]
     fn local_relay(script: impl FnOnce(&mut WebSocket<TcpStream>) + Send + 'static) -> String {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let url = format!("ws://{}", listener.local_addr().expect("addr"));
@@ -6473,6 +6699,7 @@ mod tests {
         url
     }
 
+    #[cfg(feature = "real-hosts")]
     fn sample_event(id: &str) -> SignedEvent {
         SignedEvent {
             unsigned: UnsignedEvent {
@@ -6488,6 +6715,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "real-hosts")]
     fn send_text(socket: &mut WebSocket<TcpStream>, value: &serde_json::Value) {
         socket
             .send(Message::Text(value.to_string().into()))
@@ -6495,6 +6723,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "real-hosts")]
     fn publish_waits_for_the_ok_that_names_its_event() {
         let url = local_relay(|socket| {
             let _ = socket.read().expect("EVENT frame");
@@ -6516,6 +6745,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "real-hosts")]
     fn a_silent_relay_times_out_instead_of_hanging() {
         let url = local_relay(|socket| {
             let _ = socket.read();
@@ -6530,6 +6760,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "real-hosts")]
     fn pool_publication_survives_a_failing_relay() {
         let good = local_relay(|socket| {
             let _ = socket.read().expect("EVENT frame");
@@ -6562,6 +6793,7 @@ mod tests {
     /// `cargo test -p nscript-runtime -- --ignored real_relay_tls`.
     #[test]
     #[ignore = "needs network access"]
+    #[cfg(feature = "real-hosts")]
     fn real_relay_tls_handshake_succeeds_against_a_public_relay() {
         let mut host = RealRelayHost::connect("wss://relay.ditto.pub")
             .expect("TLS handshake and WebSocket upgrade succeed");
@@ -6571,6 +6803,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "real-hosts")]
     fn opening_a_secure_socket_installs_a_tls_provider_without_panicking() {
         // Refused before any handshake, but the provider must already be set.
         assert!(RealRelayHost::connect("wss://127.0.0.1:1").is_err());
@@ -6578,6 +6811,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "real-hosts")]
     fn real_relay_pool_routes_empty_pool_as_unavailable() {
         let mut pool = RealRelayPool::new();
         let request = SubscriptionRequest {

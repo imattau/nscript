@@ -341,9 +341,7 @@ fn program_locals(program: &Program) -> BTreeSet<String> {
             Item::Signer(declaration)
             | Item::Relay(declaration)
             | Item::RelaySet(declaration)
-            | Item::Key(declaration) => {
-                Some(declaration.name.value.clone())
-            }
+            | Item::Key(declaration) => Some(declaration.name.value.clone()),
             _ => None,
         })
         .collect()
@@ -363,10 +361,12 @@ fn declared_keys(program: &Program) -> BTreeMap<String, String> {
                 return None;
             };
             match arguments.as_slice() {
-                [Expr {
-                    value: ExprKind::Text(label),
-                    ..
-                }] => Some((declaration.name.value.clone(), label.clone())),
+                [
+                    Expr {
+                        value: ExprKind::Text(label),
+                        ..
+                    },
+                ] => Some((declaration.name.value.clone(), label.clone())),
                 _ => None,
             }
         })
@@ -807,17 +807,320 @@ fn handler_predicate_filters(expression: Option<&Expr>) -> (Option<String>, Vec<
 
 #[must_use]
 pub fn check(program: &Program) -> (Option<CheckedProgram>, Vec<Diagnostic>) {
+    let (inferred, diagnostics) = infer(program);
+    let result = diagnostics.is_empty().then_some(inferred);
+    (result, diagnostics)
+}
+
+/// Runs the checker and returns the inferred program even when diagnostics are
+/// present, so tooling can show a live capability footprint while the author
+/// still has permission errors to fix.
+#[must_use]
+pub fn infer(program: &Program) -> (CheckedProgram, Vec<Diagnostic>) {
     let mut checker = Checker::new(program);
     checker.check_items(&program.ast.items, &mut BTreeMap::new());
-    let result = checker.diagnostics.is_empty().then_some(CheckedProgram {
-        effects: checker.effects,
-        publications: checker.publications,
-        operation_calls: checker.operation_calls,
-        schedules: checker.schedules,
-        handlers: checker.handlers,
-        keys: declared_keys(program),
-    });
-    (result, checker.diagnostics)
+    (
+        CheckedProgram {
+            effects: checker.effects,
+            publications: checker.publications,
+            operation_calls: checker.operation_calls,
+            schedules: checker.schedules,
+            handlers: checker.handlers,
+            keys: declared_keys(program),
+        },
+        checker.diagnostics,
+    )
+}
+
+/// The inferred capability footprint of a program, grouped into the categories
+/// a Studio permission panel presents. Computed from what the checker inferred
+/// (`effects`, operation calls, publications, handlers, schedules) joined
+/// against the resolved module graph, so a `zap` call surfaces as a payment
+/// capability request without the author needing a manifest.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct CapabilityFootprint {
+    pub profile: String,
+    pub groups: Vec<CapabilityGroup>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct CapabilityGroup {
+    pub name: String,
+    pub items: Vec<CapabilityItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct CapabilityItem {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission: Option<String>,
+    /// `granted`, `requested` (inferred but not declared), or `forbidden`
+    /// (categorically denied by the runtime profile).
+    pub status: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum CapabilityCategory {
+    Nostr,
+    Network,
+    Payments,
+    Storage,
+    Secrets,
+    System,
+}
+
+impl CapabilityCategory {
+    const ORDER: [Self; 6] = [
+        Self::Nostr,
+        Self::Network,
+        Self::Payments,
+        Self::Storage,
+        Self::Secrets,
+        Self::System,
+    ];
+
+    #[must_use]
+    fn name(self) -> &'static str {
+        match self {
+            Self::Nostr => "Nostr",
+            Self::Network => "Network",
+            Self::Payments => "Payments",
+            Self::Storage => "Storage",
+            Self::Secrets => "Secrets",
+            Self::System => "System",
+        }
+    }
+}
+
+/// Builds the capability footprint for a program from its inferred effects and
+/// the resolved module graph.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn footprint(
+    program: &Program,
+    inferred: &CheckedProgram,
+    graph: &ResolvedModuleGraph,
+    diagnostics: &[Diagnostic],
+) -> CapabilityFootprint {
+    let missing = missing_permissions(diagnostics);
+    let forbidden_names = forbidden_names(program);
+    let mut items = BTreeMap::<CapabilityCategory, Vec<CapabilityItem>>::new();
+    let mut seen = BTreeSet::<(CapabilityCategory, String)>::new();
+    let push = |category: CapabilityCategory,
+                item: CapabilityItem,
+                items: &mut BTreeMap<CapabilityCategory, Vec<CapabilityItem>>,
+                seen: &mut BTreeSet<(CapabilityCategory, String)>| {
+        if seen.insert((category, item.label.clone())) {
+            items.entry(category).or_default().push(item);
+        }
+    };
+
+    for effect in &inferred.effects {
+        let (category, label, permission) = effect_capability(effect);
+        let forbidden = forbidden_names.contains(permission.as_str());
+        let status = status(Some(&permission), forbidden, &missing);
+        push(
+            category,
+            CapabilityItem {
+                label: label.to_owned(),
+                permission: Some(permission),
+                status,
+            },
+            &mut items,
+            &mut seen,
+        );
+    }
+    for call in &inferred.operation_calls {
+        let Some((permission, effects)) =
+            operation_capability(graph, &call.module, &call.operation)
+        else {
+            continue;
+        };
+        let category = operation_category(permission, effects);
+        let forbidden = forbidden_names.contains(permission)
+            || effects
+                .iter()
+                .any(|effect| forbidden_names.contains(effect.as_str()));
+        let status = status(Some(permission), forbidden, &missing);
+        push(
+            category,
+            CapabilityItem {
+                label: format!("Call {}.{}", call.module, call.operation),
+                permission: Some(permission.to_owned()),
+                status,
+            },
+            &mut items,
+            &mut seen,
+        );
+    }
+    for publication in &inferred.publications {
+        let forbidden = forbidden_names.contains("sign");
+        push(
+            CapabilityCategory::Nostr,
+            CapabilityItem {
+                label: format!("Publish {} to {}", publication.event, publication.relayset),
+                permission: Some("publish".to_owned()),
+                status: status(Some("publish"), forbidden, &missing),
+            },
+            &mut items,
+            &mut seen,
+        );
+        push(
+            CapabilityCategory::Nostr,
+            CapabilityItem {
+                label: format!("Sign {}", publication.event),
+                permission: Some("sign".to_owned()),
+                status: status(Some("sign"), forbidden, &missing),
+            },
+            &mut items,
+            &mut seen,
+        );
+    }
+    for handler in &inferred.handlers {
+        push(
+            CapabilityCategory::Nostr,
+            CapabilityItem {
+                label: format!("Handle {}", handler.event_type),
+                permission: Some("read".to_owned()),
+                status: status(Some("read"), false, &missing),
+            },
+            &mut items,
+            &mut seen,
+        );
+    }
+    for schedule in &inferred.schedules {
+        push(
+            CapabilityCategory::System,
+            CapabilityItem {
+                label: format!("Schedule {:?}", schedule.kind).to_lowercase(),
+                permission: Some("clock".to_owned()),
+                status: status(Some("clock"), false, &missing),
+            },
+            &mut items,
+            &mut seen,
+        );
+    }
+
+    let groups = CapabilityCategory::ORDER
+        .into_iter()
+        .filter_map(|category| {
+            items.remove(&category).map(|mut items| {
+                items.sort_by(|left, right| left.label.cmp(&right.label));
+                CapabilityGroup {
+                    name: category.name().to_owned(),
+                    items,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    CapabilityFootprint {
+        profile: format!("{:?}", program.profile).to_lowercase(),
+        groups,
+    }
+}
+
+#[must_use]
+fn status(permission: Option<&str>, forbidden: bool, missing: &BTreeSet<String>) -> String {
+    if forbidden {
+        "forbidden".to_owned()
+    } else if permission.is_some_and(|permission| missing.contains(permission)) {
+        "requested".to_owned()
+    } else {
+        "granted".to_owned()
+    }
+}
+
+fn effect_capability(effect: &Effect) -> (CapabilityCategory, &'static str, String) {
+    match effect {
+        Effect::Relay => (
+            CapabilityCategory::Nostr,
+            "Connect to relays",
+            "relay".to_owned(),
+        ),
+        Effect::Sign => (CapabilityCategory::Nostr, "Sign events", "sign".to_owned()),
+        Effect::Storage => (
+            CapabilityCategory::Storage,
+            "Local storage",
+            "storage".to_owned(),
+        ),
+        Effect::Clock => (
+            CapabilityCategory::System,
+            "Schedules and timers",
+            "clock".to_owned(),
+        ),
+        Effect::Log => (
+            CapabilityCategory::System,
+            "Structured logging",
+            "log".to_owned(),
+        ),
+        Effect::Http => (
+            CapabilityCategory::Network,
+            "Arbitrary HTTP requests",
+            "http".to_owned(),
+        ),
+        Effect::SecretKey => (
+            CapabilityCategory::Secrets,
+            "Secret key access",
+            "secret_key".to_owned(),
+        ),
+    }
+}
+
+fn operation_category(permission: &str, effects: &[String]) -> CapabilityCategory {
+    if effects.iter().any(|effect| effect == "Payment") || permission.contains("payment") {
+        CapabilityCategory::Payments
+    } else if effects.iter().any(|effect| effect == "HTTP") || permission == "http" {
+        CapabilityCategory::Network
+    } else if effects.iter().any(|effect| effect == "Filesystem") {
+        CapabilityCategory::Storage
+    } else if effects.iter().any(|effect| effect == "SecretKey") || permission.contains("secret") {
+        CapabilityCategory::Secrets
+    } else if effects.iter().any(|effect| effect == "Storage") {
+        CapabilityCategory::Storage
+    } else {
+        CapabilityCategory::Nostr
+    }
+}
+
+fn operation_capability<'a>(
+    graph: &'a ResolvedModuleGraph,
+    module: &str,
+    operation: &str,
+) -> Option<(&'a str, &'a [String])> {
+    let registered = graph.modules.get(module)?;
+    let candidate = registered
+        .descriptor
+        .operations
+        .iter()
+        .find(|candidate| candidate.name == operation)?;
+    Some((candidate.permission.as_str(), candidate.effects.as_slice()))
+}
+
+#[must_use]
+fn missing_permissions(diagnostics: &[Diagnostic]) -> BTreeSet<String> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "E3001")
+        .filter_map(|diagnostic| {
+            diagnostic
+                .message
+                .strip_prefix("operation requires `")
+                .and_then(|message| message.strip_suffix("` permission"))
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+#[must_use]
+fn forbidden_names(program: &Program) -> BTreeSet<String> {
+    if program.profile == RuntimeProfile::HardenedAgent {
+        HARDENED_FORBIDDEN
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect()
+    } else {
+        BTreeSet::new()
+    }
 }
 
 #[derive(Default)]
@@ -1416,7 +1719,7 @@ mod tests {
     use nscript_syntax::parse_program;
     use semver::VersionReq;
 
-    use super::{analyze, analyze_with_modules};
+    use super::{analyze, analyze_with_modules, footprint, infer};
 
     fn codes(source: &str) -> Vec<&'static str> {
         let (program, mut diagnostics) = parse_program(source);
@@ -1534,5 +1837,71 @@ mod tests {
                 .any(|diagnostic| diagnostic.code == "E1102" || diagnostic.code == "E3001"),
             "unexpected diagnostics: {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn footprint_groups_zap_as_a_granted_payment() {
+        let source = include_str!("../../../conformance/valid/layer3-zap.ns");
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let registry = ModuleRegistry::with_builtins();
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "nip57".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .expect("builtin nip57 resolves");
+        let (inferred, typed) = infer(&program);
+        assert!(typed.is_empty(), "{typed:?}");
+        let footprint = footprint(&program, &inferred, &graph, &[]);
+        let payments = footprint
+            .groups
+            .iter()
+            .find(|group| group.name == "Payments")
+            .expect("zap requests a payment capability");
+        let item = payments
+            .items
+            .iter()
+            .find(|item| item.label.contains("create_zap_request"))
+            .expect("the zap call is listed");
+        assert_eq!(item.status, "granted");
+        assert_eq!(item.permission.as_deref(), Some("zap"));
+    }
+
+    #[test]
+    fn footprint_marks_an_undeclared_zap_as_requested() {
+        let source = "use nip57\nzap alice amount 1000\n";
+        let source = source.replace("permissions {\n    zap\n}\n\n", "");
+        let (program, diagnostics) = parse_program(&source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let registry = ModuleRegistry::with_builtins();
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "nip57".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .expect("builtin nip57 resolves");
+        let mut diagnostics = analyze_with_modules(&program, &graph);
+        let (inferred, typed) = infer(&program);
+        diagnostics.extend(typed);
+        diagnostics.sort_by_key(|diagnostic| (diagnostic.span.start, diagnostic.code));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "E3001"),
+            "{diagnostics:?}"
+        );
+        let footprint = footprint(&program, &inferred, &graph, &diagnostics);
+        let payments = footprint
+            .groups
+            .iter()
+            .find(|group| group.name == "Payments")
+            .expect("zap requests a payment capability");
+        let item = payments
+            .items
+            .iter()
+            .find(|item| item.label.contains("create_zap_request"))
+            .expect("the zap call is listed");
+        assert_eq!(item.status, "requested");
     }
 }

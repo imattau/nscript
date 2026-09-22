@@ -7,6 +7,8 @@ members = [
     "crates/nscript-semantics",
     "crates/nscript-syntax",
     "crates/nscript-runtime",
+    "crates/nscript-wasm",
+    "crates/nscript-lang",
 ]
 resolver = "3"
 
