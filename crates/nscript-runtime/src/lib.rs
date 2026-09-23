@@ -3744,6 +3744,41 @@ impl RealRelayHost {
             signature: object.get("sig")?.as_str()?.to_owned(),
         })
     }
+
+    /// Reads exactly one relay frame for `handle`, without waiting for
+    /// `EOSE`. `Ok(Some(event))` is a delivered event; `Ok(None)` is any
+    /// other frame (`EOSE`, `NOTICE`, an event for a different subscription,
+    /// ...) — not a failure, just nothing new yet.
+    ///
+    /// [`SubscriptionHost::poll`] only ever returns once it has seen `EOSE`,
+    /// which suits a bounded history query but not waiting on a live reply
+    /// that does not exist yet when the subscription opens — a NIP-46
+    /// response, for instance, where `EOSE` typically arrives (with an empty
+    /// batch) before the remote signer has even seen the request. A caller
+    /// in that position calls this in its own retry loop instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RelayUnavailable` on a socket read failure, including the
+    /// configured read timeout elapsing — so a caller's retry loop is
+    /// naturally bounded per attempt, not just by its own attempt count.
+    pub fn recv_event(
+        &mut self,
+        handle: &SubscriptionHandle,
+    ) -> Result<Option<SignedEvent>, RuntimeError> {
+        let subscription = self.subscriptions.get(&handle.id).cloned().ok_or_else(|| {
+            RuntimeError::RelayUnavailable {
+                relayset: self.relay.clone(),
+            }
+        })?;
+        let frame = self.receive_json()?;
+        Ok(match frame.get(0).and_then(Value::as_str) {
+            Some("EVENT") if frame.get(1).and_then(Value::as_str) == Some(&subscription) => {
+                frame.get(2).and_then(Self::parse_event)
+            }
+            _ => None,
+        })
+    }
 }
 
 #[cfg(feature = "real-hosts")]
