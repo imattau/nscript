@@ -2027,6 +2027,37 @@ impl<T> Nip46SignerHost<T> {
     }
 }
 
+impl<T: Nip46Transport> Nip46SignerHost<T> {
+    /// Provisions a remote-signer session and stores it under `name` — the
+    /// capability name a script actually signs with (`sign X with account`,
+    /// `publish X with account`, ...), never `provider` (the bunker/
+    /// nostrconnect URI). [`SignerHost::sign`]'s own `signer` argument is
+    /// always the capability name, so [`SignerProvisionHost::provision`]
+    /// (which has no separate name to key by, and stores under `provider`
+    /// instead) can never actually be looked back up by a script using a
+    /// short signer name — this is the method a caller wiring a real
+    /// deployment wants instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SignerDenied` when `provider` is not a `bunker://` or
+    /// `nostrconnect://` URI, or when the transport rejects it.
+    pub fn provision_named(
+        &mut self,
+        name: &str,
+        provider: &str,
+    ) -> Result<SignerSession, RuntimeError> {
+        if !(provider.starts_with("bunker://") || provider.starts_with("nostrconnect://")) {
+            return Err(RuntimeError::SignerDenied {
+                signer: provider.to_owned(),
+            });
+        }
+        let session = self.transport.provision(provider)?;
+        self.sessions.insert(name.to_owned(), session.clone());
+        Ok(session)
+    }
+}
+
 impl<T: Nip46Transport> SignerProvisionHost for Nip46SignerHost<T> {
     fn provision(
         &mut self,
@@ -4320,6 +4351,18 @@ pub struct FakeClock {
 impl ClockHost for FakeClock {
     fn now(&self) -> u64 {
         self.now
+    }
+}
+
+/// The wall clock, for real deployment rather than simulation.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RealClock;
+
+impl ClockHost for RealClock {
+    fn now(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs())
     }
 }
 
@@ -8581,6 +8624,58 @@ mod tests {
                 .signer,
             "bunker://remote"
         );
+    }
+
+    #[test]
+    fn provision_named_lets_a_scripts_short_signer_name_reach_its_session() {
+        // A script never writes the bunker URI itself - only a capability
+        // name (`signer account = nip46()`, then `sign X with account`), so
+        // SignerHost::sign's `signer` argument is always that short name.
+        // The plain `SignerProvisionHost::provision` stores sessions keyed
+        // by the URI instead, which a script's short name can never match;
+        // `provision_named` is the fix a real caller needs.
+        #[derive(Default)]
+        struct Transport;
+        impl Nip46Transport for Transport {
+            fn provision(&mut self, provider: &str) -> Result<SignerSession, RuntimeError> {
+                Ok(SignerSession {
+                    provider: provider.to_owned(),
+                })
+            }
+            fn sign(
+                &mut self,
+                session: &SignerSession,
+                event: UnsignedEvent,
+            ) -> Result<SignedEvent, RuntimeError> {
+                Ok(SignedEvent {
+                    unsigned: event,
+                    signer: session.provider.clone(),
+                    id: "remote-id".to_owned(),
+                    signature: "remote-sig".to_owned(),
+                })
+            }
+        }
+        let mut host = Nip46SignerHost::new(Transport);
+        assert!(host.provision_named("account", "https://not-a-bunker").is_err());
+        host.provision_named("account", "bunker://remote")
+            .expect("provisions under the capability name");
+        let event = UnsignedEvent {
+            event_type: "Note".to_owned(),
+            kind: 1,
+            content: "hello".to_owned(),
+            tags: Vec::new(),
+            created_at: 1,
+        };
+        // The capability name works...
+        assert_eq!(
+            host.sign(1, event.clone(), "account")
+                .expect("signs by capability name")
+                .signer,
+            "bunker://remote"
+        );
+        // ...but the raw provider URI, which plain `provision` would have
+        // required, does not - only `account` was ever registered.
+        assert!(host.sign(2, event, "bunker://remote").is_err());
     }
 
     #[test]

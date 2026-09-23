@@ -386,6 +386,7 @@ checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
 name = "nscript-cli"
 version = "0.1.0"
 dependencies = [
+ "nscript-host-crypto",
  "nscript-ir",
  "nscript-modules",
  "nscript-runtime",
@@ -394,6 +395,7 @@ dependencies = [
  "semver",
  "serde_json",
  "sha2",
+ "tungstenite",
 ]
 
 [[package]]

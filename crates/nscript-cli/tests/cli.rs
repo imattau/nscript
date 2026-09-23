@@ -1144,3 +1144,223 @@ fn a_fold_query_runs_pure_with_no_permission_and_no_result_wrapping() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("invite still valid"), "{stdout}");
 }
+
+mod deploy_with_real_hosts {
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+
+    use nscript_host_crypto::group_key::xonly_pubkey;
+    use nscript_host_crypto::nip44;
+    use nscript_host_crypto::schnorr::sign_random;
+    use serde_json::{Value, json};
+    use sha2::{Digest, Sha256};
+    use tungstenite::{Message, WebSocket};
+
+    use super::Command;
+
+    fn hex(bytes: &[u8]) -> String {
+        use std::fmt::Write as _;
+        bytes.iter().fold(String::new(), |mut out, byte| {
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
+    }
+
+    fn unhex32(text: &str) -> [u8; 32] {
+        let mut out = [0_u8; 32];
+        for (slot, pair) in out.iter_mut().zip(text.as_bytes().chunks(2)) {
+            *slot = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap();
+        }
+        out
+    }
+
+    fn event_id(pubkey: &str, created_at: u64, kind: u64, tags: &Value, content: &str) -> String {
+        let preimage = json!([0, pubkey, created_at, kind, tags, content]).to_string();
+        hex(&Sha256::digest(preimage.as_bytes()))
+    }
+
+    /// Builds and signs a real Nostr event with `secret`.
+    fn signed_event(secret: &[u8; 32], kind: u64, tags: &Value, content: &str, created_at: u64) -> Value {
+        let pubkey = hex(&xonly_pubkey(secret).unwrap());
+        let id = event_id(&pubkey, created_at, kind, tags, content);
+        let sig = sign_random(secret, &unhex32(&id)).unwrap();
+        json!({
+            "id": id, "pubkey": pubkey, "created_at": created_at,
+            "kind": kind, "tags": tags, "content": content, "sig": hex(&sig)
+        })
+    }
+
+    fn send(socket: &mut WebSocket<TcpStream>, value: &Value) {
+        socket
+            .send(Message::Text(value.to_string().into()))
+            .expect("relay send");
+    }
+
+    fn read_json(socket: &mut WebSocket<TcpStream>) -> Value {
+        loop {
+            if let Message::Text(text) = socket.read().expect("frame") {
+                return serde_json::from_str(&text).expect("json");
+            }
+        }
+    }
+
+    /// A relay that expects exactly the sequence `deploy` produces for the
+    /// fixture script below: one startup publish, one subscription (answered
+    /// with one waiting Note tagged `trigger`, then EOSE), then one reply
+    /// publish from the handler. Incoming event signatures are not checked —
+    /// nothing downstream of the relay adapter verifies them either, so a
+    /// placeholder `sig` on the delivered Note is fine; only the two events
+    /// *this test* asserts on (the ones `deploy` itself signs) need to be
+    /// real.
+    fn fake_relay() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("ws://{}", listener.local_addr().expect("addr"));
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut socket = tungstenite::accept(stream).expect("handshake");
+
+            // 1) The program's own top-level `publish`.
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "EVENT");
+            send(&mut socket, &json!(["OK", frame[1]["id"], true, ""]));
+
+            // 2) The handler's subscription: answer with one waiting Note.
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "REQ");
+            let sub_id = frame[1].clone();
+            let note = json!({
+                "id": "f".repeat(64), "pubkey": "a".repeat(64), "created_at": 1_700_000_000,
+                "kind": 1, "tags": [["t", "trigger"]], "content": "are you there?", "sig": "b".repeat(128)
+            });
+            send(&mut socket, &json!(["EVENT", sub_id, note]));
+            send(&mut socket, &json!(["EOSE", sub_id]));
+
+            // 3) The handler's own reply `publish`.
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "EVENT");
+            assert_eq!(frame[1]["content"], "reply: are you there?");
+            send(&mut socket, &json!(["OK", frame[1]["id"], true, ""]));
+        });
+        url
+    }
+
+    /// A minimal bunker answering exactly `connect` / `get_public_key` /
+    /// `sign_event`, real NIP-44/Schnorr on both sides — see
+    /// `nscript-host-crypto`'s own `nip46` tests for the same pattern.
+    fn fake_bunker(bunker_secret: [u8; 32], user_secret: [u8; 32]) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("ws://{}", listener.local_addr().expect("addr"));
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut socket = tungstenite::accept(stream).expect("handshake");
+            let user_pubkey = xonly_pubkey(&user_secret).unwrap();
+
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "REQ");
+            let sub_id = frame[1].clone();
+            send(&mut socket, &json!(["EOSE", sub_id]));
+
+            let mut key = None;
+            // `connect` and `get_public_key` happen exactly once (during
+            // provisioning); after that, every further request is its own
+            // fresh `sign_event` round trip — one per `sign`/`publish` the
+            // deployed program makes, not just one overall. Answer
+            // `connect`/`get_public_key` first, then keep answering
+            // `sign_event` until the client disconnects (the deploy
+            // subprocess exiting after its bounded `--cycles` closes the
+            // socket, ending this loop with a read error).
+            for method in ["connect", "get_public_key"]
+                .into_iter()
+                .chain(std::iter::repeat("sign_event"))
+            {
+                let Ok(Message::Text(text)) = socket.read() else {
+                    break;
+                };
+                let frame: Value = serde_json::from_str(&text).unwrap();
+                if frame[0] != "EVENT" {
+                    continue;
+                }
+                let event = frame[1].clone();
+                send(&mut socket, &json!(["OK", event["id"], true, ""]));
+
+                let client_pubkey = unhex32(event["pubkey"].as_str().unwrap());
+                let conversation_key =
+                    *key.get_or_insert_with(|| nip44::conversation_key(&bunker_secret, &client_pubkey).unwrap());
+                let plaintext =
+                    nip44::decrypt(&conversation_key, event["content"].as_str().unwrap()).unwrap();
+                let request: Value = serde_json::from_slice(&plaintext).unwrap();
+                assert_eq!(request["method"], method);
+
+                let result = match method {
+                    "connect" => json!("ack"),
+                    "get_public_key" => json!(hex(&user_pubkey)),
+                    "sign_event" => {
+                        let template: Value =
+                            serde_json::from_str(request["params"][0].as_str().unwrap()).unwrap();
+                        json!(
+                            signed_event(
+                                &user_secret,
+                                template["kind"].as_u64().unwrap(),
+                                &template["tags"],
+                                template["content"].as_str().unwrap(),
+                                template["created_at"].as_u64().unwrap(),
+                            )
+                            .to_string()
+                        )
+                    }
+                    _ => unreachable!(),
+                };
+                let response = json!({"id": request["id"], "result": result}).to_string();
+                let ciphertext = nip44::encrypt(&conversation_key, response.as_bytes()).unwrap();
+                let response_event = signed_event(
+                    &bunker_secret,
+                    24_133,
+                    &json!([["p", event["pubkey"]]]),
+                    &ciphertext,
+                    0,
+                );
+                send(&mut socket, &json!(["EVENT", sub_id, response_event]));
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn deploy_publishes_and_dispatches_against_a_real_relay_and_bunker() {
+        let bunker_secret = [21_u8; 32];
+        let user_secret = [22_u8; 32];
+        let relay_url = fake_relay();
+        let bunker_url = fake_bunker(bunker_secret, user_secret);
+        let bunker_pubkey_hex = hex(&xonly_pubkey(&bunker_secret).unwrap());
+        let bunker_connection_string = format!("bunker://{bunker_pubkey_hex}?relay={bunker_url}");
+
+        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    read Note from public\n    publish Note to public\n    sign Note with account\n    relay public\n    log\n}\n\npublish Note {\n    content: \"deploy started\",\n} to public with account\n\non Note where tags.t contains \"trigger\" {\n    print(\"handler ran\")\n    let result = publish Note {\n        content: \"reply: \" + event.content,\n    } to public with account\n    print(result.accepted)\n}\n";
+        let path = std::env::temp_dir().join(format!("nscript-deploy-{}.ns", std::process::id()));
+        std::fs::write(&path, source).unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("deploy")
+            .arg(&path)
+            .args(["--relay", &relay_url])
+            .args(["--signer", &format!("account={bunker_connection_string}")])
+            .args(["--cycles", "1"])
+            .args(["--poll-interval", "0"])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains(&format!("connected: {relay_url}")), "{stdout}");
+        assert!(stdout.contains("provisioning signer `account`... connected"), "{stdout}");
+        assert!(stdout.contains("publication 0: 1/1 relays accepted"), "{stdout}");
+        assert!(stdout.contains("log info: handler ran"), "{stdout}");
+        assert!(stdout.contains("log info: true"), "{stdout}");
+        assert!(stdout.contains("cycle 1: 1 dispatched, 0 failed"), "{stdout}");
+    }
+}

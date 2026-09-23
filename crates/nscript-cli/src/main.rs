@@ -7,6 +7,7 @@ use std::{
 };
 
 use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_hex, parse_module};
+use nscript_runtime::SubscriptionHost;
 use nscript_semantics::{analyze_with_modules, check};
 use nscript_syntax::{Diagnostic, Program, parse_program};
 use semver::VersionReq;
@@ -21,6 +22,7 @@ fn main() -> ExitCode {
         }
         [command, rest @ ..] if command == "inspect" => inspect_program(rest, false),
         [command, rest @ ..] if command == "run" => run_program(rest),
+        [command, rest @ ..] if command == "deploy" => deploy_program(rest),
         [command, rest @ ..] if command == "test-event" => test_event(rest),
         [package, manifest, rest @ ..] if package == "package" && manifest == "manifest" => {
             package_manifest(rest)
@@ -50,7 +52,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>]\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -785,6 +787,313 @@ fn run_program(arguments: &[String]) -> ExitCode {
         &operation_policy,
         &mut operation_host,
     )
+}
+
+#[derive(Default)]
+struct DeployOptions {
+    relays: Vec<String>,
+    /// `(capability name, bunker:// or nostrconnect:// URI)`.
+    signers: Vec<(String, String)>,
+    principal: Option<String>,
+    poll_interval: Option<u64>,
+    /// Stop after this many poll cycles, instead of running until
+    /// interrupted. Mainly for tests and for trying a deployment briefly.
+    cycles: Option<u64>,
+}
+
+/// Separates `--relay`, `--signer`, `--as`, `--poll-interval` and `--cycles`
+/// from the compiler arguments, the same way [`take_run_options`] does for
+/// `run`'s own flags.
+fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptions), String> {
+    let mut rest = Vec::new();
+    let mut options = DeployOptions::default();
+    let mut index = 0;
+    while index < arguments.len() {
+        let flag = arguments[index].as_str();
+        if !matches!(
+            flag,
+            "--relay" | "--signer" | "--as" | "--poll-interval" | "--cycles"
+        ) {
+            rest.push(arguments[index].clone());
+            index += 1;
+            continue;
+        }
+        let Some(value) = arguments.get(index + 1) else {
+            return Err(format!("{flag} requires a value"));
+        };
+        match flag {
+            "--relay" => options.relays.push(value.clone()),
+            "--signer" => {
+                let Some((name, uri)) = value.split_once('=') else {
+                    return Err(format!(
+                        "--signer expects <name>=<bunker://...>, found {value}"
+                    ));
+                };
+                options.signers.push((name.to_owned(), uri.to_owned()));
+            }
+            "--poll-interval" => {
+                options.poll_interval = Some(value.parse().map_err(|_| {
+                    format!("--poll-interval expects a whole number of seconds, found {value}")
+                })?);
+            }
+            "--cycles" => {
+                options.cycles = Some(value.parse().map_err(|_| {
+                    format!("--cycles expects a whole number, found {value}")
+                })?);
+            }
+            _ => options.principal = Some(value.clone()),
+        }
+        index += 2;
+    }
+    Ok((rest, options))
+}
+
+/// The numeric Nostr kind an event type name (e.g. `"Note"`) resolves to,
+/// per whichever imported module declared it (`nip01` declares `Note` as
+/// kind 1). `None` for a name no imported module declares an `event` for.
+fn event_kind(graph: &nscript_modules::ResolvedModuleGraph, name: &str) -> Option<u16> {
+    graph.modules.values().find_map(|module| {
+        module
+            .descriptor
+            .events
+            .iter()
+            .find(|event| event.name == name)
+            .map(|event| event.kind)
+    })
+}
+
+/// Runs a program for real: real relays (`RealRelayPool`) and, for each
+/// `--signer name=bunker://...`, a real NIP-46 remote signer
+/// (`Nip46SignerHost<RealNip46Transport>`) — unlike `run`, which always
+/// simulates both, by design. Module operation calls
+/// (`nip56.publish_report(...)`, `kick`, ...) still go through the same
+/// simulator `run`/`test-event` use: this closes the gap between "a script
+/// checks and runs against fakes" and "it is actually watching a relay and
+/// actually publishing," not the separate, larger gap of making every one of
+/// the ~75 NIP modules' operations real.
+///
+/// After the program's own top-level publications run (for real), this
+/// polls every declared handler's subscription in a loop — subscribe, wait
+/// for whatever is already there, dispatch each event through the same
+/// idempotent, transactional path `test-event` uses, unsubscribe, sleep,
+/// repeat — until `--cycles` is reached or the process is interrupted.
+/// Re-subscribing each cycle re-delivers the same relay history every time;
+/// idempotency (keyed by handler and event id) is what keeps that safe
+/// rather than re-running a handler on events it already saw, at the cost
+/// of relay traffic a `since` cursor would avoid — not yet implemented.
+#[allow(clippy::too_many_lines)]
+fn deploy_program(arguments: &[String]) -> ExitCode {
+    let (arguments, options) = match take_deploy_options(arguments) {
+        Ok(taken) => taken,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    if options.relays.is_empty() {
+        eprintln!("error: deploy requires at least one --relay <wss://url>");
+        return ExitCode::from(2);
+    }
+    let Ok((path, program, graph, mut diagnostics)) = load_program(&arguments) else {
+        return ExitCode::from(2);
+    };
+    diagnostics.extend(analyze_with_modules(&program, &graph));
+    if !diagnostics.is_empty() {
+        return finish(&path, diagnostics);
+    }
+    let (checked, typed_diagnostics) = check(&program);
+    if !typed_diagnostics.is_empty() {
+        return finish(&path, typed_diagnostics);
+    }
+    let checked = checked.expect("checked program");
+
+    println!("connecting to {} relay(s)...", options.relays.len());
+    let mut relay = nscript_runtime::RealRelayPool::new();
+    for url in &options.relays {
+        if let Err(error) = relay.add_relay(url.clone()) {
+            eprintln!("error: could not connect to {url}: {error:?}");
+            return ExitCode::from(1);
+        }
+        println!("  connected: {url}");
+    }
+
+    let mut signer = nscript_runtime::Nip46SignerHost::new(
+        nscript_host_crypto::nip46::RealNip46Transport::new(),
+    );
+    for (name, uri) in &options.signers {
+        print!("provisioning signer `{name}`... ");
+        match signer.provision_named(name, uri) {
+            Ok(_) => println!("connected"),
+            Err(error) => {
+                println!("failed");
+                eprintln!("error: signer `{name}` could not connect: {error:?}");
+                return ExitCode::from(1);
+            }
+        }
+    }
+
+    let mut runtime = nscript_runtime::Runtime::new(
+        relay,
+        signer,
+        nscript_runtime::RealClock,
+        nscript_runtime::RecordingAudit::default(),
+    );
+
+    let mut timers = nscript_runtime::FakeTimerHost::default();
+    if let Err(error) = runtime.schedule_program(&mut timers, &checked) {
+        eprintln!("error[R1003]: {error:?}");
+        return ExitCode::from(1);
+    }
+    for timer in &timers.schedules {
+        println!("note: timer {} at {} is registered but not run by deploy (every/at are not evaluated)", timer.name, timer.next_at);
+    }
+
+    let operation_policy = checked.operation_calls.iter().fold(
+        nscript_runtime::OperationPolicy::default(),
+        |policy, call| policy.allow(&call.module, &call.operation),
+    );
+    let mut operation_host = simulated_operations(&graph, &[]);
+    if !checked.operation_calls.is_empty() {
+        println!(
+            "note: module operation calls (kick, react, publish_report, ...) are still simulated here; only publish/sign/relay are real"
+        );
+    }
+    if let Err(code) = run_startup_operations(
+        &mut runtime,
+        &program,
+        &checked,
+        &operation_policy,
+        &mut operation_host,
+    ) {
+        return code;
+    }
+
+    let reports = match runtime.run(&program, &checked) {
+        Ok(reports) => reports,
+        Err(error) => {
+            eprintln!("error[R1001]: {error:?}");
+            return ExitCode::from(1);
+        }
+    };
+    for (index, report) in reports.iter().enumerate() {
+        let accepted = report.outcomes.iter().filter(|outcome| outcome.accepted).count();
+        println!(
+            "publication {index}: {accepted}/{} relays accepted",
+            report.outcomes.len()
+        );
+    }
+
+    if checked.handlers.is_empty() {
+        println!("no handlers registered; nothing to watch for");
+        return ExitCode::SUCCESS;
+    }
+
+    let policy = nscript_runtime::eval::policy_for(&checked);
+    // `handler_subscriptions` leaves `kinds` empty (it has no module graph to
+    // resolve a name like "Note" to its numeric kind), which the fake host
+    // this method usually runs against does not need — it matches by
+    // `event_type` string alone. A real relay only knows kinds, and
+    // `RealRelayHost::parse_event` has no module context either, so it
+    // always reports a delivered event's `event_type` as the literal
+    // string `"Event"`; `matches_subscription`'s very first check would
+    // then reject every real event, filter or no filter. Both are fixed
+    // here, the one place that actually has both the module graph and the
+    // handler it is subscribing for.
+    let mut requests = nscript_runtime::Runtime::<
+        nscript_runtime::RealRelayPool,
+        nscript_runtime::Nip46SignerHost<nscript_host_crypto::nip46::RealNip46Transport>,
+        nscript_runtime::RealClock,
+        nscript_runtime::RecordingAudit,
+    >::handler_subscriptions(&checked, None);
+    for (handler, request) in checked.handlers.iter().zip(&mut requests) {
+        if let Some(kind) = event_kind(&graph, &handler.event_type) {
+            request.kinds = vec![kind];
+        }
+    }
+    let mut idempotency = nscript_runtime::InMemoryStorage::default();
+    let mut storage = nscript_runtime::InMemoryStorage::default();
+    let poll_interval = std::time::Duration::from_secs(options.poll_interval.unwrap_or(5));
+
+    println!(
+        "watching {} handler(s), polling every {}s (Ctrl+C to stop)",
+        checked.handlers.len(),
+        poll_interval.as_secs()
+    );
+
+    let mut cycle_number: u64 = 0;
+    loop {
+        cycle_number += 1;
+        let mut dispatched = 0_usize;
+        let mut failed = 0_usize;
+        for (index, (handler, request)) in checked.handlers.iter().zip(&requests).enumerate() {
+            let handle = match runtime.relay.subscribe(0, request) {
+                Ok(handle) => handle,
+                Err(error) => {
+                    eprintln!("error: subscribe for {} failed: {error:?}", handler.event_type);
+                    continue;
+                }
+            };
+            let batch = match runtime.relay.poll(0, &handle) {
+                Ok(batch) => batch,
+                Err(error) => {
+                    eprintln!("error: poll for {} failed: {error:?}", handler.event_type);
+                    let _ = runtime.relay.unsubscribe(0, &handle);
+                    continue;
+                }
+            };
+            for raw_event in &batch.events {
+                // `RealRelayHost::parse_event` cannot know the handler's own
+                // event-type name; a relay that ignored the kind filter
+                // above is caught here rather than trusted.
+                if request.kinds.first().is_some_and(|kind| *kind != raw_event.unsigned.kind) {
+                    continue;
+                }
+                let mut event = raw_event.clone();
+                event.unsigned.event_type.clone_from(&handler.event_type);
+                let event = &event;
+                let mut log = nscript_runtime::FakeLogHost::default();
+                match runtime.dispatch_evaluated(
+                    &program,
+                    request,
+                    event,
+                    index,
+                    handler,
+                    &policy,
+                    &mut idempotency,
+                    &mut storage,
+                    &mut log,
+                    &mut operation_host,
+                    options.principal.as_deref(),
+                    nscript_runtime::eval::EvalLimits::default(),
+                ) {
+                    Ok(None) => {}
+                    Ok(Some(Ok(_))) => dispatched += 1,
+                    Ok(Some(Err(error))) => {
+                        dispatched += 1;
+                        failed += 1;
+                        eprintln!(
+                            "error[R1004]: handler {} failed: {}",
+                            handler.event_type,
+                            describe_handler_error(&error)
+                        );
+                    }
+                    Err(error) => {
+                        eprintln!("error: dispatch for {} failed: {error:?}", handler.event_type);
+                    }
+                }
+                for record in &log.records {
+                    println!("  log {}: {}", record.level, record.message);
+                }
+            }
+            let _ = runtime.relay.unsubscribe(0, &handle);
+        }
+        println!("cycle {cycle_number}: {dispatched} dispatched, {failed} failed");
+        if options.cycles.is_some_and(|max| cycle_number >= max) {
+            break;
+        }
+        std::thread::sleep(poll_interval);
+    }
+    ExitCode::SUCCESS
 }
 
 /// One recorded operation call, as `run` and `test-event` print it.

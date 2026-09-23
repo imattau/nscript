@@ -62,12 +62,27 @@ its own budget (30 seconds, by default, for `RealNip46Transport`).
 - **No discovery.** A remote signer's NIP-05 `nip46` block or NIP-89
   `kind:31990` advertisement is not read; a `bunker://` URI is the only way
   in.
-- **Not wired into the CLI.** `nscript run`/`check`/`test-event` still
-  always use `FakeSignerHost`, unconditionally, so a script's own `signer
-  account = nip46()` never touches this code today. Using it means writing
-  Rust that constructs a `Nip46SignerHost::new(RealNip46Transport::new())`
-  and drives a `Runtime` with it directly — there is no `--real` flag or
-  separate command yet.
+- **`nscript run`/`check`/`test-event` still always use `FakeSignerHost`,
+  unconditionally** — that has not changed and will not; it is what makes
+  `run` safe to try against an untrusted script. A real deployment goes
+  through the separate `nscript deploy` command instead — see
+  `docs/DEPLOY.md`.
+
+## A real bug this surfaced: sessions keyed by the wrong thing
+
+`Nip46SignerHost::provision` (the pre-existing `SignerProvisionHost` trait
+method) stores each session under `session.provider` — the bunker/
+nostrconnect URI itself. But `SignerHost::sign`'s own `signer` argument is
+always the *script's capability name* (`sign X with account`, from a
+`signer account = nip46()` declaration) — never the URI. Those two strings
+never matched, so `Nip46SignerHost` could never actually be driven by a real
+script; the one pre-existing test exercising it only worked because it
+signed with the literal provider string too (`host.sign(4, event,
+&session.provider)`), sidestepping the mismatch rather than exposing it.
+
+`Nip46SignerHost::provision_named(name, provider)` is the fix: it still
+validates and provisions the same way, but stores the session under `name`.
+`nscript deploy` (below) uses this, not the trait method.
 
 ## Test coverage
 

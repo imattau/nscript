@@ -11,6 +11,7 @@ name = "nscript"
 path = "src/main.rs"
 
 [dependencies]
+nscript-host-crypto = { path = "../nscript-host-crypto" }
 nscript-ir = { path = "../nscript-ir" }
 nscript-modules = { path = "../nscript-modules" }
 nscript-runtime = { path = "../nscript-runtime" }
@@ -25,3 +26,4 @@ workspace = true
 
 [dev-dependencies]
 nscript-runtime = { path = "../nscript-runtime", features = ["wasm-engine"] }
+tungstenite.workspace = true
