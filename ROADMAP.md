@@ -86,8 +86,8 @@ protocol breadth.
 
 - Land NCC-07 (capability manifest) first as the smallest end-to-end slice,
   then NCC-00 (document lifecycle), then the service cluster NCC-02, NCC-05,
-  NCC-06, then NCC-08 (identity handover); NCC-03 stays deferred until its
-  upstream kind model is resolved.
+  NCC-06, then NCC-08 (identity handover); NCC-03 lands last (see
+  Explicitly deferred below).
 - Build the real record-fields-to-wire-tags lowering path for declared events,
   so `publish <record>` statements emit correct kinds and tags on real relays.
   Module operation calls remain simulated until a host is wired in.
@@ -104,10 +104,11 @@ publication path is still simulated.
 
 - Adding more NIP descriptors or Layer 3 keywords without a concrete workflow
   and conformance need.
-- NCC-03 (elections and voting) until its upstream kind model is resolved:
-  the definition kind is unspecified, replaceability contradicts the companion
-  library's addressable kind, and the electoral roll overlaps NIP-51 list
-  space.
+- NCC-03 (elections and voting) until last in the phase: its kind model is
+  normative upstream at the pinned commit (definition `36998`, vote `1071`,
+  electoral roll `36997`, audit `36999`), so the reason is surface — four
+  event kinds, a one-vote-per-pubkey tally, and a voting window — plus its
+  dependency on Concord governance workflows, not an upstream defect.
 - A general-purpose production host for all module operations. Real operation
   hosts should be added by workflow and capability, with their live behavior
   made visible to users.

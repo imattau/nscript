@@ -1,6 +1,6 @@
 module ncc07 @ 0.1.0
 language ">=0.1.0 <0.2.0"
-reference "https://github.com/imattau/nostr-community-conventions/blob/712385839c5cd9d254c765b1fa900d0670a468dc/ncc-07/README.md"
+reference "https://github.com/imattau/nostr-community-conventions/blob/fe5981fd83becb0de53386569ede5604ae2ca7ef/ncc-07/README.md"
 
 validator manifest_identifier(value: Text) {
     require value == "capabilities"

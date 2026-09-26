@@ -1,0 +1,32 @@
+// NCC-02: a service publishes its Service Record (kind 30059, addressed
+// by the `d` service identifier) with the endpoint and transport-key
+// fingerprint the convention requires, and a monitor validates the
+// records it receives against a clock the caller supplies.
+use ncc02
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ServiceRecord to public
+    sign ServiceRecord with account
+    read ServiceRecord from public
+    relay public
+    log
+}
+
+publish ServiceRecord {
+    d: "relay";
+    u: "wss://relay.example.com";
+    k: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+    exp: 1767446400;
+    content: "";
+} to public with account
+
+on ServiceRecord where tags.d contains "relay" {
+    if ncc02.record_is_valid(event.tags, event.created_at) {
+        print(ncc02.service_id(event.tags) + " serves " + ncc02.endpoint(event.tags))
+    }
+}

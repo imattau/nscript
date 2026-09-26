@@ -1,0 +1,100 @@
+// An NCC-02 service registry bot: it publishes its own Service Record —
+// kind 30059, addressed by its service id — refreshes it on a 7-day
+// timer, and validates the records, attestations, and revocations it
+// receives with the module's pure functions.
+//
+// Adoption note: this is the convention's own workflow — services
+// publish service records, monitors validate them — with NCC-02's trust
+// model kept deliberately SSH-shaped. The service owner's pubkey is the
+// primary authority, attestations are optional and additive, and the
+// trust store each handler reads is script-visible data rather than host
+// behaviour. Reading a record or an attestation grants no permission and
+// satisfies no capability check.
+//
+// Time: scripts hold no wall clock (spec/language.md §9), so every
+// validity check takes `now` from the caller — here the delivered
+// event's `created_at` — and the record's own `exp` window is a source
+// constant the operator maintains. Connecting to the endpoint and
+// comparing the pinned fingerprint `k` against the transport key really
+// observed stays the endpoint's own verification; publishing the record
+// never claims to have done it.
+//
+// Try it:
+//
+//   nscript run examples/ncc02-service-registry.ns
+//       (no --event: publishes the record once; the 7d refresh timer is
+//       registered)
+//
+//   nscript run examples/ncc02-service-registry.ns \
+//       --event '{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://relay.example.com"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1700600000"]]}'
+//       (a peer's record: valid at the moment it was published)
+use ncc02
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+// Trust store: the certifier pubkeys this registry believes. NCC-02
+// §Client policy keeps that decision with the client, so it lives here
+// in source as data the operator maintains — and inside the handler that
+// reads it, since a top-level `let` is not visible in a handler
+// (docs/HANDLERS.md).
+//
+// The attestation this registry relies on, by event id, is likewise
+// declared where the revocation is read: NCC-02 §3 makes a revocation
+// override expiry, so one naming that id withdraws the trust immediately
+// rather than waiting for the window to lapse.
+
+permissions {
+    publish ServiceRecord to public
+    sign ServiceRecord with account
+    read ServiceRecord from public
+    read CertificateAttestation from public
+    read Revocation from public
+    relay public
+    clock
+    log
+}
+
+every 7d {
+    // The record is published when the bot comes up — a schedule's own
+    // publish is a startup publication — and refreshed by the interval.
+    let published = publish ServiceRecord {
+        d: "relay";
+        u: "wss://relay.example.com";
+        k: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+        exp: 1767446400;
+        content: "";
+    } to public with account
+    print("service record published: " + text(published.accepted) + "/1 relays")
+}
+
+on ServiceRecord {
+    let id = ncc02.service_id(event.tags)
+    if ncc02.record_is_valid(event.tags, event.created_at) {
+        let endpoint = ncc02.endpoint(event.tags)
+        print("service " + id + " serves " + endpoint + " over " + ncc02.endpoint_scheme(endpoint))
+    } else {
+        print("service " + id + " rejected: expired or incomplete")
+    }
+}
+
+on CertificateAttestation {
+    let certifiers = ["cab92accfa504f09d3d705a27ecf7bc6b4d65362d9c749e97628a95f9259aa9a"]
+    let level = ncc02.trust_level(event.tags)
+    if not ncc02.attestation_is_valid(event.tags, event.created_at) {
+        print("attestation rejected: outside its window or unscoped")
+    } else if certifiers contains text(event.author) {
+        print("trusted " + level + " attestation accepted")
+    } else {
+        print("attestation from an untrusted certifier: " + text(event.author))
+    }
+}
+
+on Revocation {
+    let relied_attestation = "31e194e9cfeee08eb7cb78e680aed5c2f9ca27a28a189fe54dc1319ec424e859"
+    if ncc02.revocation_is_for(event.tags, relied_attestation) {
+        print("attestation " + relied_attestation + " withdrawn: trust it no longer")
+    }
+}

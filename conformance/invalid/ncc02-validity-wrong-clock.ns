@@ -1,0 +1,18 @@
+// error: E1001 nominal-type-mismatch
+// NCC-02's validity rules are judged against a clock the caller holds:
+// `record_is_valid`'s second parameter is an Int and `event.content` is a
+// Text. Scripts hold no wall clock (spec/language.md §9), so a monitor
+// passes a timestamp — the delivered record's `created_at`, or another
+// value it was given — and the check never reads time itself.
+use ncc02
+use nip01
+
+permissions {
+    log
+}
+
+on ServiceRecord {
+    if ncc02.record_is_valid(event.tags, event.content) {
+        print("service record is valid")
+    }
+}

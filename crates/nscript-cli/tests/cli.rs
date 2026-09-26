@@ -132,6 +132,31 @@ fn ncc00_ledger_lowers_to_the_pinned_wire_vector() {
 }
 
 #[test]
+fn ncc02_service_record_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc02.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc02-service-record.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "ServiceRecord");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])
@@ -1209,6 +1234,91 @@ fn the_implementation_ledger_records_ncc_documents_it_receives() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("handler NccDocument: ok"), "{stdout}");
     assert!(!stdout.contains("ledger record"), "{stdout}");
+}
+
+#[test]
+fn the_service_registry_publishes_its_record_and_judges_what_it_receives() {
+    let path = repository_path("examples/ncc02-service-registry.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    // Startup: the 7d schedule publishes the record once and registers the
+    // refresh timer; with no record delivered there is no verdict either.
+    let output = run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("timer schedule-0 at 1700604800"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("publication 0: 1/1 relays accepted"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("service relay serves"), "{stdout}");
+
+    // Delivered peer records: `ncc02.record_is_valid` judges each against
+    // the event's own created_at — one inside its window, one expired.
+    let valid = r#"{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://relay.example.com"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1700600000"]]}"#;
+    let expired = r#"{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://relay.example.com"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1699999999"]]}"#;
+    let output = run(&["--event", valid, "--event", expired]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler ServiceRecord: ok"), "{stdout}");
+    assert!(
+        stdout.contains("service relay serves wss://relay.example.com over wss"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("service relay rejected: expired or incomplete"),
+        "{stdout}"
+    );
+
+    // An attestation from the registry's own certifier, one from another
+    // key, and the revocation that withdraws the relied-upon attestation.
+    let trusted = r#"{"event_type": "CertificateAttestation", "kind": 30060, "created_at": 1700000000, "content": "", "signer": "cab92accfa504f09d3d705a27ecf7bc6b4d65362d9c749e97628a95f9259aa9a", "tags": [["d", "relay:4d3bb1c02befc39da9fcdb96e8065074e13d70c428ae3ef9cda040ce9e6f3130"], ["subj", "4d3bb1c02befc39da9fcdb96e8065074e13d70c428ae3ef9cda040ce9e6f3130"], ["srv", "relay"], ["e", "31e194e9cfeee08eb7cb78e680aed5c2f9ca27a28a189fe54dc1319ec424e859"], ["std", "wss"], ["lvl", "hardened"], ["nbf", "1699900000"], ["exp", "1700600000"]]}"#;
+    let untrusted = r#"{"event_type": "CertificateAttestation", "kind": 30060, "created_at": 1700000000, "content": "", "signer": "3f905f84d32cbae986039df02c070175d6fdde0913d1b70df55592956ddd0e0d", "tags": [["d", "relay:4d3bb1c02befc39da9fcdb96e8065074e13d70c428ae3ef9cda040ce9e6f3130"], ["subj", "4d3bb1c02befc39da9fcdb96e8065074e13d70c428ae3ef9cda040ce9e6f3130"], ["srv", "relay"], ["e", "31e194e9cfeee08eb7cb78e680aed5c2f9ca27a28a189fe54dc1319ec424e859"], ["std", "wss"], ["lvl", "verified"], ["nbf", "1699900000"], ["exp", "1700600000"]]}"#;
+    let revoked = r#"{"event_type": "Revocation", "kind": 30061, "created_at": 1700000000, "content": "", "tags": [["d", "relay:4d3bb1c02befc39da9fcdb96e8065074e13d70c428ae3ef9cda040ce9e6f3130"], ["e", "31e194e9cfeee08eb7cb78e680aed5c2f9ca27a28a189fe54dc1319ec424e859"], ["reason", "key rotated"]]}"#;
+    let output = run(&["--event", trusted, "--event", untrusted, "--event", revoked]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("handler CertificateAttestation: ok"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("trusted hardened attestation accepted"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("attestation from an untrusted certifier: 3f905f84d32cbae986039df02c070175d6fdde0913d1b70df55592956ddd0e0d"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("handler Revocation: ok"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "attestation 31e194e9cfeee08eb7cb78e680aed5c2f9ca27a28a189fe54dc1319ec424e859 withdrawn: trust it no longer"
+        ),
+        "{stdout}"
+    );
 }
 
 #[test]

@@ -1,0 +1,66 @@
+module ncc02 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nostr-community-conventions/blob/fe5981fd83becb0de53386569ede5604ae2ca7ef/ncc-02/README.md"
+
+validator present(value: Text) {
+    require length(value) > 0
+}
+
+validator known_trust_level(value: Text) {
+    require value == "self" or value == "verified" or value == "hardened"
+}
+
+function service_id(tags: List<Text>) -> Text
+function endpoint(tags: List<Text>) -> Text
+function transport_key(tags: List<Text>) -> Text
+function trust_level(tags: List<Text>) -> Text
+function endpoint_scheme(endpoint: Text) -> Text
+function record_is_valid(tags: List<Text>, now: Int) -> Bool
+function attestation_is_valid(tags: List<Text>, now: Int) -> Bool
+function revocation_is_for(revocation_tags: List<Text>, attestation_id: Text) -> Bool
+
+event ServiceRecord {
+    kind: 30059
+    mode: addressable
+    content: Text as text
+    tags: List<ServiceRecordTag> = []
+    field d: Text
+    field u: Text
+    field k: Text
+    field exp: Int
+    require present(d)
+    require present(k)
+}
+
+event CertificateAttestation {
+    kind: 30060
+    mode: addressable
+    content: Text as text
+    tags: List<CertificateAttestationTag> = []
+    field d: Text
+    field subj: Text
+    field srv: Text
+    field e: Text
+    field std: Text
+    field lvl: Text
+    field nbf: Int
+    field exp: Int
+    require present(d)
+    require present(subj)
+    require present(srv)
+    require present(e)
+    require present(std)
+    require known_trust_level(lvl)
+}
+
+event Revocation {
+    kind: 30061
+    mode: addressable
+    content: Text as text
+    tags: List<RevocationTag> = []
+    field d: Text
+    field e: Text
+    field reason: Text
+    require present(d)
+    require present(e)
+}

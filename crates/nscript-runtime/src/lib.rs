@@ -3498,6 +3498,14 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("ncc00", "status_is_valid") => Some(ncc00_status_is_valid as PureFunction),
         ("ncc00", "succession_is_effective") => Some(ncc00_succession_is_effective as PureFunction),
         ("ncc00", "authority_label") => Some(ncc00_authority_label as PureFunction),
+        ("ncc02", "service_id") => Some(ncc02_service_id as PureFunction),
+        ("ncc02", "endpoint") => Some(ncc02_endpoint as PureFunction),
+        ("ncc02", "transport_key") => Some(ncc02_transport_key as PureFunction),
+        ("ncc02", "trust_level") => Some(ncc02_trust_level as PureFunction),
+        ("ncc02", "endpoint_scheme") => Some(ncc02_endpoint_scheme as PureFunction),
+        ("ncc02", "record_is_valid") => Some(ncc02_record_is_valid as PureFunction),
+        ("ncc02", "attestation_is_valid") => Some(ncc02_attestation_is_valid as PureFunction),
+        ("ncc02", "revocation_is_for") => Some(ncc02_revocation_is_for as PureFunction),
         ("ncc07", "capabilities") => Some(ncc07_capabilities as PureFunction),
         ("ncc07", "supports") => Some(ncc07_supports as PureFunction),
         ("ncc07", "capability_namespace") => Some(ncc07_capability_namespace as PureFunction),
@@ -3593,20 +3601,20 @@ fn commitment_matches(arguments: &[OperationValue]) -> Result<OperationValue, Ru
 /// The first `d` tag wins; an event with no `d` tag asserts no identifier
 /// and extracts as empty text rather than failing the handler.
 fn ncc00_identifier(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
-    ncc00_tag_value(arguments, "d", "ncc00.identifier")
+    tag_value(arguments, "d", "ncc00.identifier")
 }
 
 /// NCC-00 Appendix A.5: the lifecycle status an event carries, extracted
 /// from its tags the same way as [`ncc00_identifier`]. An event with no
 /// `status` tag extracts as empty text, which `status_is_valid` rejects.
 fn ncc00_status(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
-    ncc00_tag_value(arguments, "status", "ncc00.status")
+    tag_value(arguments, "status", "ncc00.status")
 }
 
-/// Shared by [`ncc00_identifier`] and [`ncc00_status`]: the value of the
-/// first `name=` tag, or empty text when the tag is absent. Entries that
-/// are not `name=value` pairs, or that carry a different name, are skipped.
-fn ncc00_tag_value(
+/// Shared by the NCC extraction functions: the value of the first
+/// `name=` tag, or empty text when the tag is absent. Entries that are
+/// not `name=value` pairs, or that carry a different name, are skipped.
+fn tag_value(
     arguments: &[OperationValue],
     name: &str,
     function: &'static str,
@@ -3614,6 +3622,22 @@ fn ncc00_tag_value(
     let [OperationValue::List(tags)] = arguments else {
         return Err(invalid(function));
     };
+    Ok(OperationValue::Text(
+        tag_lookup(tags, name, function)?
+            .unwrap_or_default()
+            .to_owned(),
+    ))
+}
+
+/// The value of the first `name=` tag in a handler-side tag list, `None`
+/// when the tag is absent. Entries that are not `name=value` pairs, or
+/// that carry a different name, are skipped; an entry that is not text at
+/// all is the wrong argument shape for the calling function.
+fn tag_lookup<'a>(
+    tags: &'a [OperationValue],
+    name: &str,
+    function: &'static str,
+) -> Result<Option<&'a str>, RuntimeError> {
     for tag in tags {
         let OperationValue::Text(tag) = tag else {
             return Err(invalid(function));
@@ -3621,10 +3645,10 @@ fn ncc00_tag_value(
         if let Some((tag_name, value)) = tag.split_once('=')
             && tag_name == name
         {
-            return Ok(OperationValue::Text(value.to_owned()));
+            return Ok(Some(value));
         }
     }
-    Ok(OperationValue::Text(String::new()))
+    Ok(None)
 }
 
 /// NCC-00 §Numbering: whether an identifier names an NCC — the `ncc-`
@@ -3701,6 +3725,147 @@ fn ncc00_authority_label(arguments: &[OperationValue]) -> Result<OperationValue,
         "De-facto (adopted)"
     };
     Ok(OperationValue::Text(label.to_owned()))
+}
+
+/// NCC-02 §1: the service identifier a delivered Service Record is
+/// addressed by, read from the handler-side `name=value` rendering of its
+/// tags (docs/HANDLERS.md). The first `d` tag wins; a record with no `d`
+/// tag asserts no identity and extracts as empty text rather than failing
+/// the handler.
+fn ncc02_service_id(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "d", "ncc02.service_id")
+}
+
+/// NCC-02 §1: the endpoint URI a record points at. A private or
+/// invite-only service publishes no `u` at all, which extracts as empty
+/// text rather than failing the handler — the record still anchors the
+/// service's identity and NCC-05 resolves reachability for it.
+fn ncc02_endpoint(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "u", "ncc02.endpoint")
+}
+
+/// NCC-02 §`k` requirements: the transport-key fingerprint the endpoint is
+/// pinned to, extracted the same way as [`ncc02_service_id`]. An absent
+/// `k` extracts as empty text, which [`ncc02_record_is_valid`] rejects.
+fn ncc02_transport_key(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "k", "ncc02.transport_key")
+}
+
+/// NCC-02 §2: the trust level an attestation claims (`self`, `verified`
+/// or `hardened`). An absent `lvl` extracts as empty text, which
+/// `attestation_is_valid` rejects.
+fn ncc02_trust_level(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "lvl", "ncc02.trust_level")
+}
+
+/// NCC-02 §1: the scheme an endpoint URI declares — `https`, `wss`, `tcp`,
+/// `onion`, or whatever else the publisher wrote — lowercased for
+/// comparison, or empty text when the endpoint carries no well-formed
+/// `scheme://` prefix. Which schemes a client will use is transport
+/// preference, and that stays script-visible data.
+fn ncc02_endpoint_scheme(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(endpoint)] = arguments else {
+        return Err(invalid("ncc02.endpoint_scheme"));
+    };
+    Ok(OperationValue::Text(endpoint_scheme(endpoint)))
+}
+
+fn endpoint_scheme(endpoint: &str) -> String {
+    let Some((scheme, _)) = endpoint.split_once("://") else {
+        return String::new();
+    };
+    // RFC 3986: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ).
+    let well_formed = scheme
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        && scheme.chars().skip(1).all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+        });
+    if well_formed {
+        scheme.to_ascii_lowercase()
+    } else {
+        String::new()
+    }
+}
+
+/// NCC-02 §1: whether a Service Record still carries the identity and
+/// transport binding the convention requires and has not passed its `exp`
+/// at the caller's `now`. `d`, `k` and `exp` are required tags; `u`
+/// deliberately is not — a private or invite-only service omits it and
+/// keeps the record as its identity anchor. Time is never read inside the
+/// host: the script passes it in (§Guardrails), so an expired record
+/// reads as invalid and a malformed or absent `exp` never validates.
+fn ncc02_record_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags), OperationValue::Integer(now)] = arguments else {
+        return Err(invalid("ncc02.record_is_valid"));
+    };
+    let service = tag_lookup(tags, "d", "ncc02.record_is_valid")?;
+    let key = tag_lookup(tags, "k", "ncc02.record_is_valid")?;
+    let expiry = tag_lookup(tags, "exp", "ncc02.record_is_valid")?
+        .and_then(|value| value.parse::<i64>().ok());
+    let valid = service.is_some_and(|service| !service.is_empty())
+        && key.is_some_and(|key| !key.is_empty())
+        && expiry.is_some_and(|expiry| *now < expiry);
+    Ok(OperationValue::Bool(valid))
+}
+
+/// NCC-02 §2: whether a Certificate Attestation is complete, correctly
+/// addressed, and inside its validity window at the caller's `now`. Its
+/// `d` must scope it to `<srv>:<subj>` — without that scoping every
+/// attestation from one certifier would replace the others under the same
+/// address — `lvl` must be one of the convention's three trust levels, and
+/// `nbf <= now < exp`. Which certifiers and levels a client accepts is
+/// trust policy: it stays in script-visible data, not here.
+fn ncc02_attestation_is_valid(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags), OperationValue::Integer(now)] = arguments else {
+        return Err(invalid("ncc02.attestation_is_valid"));
+    };
+    let function = "ncc02.attestation_is_valid";
+    let address = tag_lookup(tags, "d", function)?;
+    let subject = tag_lookup(tags, "subj", function)?;
+    let service = tag_lookup(tags, "srv", function)?;
+    let reference = tag_lookup(tags, "e", function)?;
+    let standard = tag_lookup(tags, "std", function)?;
+    let level = tag_lookup(tags, "lvl", function)?;
+    let not_before = tag_lookup(tags, "nbf", function)?.and_then(|value| value.parse::<i64>().ok());
+    let expiry = tag_lookup(tags, "exp", function)?.and_then(|value| value.parse::<i64>().ok());
+    let complete = [address, subject, service, reference, standard, level]
+        .into_iter()
+        .all(|field| field.is_some_and(|field| !field.is_empty()));
+    let scoped = match (address, service, subject) {
+        (Some(address), Some(service), Some(subject)) => address == format!("{service}:{subject}"),
+        _ => false,
+    };
+    let known_level = level.is_some_and(|level| matches!(level, "self" | "verified" | "hardened"));
+    let window = match (not_before, expiry) {
+        (Some(not_before), Some(expiry)) => *now >= not_before && *now < expiry,
+        _ => false,
+    };
+    Ok(OperationValue::Bool(
+        complete && scoped && known_level && window,
+    ))
+}
+
+/// NCC-02 §3: whether a Revocation withdraws that attestation. The
+/// required `e` reference names the revoked attestation, so a revocation
+/// covering a different attestation — or naming none — covers nothing
+/// here. Revocation overrides expiry: once this matches, the attestation
+/// is withdrawn whatever its own `exp` says.
+fn ncc02_revocation_is_for(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(tags),
+        OperationValue::Text(attestation_id),
+    ] = arguments
+    else {
+        return Err(invalid("ncc02.revocation_is_for"));
+    };
+    let target = tag_lookup(tags, "e", "ncc02.revocation_is_for")?;
+    Ok(OperationValue::Bool(
+        !attestation_id.is_empty() && target == Some(attestation_id.as_str()),
+    ))
 }
 
 /// NCC-07 §9 step 5: the capability identifiers a delivered manifest
@@ -8673,6 +8838,274 @@ mod tests {
         ));
         assert!(matches!(
             host.call_pure_function("ncc00", "identifier", &[OperationValue::Integer(1)]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn ncc02_service_functions_bind_identity_window_and_revocation() {
+        let mut host = FakeOperationHost::default();
+        let fingerprint = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+        let subject = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let record = vec![
+            OperationValue::Text("d=relay".to_owned()),
+            OperationValue::Text("u=wss://relay.example.com".to_owned()),
+            OperationValue::Text(format!("k={fingerprint}")),
+            OperationValue::Text("exp=1700600000".to_owned()),
+        ];
+        let mut extract = |name: &str, tags: Vec<OperationValue>| {
+            host.call_pure_function("ncc02", name, &[OperationValue::List(tags)])
+                .expect("extraction succeeds")
+        };
+        assert_eq!(
+            extract("service_id", record.clone()),
+            OperationValue::Text("relay".to_owned())
+        );
+        assert_eq!(
+            extract("endpoint", record.clone()),
+            OperationValue::Text("wss://relay.example.com".to_owned())
+        );
+        assert_eq!(
+            extract("transport_key", record.clone()),
+            OperationValue::Text(fingerprint.to_owned())
+        );
+        // A private service publishes no `u`; either way an absent tag
+        // extracts as empty text rather than failing the handler.
+        assert_eq!(
+            extract("endpoint", vec![OperationValue::Text("d=relay".to_owned())]),
+            OperationValue::Text(String::new())
+        );
+        let attestation_tags = vec![
+            OperationValue::Text(format!("d=relay:{subject}")),
+            OperationValue::Text("lvl=hardened".to_owned()),
+        ];
+        assert_eq!(
+            extract("trust_level", attestation_tags),
+            OperationValue::Text("hardened".to_owned())
+        );
+
+        let mut scheme = |endpoint: &str| {
+            host.call_pure_function(
+                "ncc02",
+                "endpoint_scheme",
+                &[OperationValue::Text(endpoint.to_owned())],
+            )
+            .expect("classification succeeds")
+        };
+        for (endpoint, expected) in [
+            ("wss://relay.example.com", "wss"),
+            ("onion://vww6ybal4bd7st", "onion"),
+            ("HTTPS://relay.example.com", "https"),
+            ("tcp://198.51.100.7:7777", "tcp"),
+            ("relay.example.com", ""),
+            ("://relay.example.com", ""),
+            ("1wss://relay.example.com", ""),
+            ("wss://", "wss"),
+            ("", ""),
+        ] {
+            assert_eq!(
+                scheme(endpoint),
+                OperationValue::Text(expected.to_owned()),
+                "scheme of {endpoint}"
+            );
+        }
+
+        let mut valid = |tags: &[&str], now: i64| {
+            let tags = tags
+                .iter()
+                .map(|tag| OperationValue::Text((*tag).to_owned()))
+                .collect();
+            host.call_pure_function(
+                "ncc02",
+                "record_is_valid",
+                &[OperationValue::List(tags), OperationValue::Integer(now)],
+            )
+            .expect("validation succeeds")
+        };
+        let fingerprint_tag = format!("k={fingerprint}");
+        let with_key = [
+            "d=relay",
+            "u=wss://relay.example.com",
+            "exp=1700600000",
+            fingerprint_tag.as_str(),
+        ];
+        assert_eq!(valid(&with_key, 1_700_000_000), OperationValue::Bool(true));
+        // At, and after, its own expiry the record no longer reads as valid.
+        assert_eq!(valid(&with_key, 1_700_600_000), OperationValue::Bool(false));
+        assert_eq!(valid(&with_key, 1_701_000_000), OperationValue::Bool(false));
+        // A private service omits `u` and stays valid; `d`, `k` and `exp`
+        // are required, and a malformed or empty one never validates.
+        assert_eq!(
+            valid(
+                &["d=relay", fingerprint_tag.as_str(), "exp=1700600000"],
+                1_700_000_000
+            ),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            valid(
+                &["d=relay", "u=wss://relay.example.com", "exp=1700600000"],
+                1_700_000_000
+            ),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            valid(
+                &[
+                    "u=wss://relay.example.com",
+                    fingerprint_tag.as_str(),
+                    "exp=1700600000"
+                ],
+                1_700_000_000
+            ),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            valid(&["d=relay", fingerprint_tag.as_str()], 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            valid(
+                &["d=relay", fingerprint_tag.as_str(), "exp=tomorrow"],
+                1_700_000_000
+            ),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            valid(
+                &["d=", fingerprint_tag.as_str(), "exp=1700600000"],
+                1_700_000_000
+            ),
+            OperationValue::Bool(false)
+        );
+
+        let attestation = [
+            format!("d=relay:{subject}"),
+            format!("subj={subject}"),
+            "srv=relay".to_owned(),
+            format!("e={}", "a".repeat(64)),
+            "std=nostr-service-trust-v0.1".to_owned(),
+            "lvl=verified".to_owned(),
+            "nbf=1699000000".to_owned(),
+            "exp=1700600000".to_owned(),
+        ];
+        let attestation: Vec<&str> = attestation.iter().map(String::as_str).collect();
+        let mut attest = |tags: &[&str], now: i64| {
+            let tags = tags
+                .iter()
+                .map(|tag| OperationValue::Text((*tag).to_owned()))
+                .collect();
+            host.call_pure_function(
+                "ncc02",
+                "attestation_is_valid",
+                &[OperationValue::List(tags), OperationValue::Integer(now)],
+            )
+            .expect("validation succeeds")
+        };
+        assert_eq!(
+            attest(&attestation, 1_700_000_000),
+            OperationValue::Bool(true)
+        );
+        // Outside its window in either direction: not yet issued, or spent.
+        assert_eq!(
+            attest(&attestation, 1_698_000_000),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            attest(&attestation, 1_700_600_000),
+            OperationValue::Bool(false)
+        );
+        // A `d` that does not scope the attestation to `<srv>:<subj>`
+        // would collide with the certifier's other attestations.
+        let mut unscoped = attestation.clone();
+        unscoped[0] = "d=relay";
+        assert_eq!(
+            attest(&unscoped, 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+        let mut unknown_level = attestation.clone();
+        unknown_level[5] = "lvl=trusted";
+        assert_eq!(
+            attest(&unknown_level, 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+        let mut no_standard = attestation.clone();
+        no_standard[4] = "std=";
+        assert_eq!(
+            attest(&no_standard, 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+        let mut malformed_window = attestation.clone();
+        malformed_window[6] = "nbf=soon";
+        assert_eq!(
+            attest(&malformed_window, 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            attest(&attestation[..6], 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+
+        let attestation_id = "b".repeat(64);
+        let mut revoked = |revocation: &[&str], attestation_id: &str| {
+            let tags = revocation
+                .iter()
+                .map(|tag| OperationValue::Text((*tag).to_owned()))
+                .collect();
+            host.call_pure_function(
+                "ncc02",
+                "revocation_is_for",
+                &[
+                    OperationValue::List(tags),
+                    OperationValue::Text(attestation_id.to_owned()),
+                ],
+            )
+            .expect("evaluation succeeds")
+        };
+        assert_eq!(
+            revoked(
+                &["d=attestation", &format!("e={attestation_id}")],
+                &attestation_id
+            ),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            revoked(&[&format!("e={}", "c".repeat(64))], &attestation_id),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            revoked(&["d=attestation"], &attestation_id),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            revoked(&[&format!("e={attestation_id}")], ""),
+            OperationValue::Bool(false)
+        );
+
+        assert!(matches!(
+            host.call_pure_function("ncc02", "record_is_valid", &[]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function("ncc02", "service_id", &[OperationValue::Integer(1)]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function("ncc02", "endpoint_scheme", &[OperationValue::Integer(1)]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        // A tag entry that is not text is a wrong argument shape for every
+        // function that reads tags.
+        assert!(matches!(
+            host.call_pure_function(
+                "ncc02",
+                "attestation_is_valid",
+                &[
+                    OperationValue::List(vec![OperationValue::Integer(1)]),
+                    OperationValue::Integer(1_700_000_000)
+                ]
+            ),
             Err(RuntimeError::InvalidOperationArguments { .. })
         ));
     }

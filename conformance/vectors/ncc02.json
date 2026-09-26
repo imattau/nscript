@@ -1,0 +1,16 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/fe5981fd83becb0de53386569ede5604ae2ca7ef/ncc-02/README.md",
+  "vectors": [
+    {
+      "type": "service-record",
+      "kind": 30059,
+      "content": "",
+      "tags": [
+        ["d", "relay"],
+        ["u", "wss://relay.example.com"],
+        ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"],
+        ["exp", "1767446400"]
+      ]
+    }
+  ]
+}

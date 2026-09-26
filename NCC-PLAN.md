@@ -8,7 +8,7 @@ existing protocols) and the workflow-first rule in `ROADMAP.md` (no protocol
 breadth without a concrete workflow and conformance need).
 
 The NCC repository is pinned at commit
-`712385839c5cd9d254c765b1fa900d0670a468dc`. A release MUST record a new pin
+`fe5981fd83becb0de53386569ede5604ae2ca7ef`. A release MUST record a new pin
 when NCC lowering behaviour changes, mirroring the NIP review-commit rule in
 [`spec/README.md`](spec/README.md).
 
@@ -18,7 +18,7 @@ when NCC lowering behaviour changes, mirroring the NIP review-commit rule in
 | --- | --- | --- | --- |
 | 00 | 30050 doc, 30051 succession, 30052 endorsement, 30053 supporting doc | — | Meta-convention: publishing and revising NCC documents on Nostr |
 | 02 | 30059 service record, 30060 attestation, 30061 revocation | — | Endpoint identity binding (`u`/`k`/`exp`) and optional attestation trust |
-| 03 | definition kind unresolved, roll 30000, audit 36999 | — | Elections, votes, one vote per pubkey, voting window |
+| 03 | definition 36998, vote 1071, roll 36997, audit 36999 | — | Elections, votes, one vote per pubkey, voting window |
 | 05 | 30058 locator | 02 (anchored mode) | Encrypted `ip:port` locators, TTL freshness, endpoint ordering |
 | 06 | none (behaviour only) | 02 + 05 | Client/sidecar conflict, caching, and transport policy |
 | 07 | 30062 manifest | composes 02/05 | `d=capabilities` with repeatable `cap` tags |
@@ -26,18 +26,24 @@ when NCC lowering behaviour changes, mirroring the NIP review-commit rule in
 
 ## Upstream prerequisites
 
-These are defects in the NCC repository itself and must be fixed (or the
-convention deferred) before implementation here:
+Both defects originally recorded here were fixed in the NCC repository
+itself, in `3a45e72` (merged as `fe5981f`) — the reason the pin above moved
+off `71238583`. They are kept for the record because each one gated a stage:
 
-1. **NCC-02 kinds 30060 and 30061 declare no `d` tag** while sitting in the
+1. **NCC-02 kinds 30060 and 30061 declared no `d` tag** while sitting in the
    30000–39999 addressable range. Without `d`, every attestation and
-   revocation from one certifier replaces every other at `d=""`. Fix: require
-   `d` (suggested: `srv` for 30060, the revoked event id for 30061).
-2. **NCC-03's kind model is unresolved**: the Election Definition kind is not
-   normatively stated, §5.1 says "non-replaceable" while the companion library
-   emits kind 36998 (addressable range), vote replaceability is a MAY, and the
-   electoral roll's kind 30000 overlaps NIP-51 legacy list space. NCC-03 is
-   deferred in `ROADMAP.md` until this is resolved.
+   revocation from one certifier replaces every other at `d=""`. Fixed
+   upstream: both events now require `d` (`<srv>:<subj>` for 30060, the
+   revoked attestation's event id for 30061) and §2/§3 state the
+   addressability rationale. Stage 3 implements the fixed text.
+2. **NCC-03's kind model was unresolved**: the Election Definition kind was
+   not normatively stated, §5.1 said "non-replaceable" while the companion
+   library emitted an addressable kind, and the electoral roll's kind 30000
+   overlapped NIP-51 legacy list space. Fixed upstream: definition `36998`,
+   vote `1071` (regular), electoral roll `36997`, audit `36999` are normative
+   and the library matches them. NCC-03 is still deferred in `ROADMAP.md`,
+   now on surface size and its Concord-governance dependency rather than on
+   an upstream defect.
 
 ## Phase 0 — groundwork
 
@@ -139,7 +145,7 @@ adoption (or an explicit non-adoption note).
 | 4 | NCC-05 | First encrypted payload; composes `nip44` | Services refresh encrypted locators on address change |
 | 5 | NCC-06 | Behaviour composed from stages 3 and 4 | Identity-first endpoint resolution in deploy/monitor workflows |
 | 6 | NCC-08 | Multi-event state machine after the anchor exists | Documented bot identity rotation workflow |
-| 7 | NCC-03 | Largest and least resolved; blocked on the upstream fix | Builds on `poll-tally-bot.ns` and Concord governance |
+| 7 | NCC-03 | Largest surface; four event kinds and a Concord-governance dependency, so it lands last | Builds on `poll-tally-bot.ns` and Concord governance |
 
 ## Stage 1 — NCC-07 capability manifest *(Done)*
 
@@ -235,6 +241,73 @@ Scope notes (same gaps as 0d): event `require` lines are declarative and
 never evaluated, and unknown publish fields still pass unchecked — the
 module's required-tag discipline rides on the shared lowering path rather
 than runtime enforcement.
+
+## Stage 3 — NCC-02 endpoint identity binding *(Done)*
+
+The pin moved from `71238583` to `fe5981f` before anything else landed:
+upstream `3a45e72` added the `d` tag NCC-02's two addressable events were
+missing (prerequisite 1) and made NCC-03's kinds normative (prerequisite 2).
+The `ncc-00` and `ncc-07` READMEs are byte-identical across the move, so no
+convention text recorded in earlier stages changed meaning. Shipped the full
+recipe against that commit:
+
+- **Module** `modules/std/ncc02/0.1.0.nsm`, registered in `BUILTINS`, with
+  `reference` pinned to the convention README. It declares three addressable
+  events — `ServiceRecord` (kind 30059: `d`, `u`, `k`, `exp`),
+  `CertificateAttestation` (kind 30060: `d`, `subj`, `srv`, `e`, `std`,
+  `lvl`, `nbf`, `exp`), and `Revocation` (kind 30061: `d`, `e`, `reason`) —
+  plus two validators (`present`, `known_trust_level`) and eight pure
+  functions: `service_id`/`endpoint`/`transport_key`/`trust_level` extract
+  from the handler-side `name=value` tag rendering; `endpoint_scheme`
+  classifies an endpoint's `scheme://` prefix, returning empty text when it
+  is absent or malformed; `record_is_valid(tags, now)` requires `d`, `k`,
+  and an `exp` that has not passed — `u` deliberately is not required, so a
+  private or invite-only service keeps the record as its identity anchor;
+  `attestation_is_valid(tags, now)` additionally requires every attestation
+  tag, the `<srv>:<subj>` scoping of `d`, one of §2's three trust levels,
+  and `nbf <= now < exp`; and `revocation_is_for(tags, attestation_id)`
+  matches the required `e` reference, so a matching revocation withdraws an
+  attestation whatever its own `exp` says (§3, revocation overrides expiry).
+- **Runtime dispatch** in `nscript-runtime`'s shared pure-function registry,
+  with unit tests for extraction, scheme classification, both validity
+  windows (expiry boundary, private record, missing and malformed tags,
+  unscoped and out-of-window attestations), revocation matching, and wrong
+  argument shapes. The tag readers were factored out of `ncc00`'s helpers
+  into a shared `tag_value`/`tag_lookup`, so both conventions read
+  `name=value` tags through one path.
+- **Fixtures**: `conformance/valid/ncc02-service-record.ns` (publishes a
+  record and validates delivered ones against `event.created_at`) and
+  `conformance/invalid/ncc02-validity-wrong-clock.ns`
+  (`record_is_valid(event.tags, event.content)` → `E1001
+  nominal-type-mismatch`: scripts hold no wall clock, so the caller must
+  pass an `Int` timestamp).
+- **Wire vector** `conformance/vectors/ncc02.json` (kind 30059, four tags in
+  construct order), asserted against the `inspect --json` publication trace
+  by a CLI test.
+- **Worked example** `examples/ncc02-service-registry.ns`: publishes its own
+  record from `every 7d { }`, then judges the records, attestations, and
+  revocations it receives. The trust store is a `let` inside the handler
+  that reads it, because a top-level `let` is not visible in a handler. Run
+  end to end by a CLI test with no event (startup publish), a valid and an
+  expired record, a trusted and an untrusted attestation, and the revocation
+  of the relied-upon attestation.
+- **Matrix row** and **spec subsection** (`spec/nostr.md` → Community
+  conventions → NCC-02 endpoint identity binding).
+- **Infrastructure adoption**: services publish service records; monitors
+  validate them — exactly what the example does, so any deployed instance
+  runs the adopted workflow. The convention's limits are recorded in the
+  example header and the spec: the record asserts the endpoint/key binding
+  while the client still performs it, and trust policy (which certifiers,
+  which levels, whether attestations are required) stays script-visible data.
+
+Scope notes (same gaps as 0d): event `require` lines are declarative and
+never evaluated, so `record_is_valid` — not the event declaration — is what
+enforces `d`/`k`/`exp` at runtime, and unknown publish fields still pass
+unchecked. Two limits of this stage: a schedule body is not executed under
+`nscript run` (its `publish` is collected as a startup publication, but the
+statements around it run only when a timer fires), and NCC-02's resolution
+step 7 — connect, then compare the observed transport key against `k` — is
+not something a script can do, so no function here claims to have done it.
 
 ## Guardrails
 
