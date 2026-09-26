@@ -2005,8 +2005,11 @@ impl Parser<'_> {
                 self.expect_word("in")?;
                 let group = self.expression_or_error(0, "the group to send it in")?;
                 let span = content.span.join(group.span);
-                let message =
-                    Self::construct("GroupMessage", vec![("group", group), ("content", content)], span);
+                let message = Self::construct(
+                    "GroupMessage",
+                    vec![("group", group), ("content", content)],
+                    span,
+                );
                 StatementKind::Expression(Self::module_call(
                     "nip29",
                     "publish_group_message",
@@ -2021,7 +2024,8 @@ impl Parser<'_> {
                 self.expect_word("write")?;
                 let write = self.expression_or_error(0, "the write relays")?;
                 let span = read.span.join(write.span);
-                let list = Self::construct("RelayList", vec![("read", read), ("write", write)], span);
+                let list =
+                    Self::construct("RelayList", vec![("read", read), ("write", write)], span);
                 StatementKind::Expression(Self::module_call(
                     "nip65",
                     "publish_relay_list",
@@ -2035,8 +2039,11 @@ impl Parser<'_> {
                 self.expect_word("from")?;
                 let source = self.expression_or_error(0, "the site's source")?;
                 let span = domain.span.join(source.span);
-                let deployment =
-                    Self::construct("SiteDeployment", vec![("domain", domain), ("source", source)], span);
+                let deployment = Self::construct(
+                    "SiteDeployment",
+                    vec![("domain", domain), ("source", source)],
+                    span,
+                );
                 StatementKind::Expression(Self::module_call(
                     "nip5a",
                     "publish_site",
@@ -2050,8 +2057,11 @@ impl Parser<'_> {
                 self.expect_word("as")?;
                 let content = self.expression_or_error(0, "the data to save")?;
                 let span = identifier.span.join(content.span);
-                let data =
-                    Self::construct("AppData", vec![("identifier", identifier), ("content", content)], span);
+                let data = Self::construct(
+                    "AppData",
+                    vec![("identifier", identifier), ("content", content)],
+                    span,
+                );
                 StatementKind::Expression(Self::module_call(
                     "nip78",
                     "publish_app_data",

@@ -34,7 +34,12 @@ use crate::stream::{
 /// Refounding (CORD-06) rolls the room name along with everything else.
 #[must_use]
 pub fn voice_key(channel_secret: &[u8; 32], channel_id: &[u8; 32], epoch: u64) -> GroupKey {
-    group_key("concord/voice-signer", channel_secret, channel_id, Some(epoch))
+    group_key(
+        "concord/voice-signer",
+        channel_secret,
+        channel_id,
+        Some(epoch),
+    )
 }
 
 /// `voice_media_key = hkdf(channel_secret, "concord/voice-media", channel_id,
@@ -42,7 +47,12 @@ pub fn voice_key(channel_secret: &[u8; 32], channel_id: &[u8; 32], epoch: u64) -
 /// coordinate, not a `group_key` — this key never becomes a signing pair.
 #[must_use]
 pub fn voice_media_key(channel_secret: &[u8; 32], channel_id: &[u8; 32], epoch: u64) -> [u8; 32] {
-    coordinate(channel_secret, "concord/voice-media", channel_id, Some(epoch))
+    coordinate(
+        channel_secret,
+        "concord/voice-media",
+        channel_id,
+        Some(epoch),
+    )
 }
 
 /// `sender_key = hkdf(voice_media_key, "concord/voice-sender",
@@ -106,7 +116,12 @@ pub fn verify_broker_auth(
     if event.get("kind").and_then(Value::as_u64) != Some(KIND_BROKER_AUTH) {
         return Err(AuthError::WrongKind);
     }
-    let field = |name: &str| event.get(name).and_then(Value::as_str).ok_or(AuthError::NotJson);
+    let field = |name: &str| {
+        event
+            .get(name)
+            .and_then(Value::as_str)
+            .ok_or(AuthError::NotJson)
+    };
     let pubkey = field("pubkey")?;
     let id = field("id")?;
     let created_at = event
@@ -250,7 +265,8 @@ pub fn open_presence(
     epoch: u64,
     wrap_json: &str,
 ) -> Result<nscript_runtime::voice::Presence, OpenPresenceError> {
-    let opened = open_ephemeral_stream_event(stream_pubkey, read_key, SealForm::Encrypted, wrap_json)?;
+    let opened =
+        open_ephemeral_stream_event(stream_pubkey, read_key, SealForm::Encrypted, wrap_json)?;
     Ok(parse_presence_rumor(
         &opened.author,
         &opened.rumor_json,
@@ -402,10 +418,7 @@ mod tests {
         // A relay-visible wrap is a real Nostr event: it must actually carry
         // the ephemeral wrap kind, not the persistent one messages use.
         let wire_value: Value = serde_json::from_str(&wire).unwrap();
-        assert_eq!(
-            wire_value.get("kind").and_then(Value::as_u64),
-            Some(21_059)
-        );
+        assert_eq!(wire_value.get("kind").and_then(Value::as_u64), Some(21_059));
     }
 
     #[test]
@@ -459,5 +472,4 @@ mod tests {
         assert_ne!(a, b);
         assert!(nscript_runtime::voice::identity_has_enough_entropy(&a));
     }
-
 }

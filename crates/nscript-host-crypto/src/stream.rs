@@ -163,7 +163,14 @@ pub fn build_wrap(
     outer_tags: &[Vec<String>],
     created_at: u64,
 ) -> Result<String, StreamError> {
-    build_wrap_as(KIND_WRAP, wrap_signer, read_key, seal_json, outer_tags, created_at)
+    build_wrap_as(
+        KIND_WRAP,
+        wrap_signer,
+        read_key,
+        seal_json,
+        outer_tags,
+        created_at,
+    )
 }
 
 /// Like [`build_wrap`], as [`KIND_WRAP_EPHEMERAL`]: a wrap relays never store.
@@ -200,7 +207,13 @@ fn build_wrap_as(
     let ephemeral = hex(&xonly_pubkey(&crate::random32()?)?);
     let mut tags = vec![json!(["p", ephemeral])];
     tags.extend(outer_tags.iter().map(|tag| json!(tag)));
-    let wrap = signed_event(wrap_signer, wrap_kind, &Value::Array(tags), &content, created_at)?;
+    let wrap = signed_event(
+        wrap_signer,
+        wrap_kind,
+        &Value::Array(tags),
+        &content,
+        created_at,
+    )?;
     Ok(wrap.to_string())
 }
 

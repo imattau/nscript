@@ -258,26 +258,27 @@ impl Nip46Transport for RealNip46Transport {
         })?;
 
         let client_secret = crate::random32().map_err(|_| denied(provider, "no randomness"))?;
-        let client_pubkey = xonly_pubkey(&client_secret).map_err(|_| denied(provider, "bad key"))?;
+        let client_pubkey =
+            xonly_pubkey(&client_secret).map_err(|_| denied(provider, "bad key"))?;
         let client_pubkey_hex = hex(&client_pubkey);
         let remote_signer_pubkey_hex = hex(&bunker.remote_signer_pubkey);
-        let conversation_key = nip44::conversation_key(&client_secret, &bunker.remote_signer_pubkey)
-            .map_err(|_| denied(provider, "could not derive a shared key"))?;
+        let conversation_key =
+            nip44::conversation_key(&client_secret, &bunker.remote_signer_pubkey)
+                .map_err(|_| denied(provider, "could not derive a shared key"))?;
 
-        let subscription = relay
-            .subscribe(
-                0,
-                &SubscriptionRequest {
-                    event_type: "Nip46Response".to_owned(),
-                    relayset: None,
-                    kinds: vec![u16::try_from(KIND_NIP46).expect("24133 fits in u16")],
-                    tag_equals: vec![("p".to_owned(), client_pubkey_hex.clone())],
-                    cursor: None,
-                    author: Some(remote_signer_pubkey_hex.clone()),
-                    since: None,
-                    limit: None,
-                },
-            )?;
+        let subscription = relay.subscribe(
+            0,
+            &SubscriptionRequest {
+                event_type: "Nip46Response".to_owned(),
+                relayset: None,
+                kinds: vec![u16::try_from(KIND_NIP46).expect("24133 fits in u16")],
+                tag_equals: vec![("p".to_owned(), client_pubkey_hex.clone())],
+                cursor: None,
+                author: Some(remote_signer_pubkey_hex.clone()),
+                since: None,
+                limit: None,
+            },
+        )?;
 
         let mut session = Session {
             client_secret,
@@ -350,7 +351,11 @@ impl Nip46Transport for RealNip46Transport {
                         let values = tag.as_array()?;
                         Some((
                             values.first()?.as_str()?.to_owned(),
-                            values.get(1).and_then(Value::as_str).unwrap_or("").to_owned(),
+                            values
+                                .get(1)
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_owned(),
                         ))
                     })
                     .collect()
@@ -413,7 +418,10 @@ mod tests {
         assert_eq!(parsed.remote_signer_pubkey, unhex32(&pubkey).unwrap());
         assert_eq!(
             parsed.relays,
-            vec!["wss://relay1.example".to_owned(), "wss://relay2.example".to_owned()]
+            vec![
+                "wss://relay1.example".to_owned(),
+                "wss://relay2.example".to_owned()
+            ]
         );
         assert_eq!(parsed.secret.as_deref(), Some("abc123"));
     }
@@ -440,7 +448,11 @@ mod tests {
     /// using the same real NIP-44 encryption and Schnorr signing the client
     /// does — this proves the two sides actually agree on the wire format,
     /// not just that the client's own code runs.
-    fn fake_bunker(bunker_secret: [u8; 32], user_secret: [u8; 32], expect_secret: Option<&'static str>) -> String {
+    fn fake_bunker(
+        bunker_secret: [u8; 32],
+        user_secret: [u8; 32],
+        expect_secret: Option<&'static str>,
+    ) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let url = format!("ws://{}", listener.local_addr().expect("addr"));
         thread::spawn(move || {
@@ -554,7 +566,10 @@ mod tests {
                 },
             )
             .expect("signs");
-        assert_eq!(signed.unsigned.content, "hello from a real bunker round trip");
+        assert_eq!(
+            signed.unsigned.content,
+            "hello from a real bunker round trip"
+        );
         assert_eq!(signed.signer, hex(&xonly_pubkey(&user_secret).unwrap()));
         assert_eq!(signed.id.len(), 64);
         assert_eq!(signed.signature.len(), 128);

@@ -153,7 +153,8 @@ pub fn is_stale(now_ms: u64, time_ms: u64) -> bool {
 /// insertion order, since presence carries no id to break it by).
 #[must_use]
 pub fn latest_per_author(presences: &[Presence]) -> std::collections::BTreeMap<String, &Presence> {
-    let mut latest: std::collections::BTreeMap<String, &Presence> = std::collections::BTreeMap::new();
+    let mut latest: std::collections::BTreeMap<String, &Presence> =
+        std::collections::BTreeMap::new();
     for presence in presences {
         match latest.get(&presence.author) {
             Some(current) if current.time_ms > presence.time_ms => {}
@@ -466,7 +467,12 @@ mod tests {
         assert!(!identity_has_enough_entropy(&"a".repeat(31)));
     }
 
-    fn request<'a>(pubkey: &'a str, url: &'a str, created_at: u64, id: &'a str) -> BrokerRequest<'a> {
+    fn request<'a>(
+        pubkey: &'a str,
+        url: &'a str,
+        created_at: u64,
+        id: &'a str,
+    ) -> BrokerRequest<'a> {
         BrokerRequest {
             pubkey,
             created_at,
@@ -487,7 +493,14 @@ mod tests {
             Ok(())
         );
         assert_eq!(
-            check_broker_request(&request("other", url, now, "id2"), room, url, "GET", now, |_| false),
+            check_broker_request(
+                &request("other", url, now, "id2"),
+                room,
+                url,
+                "GET",
+                now,
+                |_| false
+            ),
             Err(BrokerRequestError::WrongRoom)
         );
         assert_eq!(

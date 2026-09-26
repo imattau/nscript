@@ -8,7 +8,7 @@
 > 3. *(Grammar)* Agreement between words in person, number, gender, or case.
 
 ---
-# Concord 
+# Concord
 
 **End-to-end encrypted communities and channels, built on open infrastructure.**
 
