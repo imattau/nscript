@@ -1,0 +1,38 @@
+// Moderation over an encrypted Concord channel.
+//
+// Preview with:
+//   nscript inspect --json examples/concord-stream-moderation-bot.ns
+//   nscript run examples/concord-stream-moderation-bot.ns \
+//       --as <bot-pubkey> \
+//       --event '{"event_type":"StreamMessage","content":"buy spam now","signer":"<author-pubkey>"}'
+//
+// `run` uses fake hosts. It shows the decision and simulated kick; it does not
+// read a relay or publish a moderation event.
+use concord01
+use concord04
+
+fn is_spam(content: Text) -> Bool {
+    return content contains "spam" or content contains "buy followers"
+}
+
+permissions {
+    concord_read
+    concord_kick
+    read StreamMessage from chat
+    log
+}
+
+// The host provisions this opaque key label for the selected channel.
+key channel_key = host("general")
+let chat = concord01.stream(channel_key)
+
+stream messages = select StreamMessage from chat
+
+on messages {
+    if is_spam(event.content) {
+        match concord04.kick_member(event.author) {
+            Ok(_) => print("kicked " + event.author)
+            Err(error) => print("could not kick " + event.author + ": " + error.message)
+        }
+    }
+}

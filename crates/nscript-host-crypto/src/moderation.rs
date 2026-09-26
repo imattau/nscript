@@ -105,6 +105,31 @@ impl ConcordModerationHost {
         &self.authority
     }
 
+    /// Merge a newer verified Control Plane fold before processing another
+    /// message. This keeps the actor's authorization current as grants,
+    /// roles, and bans change in the community. The supplied fold must have
+    /// been verified for this host's community owner and ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an argument error if the fold belongs to another community, or
+    /// a resource limit error if the host's bounded authority store is full.
+    pub fn refresh_authority(&mut self, latest: &AuthorityFold) -> Result<(), RuntimeError> {
+        if latest.owner() != self.authority.owner()
+            || latest.community_id() != self.authority.community_id()
+        {
+            return Err(RuntimeError::InvalidOperationArguments {
+                operation: "refresh_community_authority".to_owned(),
+            });
+        }
+        if !self.authority.merge(latest) {
+            return Err(RuntimeError::ResourceLimit {
+                resource: "community_authority_editions".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     fn now(&self) -> u64 {
         self.fixed_time.unwrap_or_else(|| {
             SystemTime::now()

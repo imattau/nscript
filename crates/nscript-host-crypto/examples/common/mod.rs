@@ -38,20 +38,29 @@ pub fn query(relay: &str, filter: &Value) -> Result<Vec<Value>, String> {
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut events = Vec::new();
     while Instant::now() < deadline {
-        let Ok(Message::Text(text)) = socket.read() else {
-            break;
+        let message = socket
+            .read()
+            .map_err(|error| format!("read before EOSE: {error}"))?;
+        let Message::Text(text) = message else {
+            continue;
         };
         let Ok(Value::Array(frame)) = serde_json::from_str::<Value>(&text) else {
             continue;
         };
         match frame.first().and_then(Value::as_str) {
             Some("EVENT") => events.extend(frame.get(2).cloned()),
-            Some("EOSE" | "CLOSED") => break,
+            Some("EOSE") => {
+                let _ = socket.close(None);
+                return Ok(events);
+            }
+            Some("CLOSED") => {
+                return Err(format!("relay closed query: {frame:?}"));
+            }
             _ => {}
         }
     }
     let _ = socket.close(None);
-    Ok(events)
+    Err("query timed out before EOSE".to_owned())
 }
 
 /// Publishes one event, returning the relay's `OK` verdict and message.

@@ -432,6 +432,43 @@ impl AuthorityFold {
         })
     }
 
+    /// The owner commitment this fold was created for.
+    #[must_use]
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// The community commitment this fold was created for.
+    #[must_use]
+    pub fn community_id(&self) -> &str {
+        &self.community_id
+    }
+
+    /// Merge editions from another fold of the same community. The receiver's
+    /// fold mode and capacity remain in force. Returns `false` for a different
+    /// owner/community or when the receiver has no room for all new editions.
+    pub fn merge(&mut self, other: &Self) -> bool {
+        if self.owner != other.owner || self.community_id != other.community_id {
+            return false;
+        }
+        let additions = other
+            .editions
+            .iter()
+            .filter(|candidate| {
+                !self.editions.iter().any(|held| {
+                    held.rumor_id == candidate.rumor_id && held.entity_id == candidate.entity_id
+                })
+            })
+            .count();
+        if self.editions.len().saturating_add(additions) > self.capacity {
+            return false;
+        }
+        for edition in &other.editions {
+            let _ = self.insert(edition.clone());
+        }
+        true
+    }
+
     /// Stores an edition (duplicates by rumor id are ignored). Returns `false`
     /// if the store is full.
     pub fn insert(&mut self, edition: Edition) -> bool {

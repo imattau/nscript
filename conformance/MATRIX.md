@@ -25,6 +25,7 @@ against deterministic host fakes.
 | HTTP origin policy | Example only | Dedicated HTTP host test | Redirect denial |
 | Partial relay publication | `hello-note.ns` | Runtime partial-publication test | Partial publication |
 | Concord module operations | `concord01-publish.ns`, `concord04-moderation.ns` | `concord04-ungranted-ban.ns` | Moderation host rank and grant tests |
+| Concord encrypted stream moderation | `concord-stream-moderation-bot.ns` | `concord-read-stream-ungranted.ns`, `layer3-concord-ungranted-ban.ns` | `nscript-host-crypto/tests/handler.rs`: reader → handler → real kick and independent Guestbook fold |
 | Package resolution | Resolver transitive-version tests | Missing/incompatible package tests | Resolver version-selection vector |
 
 The Draft 0.1 release-blocker cells are covered by executable vectors or
