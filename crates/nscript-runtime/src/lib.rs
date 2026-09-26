@@ -2339,40 +2339,45 @@ where
         // that handler to actually run, not fire once here regardless of
         // whether any event ever reaches it. See `eval::top_level_publications`.
         for publication in eval::top_level_publications(Some(program), checked) {
-            reports.push(self.execute_publication(invocation, publication)?);
+            reports.push(self.execute_publication(invocation, publication, &checked.events)?);
         }
         Ok(reports)
     }
 
-    /// Creates, signs and publishes an event right now, for a `publish`/`send`
+    /// Creates, signs and publishes an event right now, for a `publish`
     /// expression evaluated live from inside a handler body (as opposed to
     /// [`Runtime::run`]'s startup pass over the program's top-level
-    /// publications). Same event construction as a top-level `publish`: only
-    /// `content` is carried, and `kind` is inferred from `event_type` the same
-    /// small way (`"Note"` is kind 1, anything else kind 0) — a handler gets
-    /// the same publish capability top-level code already has, not more.
+    /// publications). Same event construction as a top-level `publish`: the
+    /// record's author fields arrive as `(field, text)` wire-tag pairs, and
+    /// `events` resolves the event type's declared kind and parameterised
+    /// `d` tag — a handler gets the same publish capability top-level code
+    /// already has, not more.
     ///
     /// # Errors
     ///
-    /// Returns the signer's or the relay's failure, or
+    /// Returns the signer's or the relay's failure, a lowering failure, or
     /// [`RuntimeError::PublicationRejected`] if no relay accepted it.
+    #[allow(clippy::too_many_arguments)]
     pub fn publish_now(
         &mut self,
         event_type: &str,
         content: Option<String>,
+        tags: Vec<(String, String)>,
         relayset: &str,
         signer: &str,
+        events: &BTreeMap<String, nscript_semantics::CheckedEvent>,
     ) -> Result<PublishReport, RuntimeError> {
         let invocation = self.next_invocation;
         self.next_invocation += 1;
         let publication = CheckedPublication {
             event: event_type.to_owned(),
             content,
+            tags,
             signer: signer.to_owned(),
             relayset: relayset.to_owned(),
             span: nscript_syntax::Span::default(),
         };
-        self.execute_publication(invocation, &publication)
+        self.execute_publication(invocation, &publication, events)
     }
 
     /// Invoke a module operation through an approved host capability.
@@ -3414,15 +3419,29 @@ where
         &mut self,
         invocation: InvocationId,
         publication: &CheckedPublication,
+        events: &BTreeMap<String, nscript_semantics::CheckedEvent>,
     ) -> Result<PublishReport, RuntimeError> {
+        // The declared kind when something declares the event (the program's
+        // own `event` declaration, or an imported module's); the historical
+        // fallback when nothing does, so a bare script keeps publishing what
+        // it always did.
+        let declared = events.get(&publication.event);
+        let fallback = match publication.event.as_str() {
+            "Note" => 1,
+            _ => 0,
+        };
+        let kind = declared.map_or(fallback, |event| event.kind);
+        let tags = match declared {
+            Some(event) => event
+                .lower_tags(&publication.tags)
+                .map_err(|message| RuntimeError::EvaluationError { message })?,
+            None => publication.tags.clone(),
+        };
         let unsigned = UnsignedEvent {
             event_type: publication.event.clone(),
-            kind: match publication.event.as_str() {
-                "Note" => 1,
-                _ => 0,
-            },
+            kind,
             content: publication.content.clone().unwrap_or_default(),
-            tags: Vec::new(),
+            tags,
             created_at: self.clock.now(),
         };
         self.audit.record(AuditEntry {
@@ -3473,6 +3492,10 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("concord05", "invite_is_valid") => Some(invite_is_valid as PureFunction),
         ("concord06", "commitment_matches") => Some(commitment_matches as PureFunction),
         ("nip05", "identifier_matches") => Some(nip05_identifier_matches as PureFunction),
+        ("ncc07", "capabilities") => Some(ncc07_capabilities as PureFunction),
+        ("ncc07", "supports") => Some(ncc07_supports as PureFunction),
+        ("ncc07", "capability_namespace") => Some(ncc07_capability_namespace as PureFunction),
+        ("ncc07", "capability_is_valid") => Some(ncc07_capability_is_valid as PureFunction),
         _ => None,
     }
 }
@@ -3557,6 +3580,118 @@ fn commitment_matches(arguments: &[OperationValue]) -> Result<OperationValue, Ru
         .map_err(|_| invalid("commitment_matches"))?;
     let expected = crate::rekey::epoch_key_commitment(held_epoch, &key_bytes);
     Ok(OperationValue::Bool(expected == *commitment))
+}
+
+/// NCC-07 §9 step 5: the capability identifiers a delivered manifest
+/// advertises, read from the handler-side `name=value` rendering of its
+/// tags (docs/HANDLERS.md). Entries that are not `cap` tags, and `cap`
+/// entries with no value, assert no capability and are skipped.
+fn ncc07_capabilities(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc07.capabilities"));
+    };
+    let mut capabilities = Vec::new();
+    for tag in tags {
+        let OperationValue::Text(tag) = tag else {
+            return Err(invalid("ncc07.capabilities"));
+        };
+        if let Some((name, value)) = tag.split_once('=')
+            && name == "cap"
+            && !value.is_empty()
+        {
+            capabilities.push(OperationValue::Text(value.to_owned()));
+        }
+    }
+    Ok(OperationValue::List(capabilities))
+}
+
+/// NCC-07 §9 step 6: whether an advertised capability set contains the
+/// identifier a client is looking for — exact string match on the
+/// opaque identifier, with no namespace resolution.
+fn ncc07_supports(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(advertised),
+        OperationValue::Text(wanted),
+    ] = arguments
+    else {
+        return Err(invalid("ncc07.supports"));
+    };
+    for capability in advertised {
+        let OperationValue::Text(capability) = capability else {
+            return Err(invalid("ncc07.supports"));
+        };
+        if capability == wanted {
+            return Ok(OperationValue::Bool(true));
+        }
+    }
+    Ok(OperationValue::Bool(false))
+}
+
+/// NCC-07 §7: the namespace a capability identifier is understood in —
+/// `nip`, `ncc` or `pubkey` for a well-formed reference in one of the
+/// three namespaces the convention defines, `opaque` for everything
+/// else. Identifiers are opaque strings except where their namespace is
+/// understood (§7), so a broken `nip:abc` is not a NIP reference and
+/// classifies as `opaque` rather than `nip`.
+fn ncc07_capability_namespace(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(id)] = arguments else {
+        return Err(invalid("ncc07.capability_namespace"));
+    };
+    Ok(OperationValue::Text(capability_namespace(id).to_owned()))
+}
+
+fn capability_namespace(id: &str) -> &'static str {
+    if let Some(number) = id.strip_prefix("nip:")
+        && !number.is_empty()
+        && number.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        "nip"
+    } else if let Some(number) = id.strip_prefix("ncc:")
+        && !number.is_empty()
+        && number.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        "ncc"
+    } else if let Some(rest) = id.strip_prefix("pubkey:")
+        && let Some((hex, name)) = rest.split_once(':')
+        && is_lowercase_pubkey_hex(hex)
+        && !name.is_empty()
+    {
+        "pubkey"
+    } else {
+        "opaque"
+    }
+}
+
+fn is_lowercase_pubkey_hex(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// NCC-07 §7: whether a capability identifier is well formed. Opaque
+/// identifiers just need to be non-empty lowercase text without
+/// whitespace; an identifier that uses one of the three known namespace
+/// prefixes must complete it, or the claim is broken rather than opaque.
+fn ncc07_capability_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(id)] = arguments else {
+        return Err(invalid("ncc07.capability_is_valid"));
+    };
+    Ok(OperationValue::Bool(capability_is_valid(id)))
+}
+
+fn capability_is_valid(id: &str) -> bool {
+    if id.is_empty() || id.chars().any(|c| c.is_uppercase() || c.is_whitespace()) {
+        return false;
+    }
+    match capability_namespace(id) {
+        "opaque" => {
+            !id.starts_with("nip:") && !id.starts_with("ncc:") && !id.starts_with("pubkey:")
+        }
+        _ => true,
+    }
 }
 
 fn checked_to_operation(argument: &CheckedArgument) -> OperationValue {
@@ -6061,10 +6196,7 @@ impl OperationHost for FakeOperationHost {
                         operation: operation.to_owned(),
                     });
                 };
-                if goal.description.is_empty()
-                    || goal.amount_msats <= 0
-                    || goal.relays.is_empty()
-                {
+                if goal.description.is_empty() || goal.amount_msats <= 0 || goal.relays.is_empty() {
                     return Err(RuntimeError::InvalidOperationArguments {
                         operation: operation.to_owned(),
                     });
@@ -6184,10 +6316,7 @@ impl OperationHost for FakeOperationHost {
                         operation: operation.to_owned(),
                     });
                 };
-                if message.audio_url.is_empty()
-                    || message.duration <= 0
-                    || message.duration > 60
-                {
+                if message.audio_url.is_empty() || message.duration <= 0 || message.duration > 60 {
                     return Err(RuntimeError::InvalidOperationArguments {
                         operation: operation.to_owned(),
                     });
@@ -6757,7 +6886,10 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             Some(people) => OperationValue::FollowList(FollowList { people }),
             None => value.clone(),
         },
-        "RelayList" => match (record_strings(fields, "read"), record_strings(fields, "write")) {
+        "RelayList" => match (
+            record_strings(fields, "read"),
+            record_strings(fields, "write"),
+        ) {
             (Some(read), Some(write)) => OperationValue::RelayList(RelayList { read, write }),
             _ => value.clone(),
         },
@@ -6796,12 +6928,10 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             _ => value.clone(),
         },
         "ExpiringNote" => match (text("content"), integer("expires_at")) {
-            (Some(content), Some(expires_at)) => {
-                OperationValue::ExpiringNote(ExpiringNote {
-                    content,
-                    expires_at,
-                })
-            }
+            (Some(content), Some(expires_at)) => OperationValue::ExpiringNote(ExpiringNote {
+                content,
+                expires_at,
+            }),
             _ => value.clone(),
         },
         "NoteWithMentions" => match (text("content"), record_strings(fields, "mentions")) {
@@ -6874,13 +7004,11 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             _ => value.clone(),
         },
         "Bookmark" => match (text("uri"), text("title"), text("description")) {
-            (Some(uri), Some(title), Some(description)) => {
-                OperationValue::Bookmark(Bookmark {
-                    uri,
-                    title,
-                    description,
-                })
-            }
+            (Some(uri), Some(title), Some(description)) => OperationValue::Bookmark(Bookmark {
+                uri,
+                title,
+                description,
+            }),
             _ => value.clone(),
         },
         "CodeSnippet" => match (
@@ -7098,16 +7226,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             _ => value.clone(),
         },
         "PublicMessage" => match (text("content"), record_strings(fields, "recipients")) {
-            (Some(content), Some(recipients)) => {
-                OperationValue::PublicMessage(PublicMessage { content, recipients })
-            }
+            (Some(content), Some(recipients)) => OperationValue::PublicMessage(PublicMessage {
+                content,
+                recipients,
+            }),
             _ => value.clone(),
         },
-        "TimestampAttestation" => match (
-            text("target"),
-            integer("target_kind"),
-            text("ots_proof"),
-        ) {
+        "TimestampAttestation" => match (text("target"), integer("target_kind"), text("ots_proof"))
+        {
             (Some(target), Some(target_kind), Some(ots_proof)) => {
                 OperationValue::TimestampAttestation(TimestampAttestation {
                     target,
@@ -7156,12 +7282,10 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             _ => value.clone(),
         },
         "VoiceMessage" => match (text("audio_url"), integer("duration")) {
-            (Some(audio_url), Some(duration)) => {
-                OperationValue::VoiceMessage(VoiceMessage {
-                    audio_url,
-                    duration,
-                })
-            }
+            (Some(audio_url), Some(duration)) => OperationValue::VoiceMessage(VoiceMessage {
+                audio_url,
+                duration,
+            }),
             _ => value.clone(),
         },
         "VoiceReply" => match (text("audio_url"), integer("duration"), text("target")) {
@@ -7312,10 +7436,7 @@ fn record_bool(fields: &[(String, OperationValue)], key: &str) -> Option<bool> {
 /// A `List<PollOption>` field: each element is still a generic, un-normalized
 /// `OperationValue::Record` (only the top-level argument passes through
 /// `normalize_record`), so this reads its `id`/`label` fields directly.
-fn record_poll_options(
-    fields: &[(String, OperationValue)],
-    key: &str,
-) -> Option<Vec<PollOption>> {
+fn record_poll_options(fields: &[(String, OperationValue)], key: &str) -> Option<Vec<PollOption>> {
     fields.iter().find_map(|(field, value)| {
         (field == key).then_some(match value {
             OperationValue::List(items) => items
@@ -7337,10 +7458,7 @@ fn record_poll_options(
 
 /// A `List<MediaAttachment>` field; see [`record_poll_options`] for why each
 /// element is read directly rather than through `normalize_record`.
-fn record_media(
-    fields: &[(String, OperationValue)],
-    key: &str,
-) -> Option<Vec<MediaAttachment>> {
+fn record_media(fields: &[(String, OperationValue)], key: &str) -> Option<Vec<MediaAttachment>> {
     fields.iter().find_map(|(field, value)| {
         (field == key).then_some(match value {
             OperationValue::List(items) => items
@@ -7376,9 +7494,7 @@ fn record_emoji(fields: &[(String, OperationValue)], key: &str) -> Option<Vec<Cu
                 .map(|item| match item {
                     OperationValue::Record { name, fields } if name == "CustomEmoji" => {
                         match (record_text(fields, "shortcode"), record_text(fields, "url")) {
-                            (Some(shortcode), Some(url)) => {
-                                Some(CustomEmoji { shortcode, url })
-                            }
+                            (Some(shortcode), Some(url)) => Some(CustomEmoji { shortcode, url }),
                             _ => None,
                         }
                     }
@@ -7427,7 +7543,10 @@ fn record_identities(
                 .iter()
                 .map(|item| match item {
                     OperationValue::Record { name, fields } if name == "ExternalIdentity" => {
-                        match (record_text(fields, "platform"), record_text(fields, "proof")) {
+                        match (
+                            record_text(fields, "platform"),
+                            record_text(fields, "proof"),
+                        ) {
                             (Some(platform), Some(proof)) => {
                                 Some(ExternalIdentity { platform, proof })
                             }
@@ -7458,9 +7577,10 @@ fn record_payment_targets(
                             record_text(fields, "payment_type"),
                             record_text(fields, "address"),
                         ) {
-                            (Some(payment_type), Some(address)) => {
-                                Some(PaymentTarget { payment_type, address })
-                            }
+                            (Some(payment_type), Some(address)) => Some(PaymentTarget {
+                                payment_type,
+                                address,
+                            }),
                             _ => None,
                         }
                     }
@@ -7481,9 +7601,7 @@ fn record_strings(fields: &[(String, OperationValue)], key: &str) -> Option<Vec<
             OperationValue::List(items) => items
                 .iter()
                 .map(|item| match item {
-                    OperationValue::Text(text) | OperationValue::PubKey(text) => {
-                        Some(text.clone())
-                    }
+                    OperationValue::Text(text) | OperationValue::PubKey(text) => Some(text.clone()),
                     _ => None,
                 })
                 .collect(),
@@ -7648,7 +7766,10 @@ mod tests {
                 ),
                 (
                     "options".to_owned(),
-                    OperationValue::List(vec![option("a", "relay.damus.io"), option("b", "nos.lol")]),
+                    OperationValue::List(vec![
+                        option("a", "relay.damus.io"),
+                        option("b", "nos.lol"),
+                    ]),
                 ),
                 ("multiple_choice".to_owned(), OperationValue::Bool(false)),
                 ("ends_at".to_owned(), OperationValue::Integer(1_700_000_000)),
@@ -7923,7 +8044,10 @@ mod tests {
                         "wss://relay.example".to_owned(),
                     )]),
                 ),
-                ("closed_at".to_owned(), OperationValue::Integer(1_700_003_600)),
+                (
+                    "closed_at".to_owned(),
+                    OperationValue::Integer(1_700_003_600),
+                ),
             ],
         };
         assert_eq!(
@@ -7939,10 +8063,7 @@ mod tests {
         let message = OperationValue::Record {
             name: "PublicMessage".to_owned(),
             fields: vec![
-                (
-                    "content".to_owned(),
-                    OperationValue::Text("hi".to_owned()),
-                ),
+                ("content".to_owned(), OperationValue::Text("hi".to_owned())),
                 (
                     "recipients".to_owned(),
                     OperationValue::List(vec![OperationValue::PubKey("alice".to_owned())]),
@@ -8230,6 +8351,97 @@ mod tests {
         ));
         assert!(host.is_pure_function("concord05", "invite_is_valid"));
         assert!(!host.is_pure_function("concord01", "stream"));
+    }
+
+    #[test]
+    fn ncc07_capability_functions_extract_support_and_classify_identifiers() {
+        let mut host = FakeOperationHost::default();
+        let tags = vec![
+            OperationValue::Text("d=capabilities".to_owned()),
+            OperationValue::Text("cap=ncc:05".to_owned()),
+            OperationValue::Text("cap=nip:17".to_owned()),
+            OperationValue::Text("e=0000".to_owned()),
+            OperationValue::Text("cap=".to_owned()),
+        ];
+        let advertised = host
+            .call_pure_function("ncc07", "capabilities", &[OperationValue::List(tags)])
+            .expect("cap extraction succeeds");
+        assert_eq!(
+            advertised,
+            OperationValue::List(vec![
+                OperationValue::Text("ncc:05".to_owned()),
+                OperationValue::Text("nip:17".to_owned()),
+            ])
+        );
+        assert_eq!(
+            host.call_pure_function(
+                "ncc07",
+                "supports",
+                &[
+                    OperationValue::List(vec![
+                        OperationValue::Text("ncc:05".to_owned()),
+                        OperationValue::Text("ncc:02".to_owned()),
+                    ]),
+                    OperationValue::Text("ncc:05".to_owned()),
+                ],
+            )
+            .expect("membership succeeds"),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            host.call_pure_function(
+                "ncc07",
+                "supports",
+                &[
+                    OperationValue::List(vec![OperationValue::Text("ncc:02".to_owned())]),
+                    OperationValue::Text("ncc:05".to_owned()),
+                ],
+            )
+            .expect("membership succeeds"),
+            OperationValue::Bool(false)
+        );
+        let mut namespace = |id: &str| {
+            host.call_pure_function(
+                "ncc07",
+                "capability_namespace",
+                &[OperationValue::Text(id.to_owned())],
+            )
+            .expect("classification succeeds")
+        };
+        assert_eq!(namespace("ncc:05"), OperationValue::Text("ncc".to_owned()));
+        assert_eq!(namespace("nip:17"), OperationValue::Text("nip".to_owned()));
+        assert_eq!(
+            namespace(
+                "pubkey:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef:media-upload"
+            ),
+            OperationValue::Text("pubkey".to_owned())
+        );
+        assert_eq!(
+            namespace("my-cache"),
+            OperationValue::Text("opaque".to_owned())
+        );
+        assert_eq!(
+            namespace("nip:abc"),
+            OperationValue::Text("opaque".to_owned())
+        );
+        let mut valid = |id: &str| {
+            host.call_pure_function(
+                "ncc07",
+                "capability_is_valid",
+                &[OperationValue::Text(id.to_owned())],
+            )
+            .expect("validation succeeds")
+        };
+        assert_eq!(valid("ncc:05"), OperationValue::Bool(true));
+        assert_eq!(valid("my-cache"), OperationValue::Bool(true));
+        assert_eq!(valid("NCC:05"), OperationValue::Bool(false));
+        assert_eq!(valid("nip:44extra"), OperationValue::Bool(false));
+        assert_eq!(valid("pubkey:abc"), OperationValue::Bool(false));
+        assert_eq!(valid(""), OperationValue::Bool(false));
+        assert!(matches!(
+            host.call_pure_function("ncc07", "capabilities", &[OperationValue::Integer(1)]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
     }
 
     #[test]
@@ -8656,7 +8868,10 @@ mod tests {
             }
         }
         let mut host = Nip46SignerHost::new(Transport);
-        assert!(host.provision_named("account", "https://not-a-bunker").is_err());
+        assert!(
+            host.provision_named("account", "https://not-a-bunker")
+                .is_err()
+        );
         host.provision_named("account", "bunker://remote")
             .expect("provisions under the capability name");
         let event = UnsignedEvent {
@@ -8706,6 +8921,7 @@ mod tests {
             publications: vec![CheckedPublication {
                 event: "Note".to_owned(),
                 content: Some("hello".to_owned()),
+                tags: Vec::new(),
                 signer: "account".to_owned(),
                 relayset: "public".to_owned(),
                 span: Span::default(),
@@ -8728,6 +8944,63 @@ mod tests {
         let reports = runtime.run(&program, &checked).expect("one relay accepted");
         assert_eq!(reports[0].outcomes.len(), 2);
         assert_eq!(runtime.audit.entries.len(), 3);
+    }
+
+    #[test]
+    fn a_top_level_publish_lowers_its_checked_fields_to_wire_tags() {
+        use nscript_semantics::{CheckedEvent, CheckedEventMode};
+        let checked = CheckedProgram {
+            publications: vec![CheckedPublication {
+                event: "Reply".to_owned(),
+                content: Some("hi".to_owned()),
+                tags: vec![
+                    ("thread".to_owned(), "abc".to_owned()),
+                    ("t".to_owned(), "op".to_owned()),
+                ],
+                signer: "account".to_owned(),
+                relayset: "public".to_owned(),
+                span: Span::default(),
+            }],
+            events: BTreeMap::from([(
+                "Reply".to_owned(),
+                CheckedEvent {
+                    kind: 30_717,
+                    mode: CheckedEventMode::Addressable,
+                    parameter: Some("thread".to_owned()),
+                },
+            )]),
+            ..CheckedProgram::default()
+        };
+        let mut relay = FakeRelayHost::default();
+        relay.relays.insert("good".to_owned(), true);
+        let mut runtime = Runtime::new(
+            relay,
+            FakeSignerHost::default(),
+            FakeClock { now: 42 },
+            RecordingAudit::default(),
+        );
+        let program = nscript_syntax::parse_program(
+            "publish Reply { content: \"hi\" } to public with account",
+        )
+        .0;
+        let reports = runtime.run(&program, &checked).expect("one relay accepted");
+        assert_eq!(reports.len(), 1);
+        assert_eq!(runtime.relay.published.len(), 1);
+        let published = &runtime.relay.published[0];
+        assert_eq!(published.unsigned.event_type, "Reply");
+        assert_eq!(
+            published.unsigned.kind, 30_717,
+            "the declared kind, not the Note-is-1 fallback"
+        );
+        assert_eq!(
+            published.unsigned.tags,
+            vec![
+                ("d".to_owned(), "abc".to_owned()),
+                ("t".to_owned(), "op".to_owned()),
+            ],
+            "the parameterised identifier lowers to `d` and the other fields keep \
+             their names"
+        );
     }
 
     #[test]
@@ -8768,6 +9041,7 @@ mod tests {
             publications: vec![CheckedPublication {
                 event: "Note".to_owned(),
                 content: Some("hello".to_owned()),
+                tags: Vec::new(),
                 signer: "account".to_owned(),
                 relayset: "public".to_owned(),
                 span: Span::default(),

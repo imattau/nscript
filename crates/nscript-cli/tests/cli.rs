@@ -82,6 +82,31 @@ fn inspect_json_includes_publication_and_filter_traces() {
 }
 
 #[test]
+fn ncc07_manifest_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc07.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc07-manifest.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "CapabilityManifest");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])
@@ -948,7 +973,10 @@ fn the_community_digest_bot_moderates_reacts_and_cross_posts_media() {
     assert!(stdout.contains("nip25.publish_reaction"), "{stdout}");
     assert!(stdout.contains("nip92.publish_note_with_media"), "{stdout}");
     assert!(stdout.contains("MediaAttachment"), "{stdout}");
-    assert!(stdout.contains("log info: cross-posted a link from alice"), "{stdout}");
+    assert!(
+        stdout.contains("log info: cross-posted a link from alice"),
+        "{stdout}"
+    );
 
     // Anything else just gets a reaction, nothing more.
     let stdout = run(r#"{"content":"hello","author":"bob","tags":[["t","community"]]}"#);
@@ -1033,6 +1061,65 @@ fn publish_from_inside_a_handler_only_fires_when_the_handler_actually_runs() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("handler Note: ok"), "{stdout}");
     assert!(stdout.contains("log info: true"), "{stdout}");
+}
+
+#[test]
+fn the_capability_bot_publishes_its_manifest_and_reads_peer_capabilities() {
+    let path = repository_path("examples/ncc07-capability-bot.ns");
+
+    // Startup: the 24h body publishes the manifest once and registers the
+    // refresh timer.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("timer schedule-0 at 1700086400"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("publication 0: 1/1 relays accepted"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("peer advertises"), "{stdout}");
+
+    // A delivered peer manifest: the reader handler selects its cap tags
+    // with the module's pure functions.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(&path)
+        .args([
+            "--event",
+            r#"{"event_type": "CapabilityManifest", "kind": 30062, "content": "", "tags": [["d", "capabilities"], ["cap", "ncc:05"], ["cap", "nip:17"]]}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("handler CapabilityManifest: ok"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("peer advertises 2 capabilities"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("peer serves community profiles (ncc:05)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("ncc:05 namespace: ncc"), "{stdout}");
 }
 
 #[test]
@@ -1180,7 +1267,13 @@ mod deploy_with_real_hosts {
     }
 
     /// Builds and signs a real Nostr event with `secret`.
-    fn signed_event(secret: &[u8; 32], kind: u64, tags: &Value, content: &str, created_at: u64) -> Value {
+    fn signed_event(
+        secret: &[u8; 32],
+        kind: u64,
+        tags: &Value,
+        content: &str,
+        created_at: u64,
+    ) -> Value {
         let pubkey = hex(&xonly_pubkey(secret).unwrap());
         let id = event_id(&pubkey, created_at, kind, tags, content);
         let sig = sign_random(secret, &unhex32(&id)).unwrap();
@@ -1284,8 +1377,9 @@ mod deploy_with_real_hosts {
                 send(&mut socket, &json!(["OK", event["id"], true, ""]));
 
                 let client_pubkey = unhex32(event["pubkey"].as_str().unwrap());
-                let conversation_key =
-                    *key.get_or_insert_with(|| nip44::conversation_key(&bunker_secret, &client_pubkey).unwrap());
+                let conversation_key = *key.get_or_insert_with(|| {
+                    nip44::conversation_key(&bunker_secret, &client_pubkey).unwrap()
+                });
                 let plaintext =
                     nip44::decrypt(&conversation_key, event["content"].as_str().unwrap()).unwrap();
                 let request: Value = serde_json::from_slice(&plaintext).unwrap();
@@ -1356,11 +1450,118 @@ mod deploy_with_real_hosts {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.contains(&format!("connected: {relay_url}")), "{stdout}");
-        assert!(stdout.contains("provisioning signer `account`... connected"), "{stdout}");
-        assert!(stdout.contains("publication 0: 1/1 relays accepted"), "{stdout}");
+        assert!(
+            stdout.contains(&format!("connected: {relay_url}")),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("provisioning signer `account`... connected"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("publication 0: 1/1 relays accepted"),
+            "{stdout}"
+        );
         assert!(stdout.contains("log info: handler ran"), "{stdout}");
         assert!(stdout.contains("log info: true"), "{stdout}");
-        assert!(stdout.contains("cycle 1: 1 dispatched, 0 failed"), "{stdout}");
+        assert!(
+            stdout.contains("cycle 1: 1 dispatched, 0 failed"),
+            "{stdout}"
+        );
+    }
+
+    /// A relay that runs the same handshake as `fake_relay` but, once the
+    /// handler subscribes, delivers a kind-7 impostor wearing the trigger
+    /// tag *first* and only then the real kind-1 Note — a relay that
+    /// ignored the subscription's declared-kind filter. The subscription
+    /// must carry that filter, and the impostor must never reach the
+    /// handler: exactly one reply comes back, quoting the real Note.
+    fn fake_relay_kind_filter() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("ws://{}", listener.local_addr().expect("addr"));
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut socket = tungstenite::accept(stream).expect("handshake");
+
+            // 1) The program's own top-level `publish`.
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "EVENT");
+            send(&mut socket, &json!(["OK", frame[1]["id"], true, ""]));
+
+            // 2) The handler's subscription must filter on the kind its
+            // event declaration resolves to (`Note` is kind 1).
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "REQ");
+            let sub_id = frame[1].clone();
+            assert_eq!(
+                frame[2]["kinds"],
+                json!([1]),
+                "the subscription filters on the declared kind"
+            );
+            let impostor = json!({
+                "id": "e".repeat(64), "pubkey": "a".repeat(64),
+                "created_at": 1_700_000_001, "kind": 7,
+                "tags": [["t", "trigger"]], "content": "impostor",
+                "sig": "b".repeat(128)
+            });
+            let note = json!({
+                "id": "f".repeat(64), "pubkey": "a".repeat(64),
+                "created_at": 1_700_000_000, "kind": 1,
+                "tags": [["t", "trigger"]], "content": "the real one",
+                "sig": "b".repeat(128)
+            });
+            send(&mut socket, &json!(["EVENT", sub_id, impostor]));
+            send(&mut socket, &json!(["EVENT", sub_id, note]));
+            send(&mut socket, &json!(["EOSE", sub_id]));
+
+            // 3) Exactly one reply, and it quotes the kind-1 Note.
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "EVENT");
+            assert_eq!(
+                frame[1]["content"], "reply: the real one",
+                "only the kind-1 Note may dispatch: {frame}"
+            );
+            send(&mut socket, &json!(["OK", frame[1]["id"], true, ""]));
+        });
+        url
+    }
+
+    #[test]
+    fn deploy_filters_delivered_events_by_the_declared_kind() {
+        let bunker_secret = [31_u8; 32];
+        let user_secret = [32_u8; 32];
+        let relay_url = fake_relay_kind_filter();
+        let bunker_url = fake_bunker(bunker_secret, user_secret);
+        let bunker_pubkey_hex = hex(&xonly_pubkey(&bunker_secret).unwrap());
+        let bunker_connection_string = format!("bunker://{bunker_pubkey_hex}?relay={bunker_url}");
+
+        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    read Note from public\n    publish Note to public\n    sign Note with account\n    relay public\n    log\n}\n\npublish Note {\n    content: \"deploy started\",\n} to public with account\n\non Note where tags.t contains \"trigger\" {\n    let result = publish Note {\n        content: \"reply: \" + event.content,\n    } to public with account\n    print(result.accepted)\n}\n";
+        let path =
+            std::env::temp_dir().join(format!("nscript-deploy-kind-{}.ns", std::process::id()));
+        std::fs::write(&path, source).unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("deploy")
+            .arg(&path)
+            .args(["--relay", &relay_url])
+            .args(["--signer", &format!("account={bunker_connection_string}")])
+            .args(["--cycles", "1"])
+            .args(["--poll-interval", "0"])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("cycle 1: 1 dispatched, 0 failed"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("reply: impostor"), "{stdout}");
     }
 }

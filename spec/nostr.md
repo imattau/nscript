@@ -101,3 +101,55 @@ other than the bootstrap needed to load the standard modules.
 
 Module schemas contain no executable native or WASM plugins. Their constrained
 validation and lowering expressions are defined in the module specification.
+
+## Community conventions
+
+Nostr Community Conventions (NCCs) are shared usage patterns of existing
+primitives, published by the convention repository pinned in the specification
+README. They are implemented as ordinary modules under the `ncc` namespace
+(`ncc00`, `ncc02`, `ncc07`, ...) using the same records, validators, events,
+tags, and host operations as NIP modules.
+
+A community-convention module:
+
+- declares each convention event with its fixed kind, storage mode, content
+  encoding, and allowed tag union, so `publish` statements lower fields to wire
+  tags through the ordinary publication path;
+- validates convention rules that depend on wall time through pure functions
+  that receive `now` from the caller, never by reading the clock inside a
+  validator;
+- keeps trust policy — attestation stores, override modes, stale fallback,
+  transport preference — in script-visible data rather than in host behaviour;
+- treats endorsements and succession records as adoption signals that never
+  grant permissions or satisfy capability checks.
+
+Extensions MUST NOT change the meaning of conforming source when a convention
+module is absent: conventions are ignorable by default, and no NIP or language
+keyword depends on them.
+
+### NCC-07 capability manifests
+
+`ncc07` implements the capability-manifest convention: a service advertises
+what it can do as an addressable event of kind 30062 addressed by the literal
+`d` tag `capabilities`, carrying repeatable `cap` tags whose values are
+capability identifiers. A `publish CapabilityManifest` statement lowers its
+`d` and `cap` fields through the ordinary publication path — `cap` repeats the
+tag once per list element — so the manifest reaches relays as standard NIP-01
+addressable data and is replaced by later revisions under the same address.
+The manifest is an advertisement: NCC-07 §4 is explicit that publishing one
+says nothing about which NIPs the publisher actually implements, and reading a
+peer's manifest MUST NOT by itself grant permissions or satisfy capability
+checks.
+
+Selection over a received manifest is exposed as pure functions that take no
+clock: `ncc07.capabilities(event.tags)` extracts the advertised identifiers
+from the handler-side `name=value` rendering of the event's tags,
+`ncc07.supports(advertised, wanted)` tests membership by exact string
+comparison, `ncc07.capability_namespace(id)` classifies an identifier as
+`nip`, `ncc`, `pubkey`, or `opaque` for one of the convention's three
+namespaces (§7), and `ncc07.capability_is_valid(id)` checks that a known
+namespace prefix is completed rather than malformed. Identifiers outside the
+three namespaces are opaque strings; consumers MUST treat unknown capability
+identifiers as opaque and ignorable (§7). Resolution of competing manifests
+uses standard addressable replacement — greatest `created_at`, then lowest
+event ID — and adds no new selection rules.

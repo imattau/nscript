@@ -25,10 +25,81 @@ pub enum Effect {
 pub struct CheckedPublication {
     pub event: String,
     pub content: Option<String>,
+    /// Author fields as literal `(field, text)` pairs, before event-specific
+    /// lowering: [`CheckedEvent::lower_tags`] renames a parameterised
+    /// event's identifier field to `d`. Top-level publications carry only
+    /// fields whose values were literals at check time; a handler's `publish`
+    /// is lowered live from its evaluated record instead (see
+    /// `nscript-runtime`'s interpreter).
+    pub tags: Vec<(String, String)>,
     pub signer: String,
     pub relayset: String,
     pub span: Span,
 }
+
+/// The storage mode an event's kind range implies for replacement.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum CheckedEventMode {
+    Regular,
+    Replaceable,
+    Addressable,
+    Ephemeral,
+}
+
+/// A resolved event type: everything `publish <record>` needs to lower to
+/// wire data. Source-level `event` declarations resolve in
+/// [`infer`]; imported modules' `event` declarations join them through
+/// [`bind_module_events`]. A name nothing declares is absent, and the
+/// runtime falls back to its historical behaviour for it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedEvent {
+    pub kind: u16,
+    pub mode: CheckedEventMode,
+    /// For `parameterised by <field>` source events: the construct field
+    /// that lowers to the event's single `d` tag. Module events name their
+    /// own `d` field like any other author field.
+    pub parameter: Option<String>,
+}
+
+impl CheckedEvent {
+    /// Lower author field pairs to wire tags: the parameterised event's
+    /// identifier field becomes the single `d` tag, every other field keeps
+    /// its name. Returns the offending description when a parameterised
+    /// event would publish without (or with more than one) identifier.
+    ///
+    /// # Errors
+    ///
+    /// The identifier field is missing, appears twice, or collides with an
+    /// explicitly written `d` field.
+    pub fn lower_tags(&self, fields: &[(String, String)]) -> Result<Vec<(String, String)>, String> {
+        let Some(parameter) = &self.parameter else {
+            return Ok(fields.to_vec());
+        };
+        let mut lowered = Vec::with_capacity(fields.len());
+        let mut identifiers = 0_usize;
+        for (name, value) in fields {
+            if name == parameter || name == "d" {
+                identifiers += 1;
+                lowered.push(("d".to_owned(), value.clone()));
+            } else {
+                lowered.push((name.clone(), value.clone()));
+            }
+        }
+        if identifiers == 1 {
+            Ok(lowered)
+        } else {
+            Err(format!(
+                "parameterised event needs exactly one `{parameter}` field to lower to `d`, found {identifiers}"
+            ))
+        }
+    }
+}
+
+/// The delivered event's own bookkeeping fields: read-side only, never
+/// lowered to tags when a script publishes a record or re-publishes an
+/// event value. `content` and `tags` are handled separately by the
+/// publication paths themselves.
+pub const EVENT_BOOKKEEPING_FIELDS: &[&str] = &["id", "author", "pubkey", "kind", "created_at"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CheckedArgument {
@@ -84,6 +155,14 @@ pub struct CheckedProgram {
     pub handlers: Vec<CheckedHandler>,
     /// `key` declarations: name to the label the host provisions it under.
     pub keys: BTreeMap<String, String>,
+    /// Every event type the program or its imported modules declares, by
+    /// name. `infer` resolves the program's own `event` declarations;
+    /// [`bind_module_events`] adds the imported modules' `event`
+    /// declarations, which a name the program itself declares shadows.
+    /// Callers that execute publications must call it with the resolved
+    /// module graph, or publications fall back to the runtime's historical
+    /// kind behaviour.
+    pub events: BTreeMap<String, CheckedEvent>,
 }
 
 const HARDENED_FORBIDDEN: &[&str] = &[
@@ -900,9 +979,86 @@ pub fn infer(program: &Program) -> (CheckedProgram, Vec<Diagnostic>) {
             schedules: checker.schedules,
             handlers: checker.handlers,
             keys: declared_keys(program),
+            events: program_events(program),
         },
         checker.diagnostics,
     )
+}
+
+/// The program's own `event` declarations, resolved for wire lowering. A
+/// declaration without a `kind` cannot lower to one and is skipped.
+fn program_events(program: &Program) -> BTreeMap<String, CheckedEvent> {
+    program
+        .ast
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Event(event) => {
+                let kind = event.kind?;
+                let parameter = match event.mode {
+                    nscript_syntax::ast::EventModeSyntax::Parameterised => {
+                        event.parameter.as_ref().map(|name| name.value.clone())
+                    }
+                    _ => None,
+                };
+                Some((
+                    event.name.value.clone(),
+                    CheckedEvent {
+                        kind,
+                        mode: match event.mode {
+                            nscript_syntax::ast::EventModeSyntax::Regular => {
+                                CheckedEventMode::Regular
+                            }
+                            nscript_syntax::ast::EventModeSyntax::Replaceable => {
+                                CheckedEventMode::Replaceable
+                            }
+                            // `parameterised by` events replace within their
+                            // kind at the `d` tag: addressable on the wire.
+                            nscript_syntax::ast::EventModeSyntax::Parameterised => {
+                                CheckedEventMode::Addressable
+                            }
+                            nscript_syntax::ast::EventModeSyntax::Ephemeral => {
+                                CheckedEventMode::Ephemeral
+                            }
+                        },
+                        parameter,
+                    },
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Adds every imported module's `event` declarations to
+/// [`CheckedProgram::events`], so a publication of a module-declared event
+/// (a NIP module's `Note`, an NCC module's capability manifest) lowers to
+/// its declared kind and mode. A name the program itself declares is
+/// already resolved and is left alone: the program shadows its modules.
+///
+/// Every caller that executes publications (`run`, `deploy`, `test-event`,
+/// their WASM equivalents, and `inspect`/`ir`, which print resolved kinds)
+/// must call this after [`check`].
+pub fn bind_module_events(graph: &ResolvedModuleGraph, checked: &mut CheckedProgram) {
+    for module in graph.modules.values() {
+        for event in &module.descriptor.events {
+            checked.events.entry(event.name.clone()).or_insert_with(|| {
+                CheckedEvent {
+                    kind: event.kind,
+                    mode: match event.mode {
+                        nscript_modules::EventMode::Regular => CheckedEventMode::Regular,
+                        nscript_modules::EventMode::Replaceable => CheckedEventMode::Replaceable,
+                        nscript_modules::EventMode::Addressable => CheckedEventMode::Addressable,
+                        nscript_modules::EventMode::Ephemeral => CheckedEventMode::Ephemeral,
+                    },
+                    // Module events carry no identifier parameter: an
+                    // addressable module event authors its `d` tag as an
+                    // ordinary field, and `lower_tags` leaves it alone.
+                    parameter: None,
+                }
+            });
+        }
+    }
 }
 
 /// The inferred capability footprint of a program, grouped into the categories
@@ -1657,9 +1813,16 @@ impl<'a> Checker<'a> {
                 }),
             _ => None,
         };
+        // Author fields as literal wire pairs. Only literals can be carried
+        // this way: a top-level `publish` runs from this checked snapshot,
+        // and top-level statements (so any computed field) do not run at
+        // startup. A handler's own `publish` lowers its evaluated record
+        // live instead, so it is not limited to literals.
+        let tags = literal_publication_tags(value);
         self.publications.push(CheckedPublication {
             event,
             content,
+            tags,
             signer: signer_name,
             relayset,
             span,
@@ -1790,13 +1953,69 @@ fn path(expression: &Expr) -> Option<String> {
     }
 }
 
+/// A literal expression's wire text, matching the evaluator's own rendering
+/// (`text(value)` / `Value::display`) for the same value. `None` for
+/// anything the evaluator computes at run time.
+fn literal_wire_text(expression: &Expr) -> Option<String> {
+    match &expression.value {
+        ExprKind::Text(text) => Some(text.clone()),
+        ExprKind::Integer(value) => Some(value.to_string()),
+        ExprKind::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+/// The author fields of a literal publish record as pre-lowering
+/// `(field, text)` pairs: `content` (the event body, not a tag), the
+/// event's own `tags` list and the bookkeeping fields are skipped, and a
+/// `List` field contributes one pair per element but only when every
+/// element is literal (a computed element would publish a silently
+/// partial tag set). A non-record expression has no author fields.
+fn literal_publication_tags(value: &Expr) -> Vec<(String, String)> {
+    let mut tags = Vec::new();
+    if let ExprKind::Construct { fields, .. } = &value.value {
+        for (name, field) in fields {
+            if name.value == "content"
+                || name.value == "tags"
+                || EVENT_BOOKKEEPING_FIELDS.contains(&name.value.as_str())
+            {
+                continue;
+            }
+            match &field.value {
+                ExprKind::List(items) => {
+                    let rendered = items
+                        .iter()
+                        .map(literal_wire_text)
+                        .collect::<Option<Vec<_>>>();
+                    if let Some(rendered) = rendered {
+                        tags.extend(
+                            rendered
+                                .into_iter()
+                                .map(|value| (name.value.clone(), value)),
+                        );
+                    }
+                }
+                _ => {
+                    if let Some(text) = literal_wire_text(field) {
+                        tags.push((name.value.clone(), text));
+                    }
+                }
+            }
+        }
+    }
+    tags
+}
+
 #[cfg(test)]
 mod tests {
     use nscript_modules::{ModuleDependency, ModuleOrigin, ModuleRegistry, parse_module};
     use nscript_syntax::parse_program;
     use semver::VersionReq;
 
-    use super::{analyze, analyze_with_modules, footprint, infer};
+    use super::{
+        CheckedEvent, CheckedEventMode, analyze, analyze_with_modules, bind_module_events, check,
+        footprint, infer,
+    };
 
     fn codes(source: &str) -> Vec<&'static str> {
         let (program, mut diagnostics) = parse_program(source);
@@ -1825,8 +2044,146 @@ mod tests {
     }
 
     #[test]
+    fn a_literal_publish_carries_its_literal_fields_as_wire_pairs() {
+        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    publish Note to public\n    sign Note with account\n    relay public\n}\n\npublish Note {\n    content: \"hello\",\n    t: [\"a\", \"b\"],\n    k: 7,\n    id: \"not-a-tag\",\n    kind: 1,\n    computed: 1 + 1\n} to public with account\n";
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (checked, diagnostics) = check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("checks");
+        assert_eq!(checked.publications.len(), 1);
+        let publication = &checked.publications[0];
+        assert_eq!(publication.content.as_deref(), Some("hello"));
+        assert_eq!(
+            publication.tags,
+            vec![
+                ("t".to_owned(), "a".to_owned()),
+                ("t".to_owned(), "b".to_owned()),
+                ("k".to_owned(), "7".to_owned()),
+            ],
+            "literal scalars and literal lists pair up; `content`, the bookkeeping \
+             fields and computed values are not wire tags"
+        );
+    }
+
+    #[test]
+    fn parameterised_lowering_renames_the_identifier_and_needs_exactly_one() {
+        let reply = CheckedEvent {
+            kind: 30_717,
+            mode: CheckedEventMode::Addressable,
+            parameter: Some("thread".to_owned()),
+        };
+        assert_eq!(
+            reply
+                .lower_tags(&[
+                    ("thread".to_owned(), "abc".to_owned()),
+                    ("t".to_owned(), "reply".to_owned()),
+                ])
+                .expect("exactly one identifier"),
+            vec![
+                ("d".to_owned(), "abc".to_owned()),
+                ("t".to_owned(), "reply".to_owned()),
+            ]
+        );
+        assert!(
+            reply
+                .lower_tags(&[("t".to_owned(), "x".to_owned())])
+                .is_err()
+        );
+        assert!(
+            reply
+                .lower_tags(&[
+                    ("thread".to_owned(), "a".to_owned()),
+                    ("thread".to_owned(), "b".to_owned()),
+                ])
+                .is_err()
+        );
+        assert!(
+            reply
+                .lower_tags(&[
+                    ("thread".to_owned(), "a".to_owned()),
+                    ("d".to_owned(), "b".to_owned()),
+                ])
+                .is_err()
+        );
+        let plain = CheckedEvent {
+            kind: 1,
+            mode: CheckedEventMode::Regular,
+            parameter: None,
+        };
+        assert_eq!(
+            plain
+                .lower_tags(&[("t".to_owned(), "x".to_owned())])
+                .expect("no parameter, no rename"),
+            vec![("t".to_owned(), "x".to_owned())]
+        );
+    }
+
+    #[test]
+    fn program_event_declarations_resolve_kind_mode_and_parameter() {
+        let source = "event Reply {\n    kind: 30717\n    parameterised by thread\n    thread: Text\n    content: Text\n}\n\nevent Saved {\n    kind: 10002\n    replaceable\n    content: Text\n}\n";
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (checked, diagnostics) = check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("checks");
+        let reply = checked.events.get("Reply").expect("Reply declared");
+        assert_eq!(reply.kind, 30_717);
+        assert_eq!(reply.mode, CheckedEventMode::Addressable);
+        assert_eq!(reply.parameter.as_deref(), Some("thread"));
+        let saved = checked.events.get("Saved").expect("Saved declared");
+        assert_eq!(saved.kind, 10_002);
+        assert_eq!(saved.mode, CheckedEventMode::Replaceable);
+        assert!(saved.parameter.is_none());
+        assert!(!checked.events.contains_key("Note"));
+    }
+
+    #[test]
+    fn bind_module_events_fills_module_kinds_and_keeps_program_declarations() {
+        let source = "use nip01\n\nevent Reply {\n    kind: 30717\n    parameterised by thread\n    thread: Text\n    content: Text\n}\n";
+        let (program, mut diagnostics) = parse_program(source);
+        let registry = ModuleRegistry::with_builtins();
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "nip01".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .expect("builtin nip01 resolves");
+        diagnostics.extend(analyze_with_modules(&program, &graph));
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (checked, diagnostics) = check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut checked = checked.expect("checks");
+        assert!(!checked.events.contains_key("Note"));
+        bind_module_events(&graph, &mut checked);
+        assert_eq!(
+            checked.events.get("Note").map(|event| event.kind),
+            Some(1),
+            "a module's event declaration reaches the checked program"
+        );
+        assert_eq!(
+            checked.events.get("Metadata").map(|event| event.kind),
+            Some(0)
+        );
+        assert_eq!(
+            checked.events.get("Reply").map(|event| event.kind),
+            Some(30_717),
+            "the program's own declaration survives the bind"
+        );
+        assert_eq!(
+            checked
+                .events
+                .get("Reply")
+                .and_then(|event| event.parameter.as_deref()),
+            Some("thread")
+        );
+    }
+
+    #[test]
     fn a_scoped_concord_grant_needs_a_known_verb_and_a_declared_scope() {
-        assert!(codes("key devs = host(\"devs\")\npermissions { concord Kick in devs }\n").is_empty());
+        assert!(
+            codes("key devs = host(\"devs\")\npermissions { concord Kick in devs }\n").is_empty()
+        );
         // No `in <scope>` at all is still a valid grant (RFC 0002 §2 makes
         // the scope optional).
         assert!(codes("permissions { concord Kick }\n").is_empty());

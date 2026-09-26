@@ -80,6 +80,20 @@ The compiler validates the selected mode against the event kind rules supplied
 by the declaring NIP module. Parameterised events MUST lower their identifier to
 exactly one `d` tag.
 
+A `publish` of a record lowers each author field to a two-column tag named
+after the field. `Text`, `Int`, `Bool` and `PubKey` values lower to their text
+form; each element of a `List` field lowers to a repeated tag of the same name.
+The `content` field is the event's content rather than a tag. The `tags` field
+and the bookkeeping fields `id`, `author`, `pubkey`, `kind` and `created_at`
+are read-side only and MUST NOT lower to tags. For a parameterised declaration
+the identifier field lowers to the single `d` tag instead of its own name, and
+publishing such a record with zero or more than one identifier field is an
+error. The event's kind and mode come from the visible `event` declaration —
+the program's own or an imported module's — falling back to `Note` as kind 1
+(and any other name as kind 0) only when no declaration is visible. Values
+computed at run time lower by the same rules at the publication site; a
+computed value that is not a scalar or a list of scalars is an error there.
+
 Tags are algebraic values, not lists of strings. For example,
 `Person(alice)` and `ReplyTo(parent)` lower according to their module definition.
 Unknown tags are preserved as `RawTag` when reading but require the explicit
@@ -193,6 +207,7 @@ inspect or require a stricter acknowledgement policy explicitly.
 `publish` is an effectful expression returning
 `Result<PublishReport, RelayError>`. At statement position its result may be
 discarded with a warning; functions and workflows may return or inspect it.
+The record's author fields lower to wire tags as specified in §3.
 
 For each omitted `with` or `to` clause, the compiler substitutes the matching
 source-declared default before type, effect, and permission checking. An unsigned

@@ -1,0 +1,31 @@
+// NCC-07: a service publishes its capability manifest (kind 30062 with
+// d=capabilities) and reads manifests it receives back through its cap
+// tags with the module's pure selection functions.
+use ncc07
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish CapabilityManifest to public
+    sign CapabilityManifest with account
+    read CapabilityManifest from public
+    relay public
+    log
+}
+
+publish CapabilityManifest {
+    d: "capabilities";
+    content: "";
+    cap: ["ncc:02", "ncc:05", "nip:01"];
+} to public with account
+
+on CapabilityManifest where tags.cap contains "ncc:05" {
+    let advertised = ncc07.capabilities(event.tags)
+    if ncc07.supports(advertised, "ncc:05") {
+        print("peer advertises ncc:05")
+    }
+    print(ncc07.capability_namespace("ncc:05"))
+}

@@ -85,11 +85,11 @@ pub trait EvalHost {
     }
 
     /// Creates, signs and publishes an event, backing `publish <record> [to
-    /// <relayset>] [with <signer>]` and `send <record> [with <signer>]`
-    /// evaluated live from inside a handler body. Same shape a top-level
-    /// `publish` already has (`event_type`/`content` only, kind inferred from
-    /// `event_type`): a handler gets the same publish capability top-level
-    /// code already has, not more.
+    /// <relayset>] [with <signer>]` evaluated live from inside a handler
+    /// body. The record's author fields arrive as `(field, text)` wire-tag
+    /// pairs alongside `content`; the host resolves the event type's kind
+    /// and parameterised `d` tag from its declaration. A handler gets the
+    /// same publish capability top-level code already has, not more.
     ///
     /// # Errors
     ///
@@ -99,6 +99,7 @@ pub trait EvalHost {
         &mut self,
         _event_type: &str,
         _content: Option<String>,
+        _tags: &[(String, String)],
         _relayset: &str,
         _signer: &str,
     ) -> Result<OperationValue, RuntimeError> {
@@ -365,6 +366,22 @@ fn capability_name(expression: &Expr) -> Option<&str> {
     }
 }
 
+/// One author field as a `(field, text)` wire-tag pair, the same rendering
+/// `text(value)` gives the value. Anything that is not a scalar fails
+/// loudly: nested records and results have no two-column wire form.
+fn publish_tag_pair(field: &str, value: Value) -> Result<(String, String), Stop> {
+    match value {
+        Value::Text(text) => Ok((field.to_owned(), text)),
+        Value::Int(value) => Ok((field.to_owned(), value.to_string())),
+        Value::Bool(value) => Ok((field.to_owned(), value.to_string())),
+        Value::PubKey(key) => Ok((field.to_owned(), key)),
+        other => Err(fail(format!(
+            "`{field}` must be text, an int, a bool or a pubkey to publish as a tag, found a {}",
+            other.kind()
+        ))),
+    }
+}
+
 /// Runs a handler body with `event` bound, returning the value of a `return`
 /// (or `Unit`).
 ///
@@ -403,10 +420,12 @@ pub fn run_handler<'a, H: EvalHost>(
         .filter_map(|item| match item {
             Item::Key(declaration) => match &declaration.value.value {
                 ExprKind::Call { arguments, .. } => match arguments.as_slice() {
-                    [Expr {
-                        value: ExprKind::Text(label),
-                        ..
-                    }] => Some((declaration.name.value.as_str(), label.as_str())),
+                    [
+                        Expr {
+                            value: ExprKind::Text(label),
+                            ..
+                        },
+                    ] => Some((declaration.name.value.as_str(), label.as_str())),
                     _ => None,
                 },
                 _ => None,
@@ -419,8 +438,16 @@ pub fn run_handler<'a, H: EvalHost>(
         functions,
         modules,
         keys,
-        defaults_signer: program.defaults.signer.as_ref().map(|(name, _)| name.as_str()),
-        defaults_relayset: program.defaults.relays.as_ref().map(|(name, _)| name.as_str()),
+        defaults_signer: program
+            .defaults
+            .signer
+            .as_ref()
+            .map(|(name, _)| name.as_str()),
+        defaults_relayset: program
+            .defaults
+            .relays
+            .as_ref()
+            .map(|(name, _)| name.as_str()),
         scopes: vec![BTreeMap::from([("event".to_owned(), event)])],
         limits,
         steps: 0,
@@ -668,15 +695,36 @@ impl<H: EvalHost> Interpreter<'_, H> {
         let Value::Record { name, fields } = self.expression(value)? else {
             return Err(fail("publish needs a record value, e.g. `Note { ... }`"));
         };
-        let content = fields
-            .into_iter()
-            .find_map(|(field, value)| {
-                (field == "content").then_some(match value {
-                    Value::Text(text) => Some(text),
-                    _ => None,
-                })
-            })
-            .flatten();
+        // Every author field lowers to a wire tag, `content` to the event's
+        // content. A `List` field lowers to one repeated tag per element;
+        // the event's own `tags` list and bookkeeping fields are read-side
+        // only (typed tag-value lowering is not built yet, and a delivered
+        // event's `id`/`kind`/... are not author fields).
+        let mut content: Option<String> = None;
+        let mut tags: Vec<(String, String)> = Vec::new();
+        for (field, value) in fields {
+            match field.as_str() {
+                "content" => match value {
+                    Value::Text(text) => content = Some(text),
+                    other => {
+                        return Err(fail(format!(
+                            "`content` must be text to publish, found a {}",
+                            other.kind()
+                        )));
+                    }
+                },
+                name if name == "tags"
+                    || nscript_semantics::EVENT_BOOKKEEPING_FIELDS.contains(&name) => {}
+                _ => match value {
+                    Value::List(items) => {
+                        for item in items {
+                            tags.push(publish_tag_pair(&field, item)?);
+                        }
+                    }
+                    other => tags.push(publish_tag_pair(&field, other)?),
+                },
+            }
+        }
         let relayset = relays
             .and_then(capability_name)
             .or(self.defaults_relayset)
@@ -691,7 +739,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
             })?;
         let report = self
             .host
-            .publish(&name, content, relayset, signer)
+            .publish(&name, content, &tags, relayset, signer)
             .map_err(Stop::Error)?;
         Ok(Value::from_operation(report))
     }
@@ -1122,6 +1170,12 @@ where
     /// commonly comes from a different borrow than `runtime`/`operations`/
     /// `log` (e.g. a loop over events reborrowing one long-lived store).
     pub idempotency: Option<&'i mut dyn IdempotencyHost>,
+    /// The program's resolved event declarations, so a handler's `publish`
+    /// lowers to the declared kind and parameterised `d` tag (the runtime
+    /// reads them when the signed event is built; the interpreter only
+    /// supplies author fields). Borrowed from the `CheckedProgram` the
+    /// dispatch path already holds.
+    pub events: &'a BTreeMap<String, nscript_semantics::CheckedEvent>,
 }
 
 impl<R, S, C, A, O, L> EvalHost for RuntimeSession<'_, '_, R, S, C, A, O, L>
@@ -1182,7 +1236,8 @@ where
         function: &str,
         arguments: &[OperationValue],
     ) -> Result<OperationValue, RuntimeError> {
-        self.operations.call_pure_function(module, function, arguments)
+        self.operations
+            .call_pure_function(module, function, arguments)
     }
 
     fn claim_once(&mut self, key: &str) -> Result<bool, RuntimeError> {
@@ -1199,11 +1254,19 @@ where
         &mut self,
         event_type: &str,
         content: Option<String>,
+        tags: &[(String, String)],
         relayset: &str,
         signer: &str,
     ) -> Result<OperationValue, RuntimeError> {
         self.runtime
-            .publish_now(event_type, content, relayset, signer)
+            .publish_now(
+                event_type,
+                content,
+                tags.to_vec(),
+                relayset,
+                signer,
+                self.events,
+            )
             .map(OperationValue::PublishReport)
     }
 }
@@ -1437,7 +1500,10 @@ fn within(inner: nscript_syntax::Span, outer: nscript_syntax::Span) -> bool {
 
 /// Spans of every handler body and (given the program) every `fn` body: things
 /// that run later, deferred to an event or a call, never at startup.
-fn deferred_spans(program: Option<&Program>, checked: &nscript_semantics::CheckedProgram) -> Vec<nscript_syntax::Span> {
+fn deferred_spans(
+    program: Option<&Program>,
+    checked: &nscript_semantics::CheckedProgram,
+) -> Vec<nscript_syntax::Span> {
     let mut deferred: Vec<nscript_syntax::Span> = checked
         .handlers
         .iter()
@@ -1542,6 +1608,7 @@ where
                 log,
                 principal: principal.map(str::to_owned),
                 idempotency,
+                events: &checked.events,
             };
             let result = settle(run_handler(
                 program,
@@ -1612,6 +1679,7 @@ where
         handler_index: usize,
         handler: &nscript_semantics::CheckedHandler,
         policy: &OperationPolicy,
+        events: &BTreeMap<String, nscript_semantics::CheckedEvent>,
         idempotency_host: &mut I,
         storage_host: &mut T,
         log_host: &mut L,
@@ -1646,6 +1714,7 @@ where
                 // per-event claim just above, so a script's own finer-grained
                 // keys and the subscription-level dedup never collide.
                 idempotency: Some(idempotency_host),
+                events,
             };
             settle(run_handler(
                 program,
@@ -1722,6 +1791,7 @@ where
                     index,
                     handler,
                     &policy,
+                    &checked.events,
                     idempotency_host,
                     storage_host,
                     log_host,
@@ -1982,6 +2052,7 @@ mod tests {
             roster
         });
         let denied = OperationPolicy::default();
+        let events = BTreeMap::new();
         let mut session = RuntimeSession {
             runtime: &mut runtime,
             policy: &denied,
@@ -1989,6 +2060,7 @@ mod tests {
             log: &mut log,
             principal: Some("bot".to_owned()),
             idempotency: None,
+            events: &events,
         };
         let error = run_handler(
             &program,
@@ -2012,6 +2084,7 @@ mod tests {
             log: &mut log,
             principal: Some("bot".to_owned()),
             idempotency: None,
+            events: &events,
         };
         run_handler(
             &program,
@@ -2395,6 +2468,67 @@ mod tests {
     }
 
     #[test]
+    fn a_handlers_publish_lowers_computed_fields_declared_kinds_and_the_d_tag() {
+        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\nevent Reply {\n    kind: 30717\n    parameterised by thread\n    thread: Text\n    content: Text\n}\n\npermissions {\n    publish Reply to public\n    sign Reply with account\n    relay public\n    log\n}\n\non Note where tags.t contains \"trigger\" {\n    let result = publish Reply {\n        thread: event.content,\n        content: \"hi\",\n        p: [\"npub1alice\", \"npub1bob\"],\n        count: 2 + 3,\n    } to public with account\n    print(result.accepted)\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = Runtime::new(
+            FakeRelayHost {
+                relays: [("fake://public".to_owned(), true)].into_iter().collect(),
+                ..FakeRelayHost::default()
+            },
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let policy = policy_for(&checked);
+        let hit = event_from_json(&serde_json::json!({
+            "content": "abc",
+            "tags": [["t", "trigger"]],
+        }))
+        .unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &hit,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        assert_eq!(runtime.relay.published.len(), 1);
+        let published = &runtime.relay.published[0];
+        assert_eq!(published.unsigned.event_type, "Reply");
+        assert_eq!(
+            published.unsigned.kind, 30_717,
+            "the program's own `event` declaration decides the kind"
+        );
+        assert_eq!(published.unsigned.content, "hi");
+        let tags = &published.unsigned.tags;
+        assert!(
+            tags.contains(&("d".to_owned(), "abc".to_owned())),
+            "the parameterised identifier lowers to exactly one `d` tag: {tags:?}"
+        );
+        assert!(!tags.iter().any(|(name, _)| name == "thread"));
+        assert!(tags.contains(&("p".to_owned(), "npub1alice".to_owned())));
+        assert!(tags.contains(&("p".to_owned(), "npub1bob".to_owned())));
+        assert!(
+            tags.contains(&("count".to_owned(), "5".to_owned())),
+            "a computed field lowers its evaluated value: {tags:?}"
+        );
+        assert!(
+            !tags
+                .iter()
+                .any(|(name, _)| name == "id" || name == "kind" || name == "tags")
+        );
+    }
+
+    #[test]
     fn the_poll_tally_bot_counts_vote_tags_with_a_for_loop_and_reassignment() {
         const SOURCE: &str = include_str!("../../../examples/poll-tally-bot.ns");
         let (program, checked) = checked(SOURCE);
@@ -2472,7 +2606,11 @@ mod tests {
                 None,
             );
             assert_eq!(outcomes.len(), 1);
-            assert!(outcomes[0].result.is_ok(), "kind={kind}: {:?}", outcomes[0].result);
+            assert!(
+                outcomes[0].result.is_ok(),
+                "kind={kind}: {:?}",
+                outcomes[0].result
+            );
             assert_eq!(log.records.len(), 1, "kind={kind}");
             assert_eq!(log.records[0].message, expected, "kind={kind}");
         }

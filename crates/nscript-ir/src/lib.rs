@@ -251,7 +251,12 @@ pub fn lower(program: &Program, checked: &CheckedProgram, graph: &ResolvedModule
         let unsigned = format!("%{base}");
         let signed = format!("%{}", base + 1);
         let report = format!("%{}", base + 2);
-        let kind = event_kind(graph, &publication.event).unwrap_or(1);
+        let kind = checked
+            .events
+            .get(&publication.event)
+            .map(|event| event.kind)
+            .or_else(|| event_kind(graph, &publication.event))
+            .unwrap_or(1);
         operations.push(IrOperation::CreateEvent {
             result: unsigned.clone(),
             event: publication.event.clone(),

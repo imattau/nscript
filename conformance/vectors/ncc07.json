@@ -1,0 +1,16 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/712385839c5cd9d254c765b1fa900d0670a468dc/ncc-07/README.md",
+  "vectors": [
+    {
+      "type": "capability-manifest",
+      "kind": 30062,
+      "content": "",
+      "tags": [
+        ["d", "capabilities"],
+        ["cap", "ncc:02"],
+        ["cap", "ncc:05"],
+        ["cap", "nip:01"]
+      ]
+    }
+  ]
+}

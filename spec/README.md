@@ -24,6 +24,13 @@ Protocol interpretations in Draft 0.1 were reviewed against upstream NIPs commit
 from 2026-09-19. A release MUST record a new review commit when updating module
 lowering behaviour.
 
+Nostr Community Conventions were reviewed against
+[`imattau/nostr-community-conventions`](https://github.com/imattau/nostr-community-conventions)
+commit [`71238583`](https://github.com/imattau/nostr-community-conventions/tree/712385839c5cd9d254c765b1fa900d0670a468dc).
+Community-convention modules follow the same rule: a release MUST record a new
+pin when updating their lowering behaviour. The integration plan lives in
+[`../NCC-PLAN.md`](../NCC-PLAN.md).
+
 ## Compatibility
 
 An implementation is conforming when it:

@@ -225,9 +225,14 @@ An unsupported construct is a stable `OperationUnavailable` or
   `Runtime::run`'s own startup pass already used, factored out so a handler
   can call it live). `to`/`with` fall back to `defaults { relays: ...; signer:
   ... }` when the script names neither, exactly as a top-level `publish`
-  already does. The record's own name is the event type, and only a
-  `content` field is carried — the same shape and the same limits a
-  top-level `publish` already has; a handler gets no more than that.
+  already does. The record's own name is the event type, and every author
+  field lowers the same way a top-level `publish` lowers its own: `content`
+  to the event body, each scalar to one wire tag named after the field, each
+  `List` element to a repeated tag, and a parameterised declaration's
+  identifier field to the single `d` tag — kind and declaration resolved
+  from the program's (or a module's) `event` declarations, with the
+  historical `Note`-is-kind-1 fallback when nothing declares one. A handler
+  gets no more than a top-level `publish` already has.
   `examples/handler-publish-bot.ns` demonstrates it, both the case where no
   event ever reaches the handler (nothing is published) and the case where
   one does (a real signed, published reply).

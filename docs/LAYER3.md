@@ -484,16 +484,17 @@ everything above, none of them own a distinct Nostr event kind the way
   permission (`poll`, `poll_response`).
 - NIP-92, NIP-36 and NIP-40 are each a *tag* attachable to any event kind
   (`imeta`, `content-warning`, `expiration`), not a kind of their own. The
-  language's core `publish <Event> { ... }` path does not thread arbitrary
-  tags today (`nip01`'s `Note.tags` field is read-side only; nothing wires
-  a written tag list onto a published event yet), so each of these three is
-  scoped honestly to the one case the language already models well: a text
-  note carrying that tag. `nip92.publish_note_with_media`,
-  `nip36.publish_note_with_warning` and `nip40.publish_expiring_note` each
-  take a `content: Text` plus the tag's own fields, and publish a plain
-  note. They do not (and cannot yet) attach these tags to an article, a
-  poll, or any other event kind — that needs a general tag-carrying publish
-  path, which is unbuilt.
+  language's core `publish <Event> { ... }` path now lowers written fields
+  to tags (a scalar field becomes one tag, a list becomes repeated tags),
+  while the record's own `tags:` list and typed algebraic tag values stay
+  unbuilt. Each of these three is still scoped honestly to the one case the
+  language already models well end to end: a text note carrying that tag.
+  `nip92.publish_note_with_media`, `nip36.publish_note_with_warning` and
+  `nip40.publish_expiring_note` each take a `content: Text` plus the tag's
+  own fields, and publish a plain note. They do not attach these tags to an
+  article, a poll, or any other event kind — the module operations don't
+  take a target event to attach to, and a hand-written core `publish` only
+  lowers the plain field shapes above, not typed tag values.
 
 ```nostr
 use nip88

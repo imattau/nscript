@@ -8,7 +8,7 @@ use std::{
 
 use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_hex, parse_module};
 use nscript_runtime::SubscriptionHost;
-use nscript_semantics::{analyze_with_modules, check};
+use nscript_semantics::{analyze_with_modules, bind_module_events, check};
 use nscript_syntax::{Diagnostic, Program, parse_program};
 use semver::VersionReq;
 use sha2::{Digest, Sha256};
@@ -171,9 +171,10 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
     if !typed_diagnostics.is_empty() {
         return finish(source, typed_diagnostics);
     }
-    let Some(checked) = checked else {
+    let Some(mut checked) = checked else {
         return ExitCode::from(1);
     };
+    bind_module_events(&graph, &mut checked);
     let dependencies = program
         .imports
         .iter()
@@ -434,20 +435,43 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
     if !typed_diagnostics.is_empty() {
         return finish(&path, typed_diagnostics);
     }
-    let checked = checked.expect("a diagnostic-free program is checked");
+    let mut checked = checked.expect("a diagnostic-free program is checked");
+    bind_module_events(&graph, &mut checked);
     if json {
         let manifest = serde_json::json!({
             "profile": format!("{:?}", program.profile).to_lowercase(),
             "effects": checked.effects.iter().map(|effect| format!("{effect:?}").to_lowercase()).collect::<Vec<_>>(),
             "operations": checked.operation_calls.iter().map(|call| format!("{}.{}", call.module, call.operation)).collect::<Vec<_>>(),
-            "publications": checked.publications.len(),
-            "publication_trace": checked.publications.iter().map(|publication| serde_json::json!({
-                "steps": [
-                    {"op": "create_event", "event": publication.event},
-                    {"op": "sign_event", "signer": publication.signer},
-                    {"op": "publish_event", "relayset": publication.relayset}
-                ]
+            "resolved_modules": graph.modules.iter().map(|(name, module)| serde_json::json!({
+                "name": name,
+                "version": module.descriptor.id.version.to_string(),
+                "sha256": hash_hex(&module.descriptor.canonical_hash),
+                "origin": match &module.origin {
+                    nscript_modules::ModuleOrigin::BuiltIn(_) => "builtin".to_owned(),
+                    nscript_modules::ModuleOrigin::File(path) => path.display().to_string(),
+                }
             })).collect::<Vec<_>>(),
+            "publications": checked.publications.len(),
+            "publication_trace": checked.publications.iter().map(|publication| {
+                let declared = checked.events.get(&publication.event);
+                let kind = declared.map_or(
+                    match publication.event.as_str() {
+                        "Note" => 1,
+                        _ => 0,
+                    },
+                    |event| event.kind,
+                );
+                let tags = declared
+                    .and_then(|event| event.lower_tags(&publication.tags).ok())
+                    .unwrap_or_else(|| publication.tags.clone());
+                serde_json::json!({
+                    "steps": [
+                        {"op": "create_event", "event": publication.event, "kind": kind, "tags": tags},
+                        {"op": "sign_event", "signer": publication.signer},
+                        {"op": "publish_event", "relayset": publication.relayset}
+                    ]
+                })
+            }).collect::<Vec<_>>(),
             "schedules": checked.schedules.len(),
             "handlers": checked.handlers.iter().map(|handler| serde_json::json!({
                 "event": handler.event_type,
@@ -476,6 +500,13 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        for (name, module) in &graph.modules {
+            println!(
+                "module: {name}@{} sha256:{}",
+                module.descriptor.id.version,
+                hash_hex(&module.descriptor.canonical_hash)
+            );
+        }
         for call in &checked.operation_calls {
             println!("operation: {}.{}", call.module, call.operation);
         }
@@ -522,11 +553,9 @@ fn compile_program(arguments: &[String], wasm: bool) -> ExitCode {
     if !typed_diagnostics.is_empty() {
         return finish(&path, typed_diagnostics);
     }
-    let ir = nscript_ir::lower(
-        &program,
-        &checked.expect("a diagnostic-free program is checked"),
-        &graph,
-    );
+    let mut checked = checked.expect("a diagnostic-free program is checked");
+    bind_module_events(&graph, &mut checked);
+    let ir = nscript_ir::lower(&program, &checked, &graph);
     if wasm {
         let bytes = nscript_ir::emit_wasm(&ir);
         if let Some(output) = output {
@@ -729,7 +758,8 @@ fn run_program(arguments: &[String]) -> ExitCode {
     let clock = nscript_runtime::FakeClock { now: 1_700_000_000 };
     let audit = nscript_runtime::RecordingAudit::default();
     let mut runtime = nscript_runtime::Runtime::new(relay, signer, clock, audit);
-    let checked = checked.expect("checked program");
+    let mut checked = checked.expect("checked program");
+    bind_module_events(&graph, &mut checked);
     let mut timers = nscript_runtime::FakeTimerHost::default();
     if let Err(error) = runtime.schedule_program(&mut timers, &checked) {
         eprintln!("error[R1003]: {error:?}");
@@ -837,9 +867,11 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
                 })?);
             }
             "--cycles" => {
-                options.cycles = Some(value.parse().map_err(|_| {
-                    format!("--cycles expects a whole number, found {value}")
-                })?);
+                options.cycles = Some(
+                    value
+                        .parse()
+                        .map_err(|_| format!("--cycles expects a whole number, found {value}"))?,
+                );
             }
             _ => options.principal = Some(value.clone()),
         }
@@ -905,7 +937,8 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
     if !typed_diagnostics.is_empty() {
         return finish(&path, typed_diagnostics);
     }
-    let checked = checked.expect("checked program");
+    let mut checked = checked.expect("checked program");
+    bind_module_events(&graph, &mut checked);
 
     println!("connecting to {} relay(s)...", options.relays.len());
     let mut relay = nscript_runtime::RealRelayPool::new();
@@ -945,7 +978,10 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
         return ExitCode::from(1);
     }
     for timer in &timers.schedules {
-        println!("note: timer {} at {} is registered but not run by deploy (every/at are not evaluated)", timer.name, timer.next_at);
+        println!(
+            "note: timer {} at {} is registered but not run by deploy (every/at are not evaluated)",
+            timer.name, timer.next_at
+        );
     }
 
     let operation_policy = checked.operation_calls.iter().fold(
@@ -976,7 +1012,11 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
         }
     };
     for (index, report) in reports.iter().enumerate() {
-        let accepted = report.outcomes.iter().filter(|outcome| outcome.accepted).count();
+        let accepted = report
+            .outcomes
+            .iter()
+            .filter(|outcome| outcome.accepted)
+            .count();
         println!(
             "publication {index}: {accepted}/{} relays accepted",
             report.outcomes.len()
@@ -989,16 +1029,19 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
     }
 
     let policy = nscript_runtime::eval::policy_for(&checked);
-    // `handler_subscriptions` leaves `kinds` empty (it has no module graph to
-    // resolve a name like "Note" to its numeric kind), which the fake host
-    // this method usually runs against does not need — it matches by
-    // `event_type` string alone. A real relay only knows kinds, and
-    // `RealRelayHost::parse_event` has no module context either, so it
-    // always reports a delivered event's `event_type` as the literal
-    // string `"Event"`; `matches_subscription`'s very first check would
-    // then reject every real event, filter or no filter. Both are fixed
-    // here, the one place that actually has both the module graph and the
-    // handler it is subscribing for.
+    // `handler_subscriptions` leaves `kinds` empty (it resolves no event
+    // declarations itself), which the fake host `run`/`test-event` usually
+    // run against does not need — it matches by `event_type` string alone.
+    // A real relay only knows kinds, and `RealRelayHost::parse_event` has no
+    // module context either, so it always reports a delivered event's
+    // `event_type` as the literal string `"Event"`; `matches_subscription`'s
+    // very first check would then reject every real event, filter or no
+    // filter. Both are fixed here, the one place that actually has the
+    // checked event declarations and the handler it is subscribing for: the
+    // declared kind becomes the subscription's kind filter (so the relay
+    // only sends matching kinds) and the post-delivery re-check in the poll
+    // loop below rejects anything a relay ignored that filter to deliver
+    // anyway.
     let mut requests = nscript_runtime::Runtime::<
         nscript_runtime::RealRelayPool,
         nscript_runtime::Nip46SignerHost<nscript_host_crypto::nip46::RealNip46Transport>,
@@ -1006,7 +1049,12 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
         nscript_runtime::RecordingAudit,
     >::handler_subscriptions(&checked, None);
     for (handler, request) in checked.handlers.iter().zip(&mut requests) {
-        if let Some(kind) = event_kind(&graph, &handler.event_type) {
+        let declared = checked
+            .events
+            .get(&handler.event_type)
+            .map(|event| event.kind)
+            .or_else(|| event_kind(&graph, &handler.event_type));
+        if let Some(kind) = declared {
             request.kinds = vec![kind];
         }
     }
@@ -1029,7 +1077,10 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
             let handle = match runtime.relay.subscribe(0, request) {
                 Ok(handle) => handle,
                 Err(error) => {
-                    eprintln!("error: subscribe for {} failed: {error:?}", handler.event_type);
+                    eprintln!(
+                        "error: subscribe for {} failed: {error:?}",
+                        handler.event_type
+                    );
                     continue;
                 }
             };
@@ -1045,7 +1096,11 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
                 // `RealRelayHost::parse_event` cannot know the handler's own
                 // event-type name; a relay that ignored the kind filter
                 // above is caught here rather than trusted.
-                if request.kinds.first().is_some_and(|kind| *kind != raw_event.unsigned.kind) {
+                if request
+                    .kinds
+                    .first()
+                    .is_some_and(|kind| *kind != raw_event.unsigned.kind)
+                {
                     continue;
                 }
                 let mut event = raw_event.clone();
@@ -1059,6 +1114,7 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
                     index,
                     handler,
                     &policy,
+                    &checked.events,
                     &mut idempotency,
                     &mut storage,
                     &mut log,
@@ -1078,7 +1134,10 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
                         );
                     }
                     Err(error) => {
-                        eprintln!("error: dispatch for {} failed: {error:?}", handler.event_type);
+                        eprintln!(
+                            "error: dispatch for {} failed: {error:?}",
+                            handler.event_type
+                        );
                     }
                 }
                 for record in &log.records {
@@ -1261,7 +1320,8 @@ fn test_event(arguments: &[String]) -> ExitCode {
     if !typed_diagnostics.is_empty() {
         return finish(&path, typed_diagnostics);
     }
-    let checked = checked.expect("a diagnostic-free program is checked");
+    let mut checked = checked.expect("a diagnostic-free program is checked");
+    bind_module_events(&graph, &mut checked);
     let Ok(event) = parse_test_event(&event_value) else {
         eprintln!(
             "invalid --event: expected an object with event_type, kind, content, tags, created_at, signer, id, signature"

@@ -48,8 +48,11 @@ npm run build
 CHROME_PATH=/path/to/chrome node tests/input-check.mjs
 ```
 
-## What's not here yet
+## Next work
 
-Publishing/installing through npack/Nostr, the lowering/protocol inspector, the
-browser-extension host, and AI-assisted authoring. The wasm `compile` and `ir`
-ops already exist for the build panel.
+The Studio currently analyzes and simulates programs locally. It does not yet
+show the event/tag/filter lowering behind a program, launch a real runtime, or
+connect to a browser-extension signer. Package manifests and lockfiles can be
+created and verified by the CLI (`nscript package`); publishing and installing
+artifacts remain the responsibility of npack and are not integrated into this
+UI. See the [project roadmap](../ROADMAP.md) for priorities.

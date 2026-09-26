@@ -43,8 +43,10 @@ nscript deploy [-M <directory>]... <file> \
 operations still go through the same simulator `run`/`test-event` use.
 Making every module operation real would mean building a real host
 implementation for each one individually (most reduce to "publish an event
-with these exact tags," which is more than `Runtime::publish_now`'s
-content-only shape covers) — a much larger, separate effort than wiring up
+with these exact tags," which needs the module-declared typed tag shapes —
+`publish_now` now lowers plain written fields to wire tags, but not algebraic
+tag values or positional wire fields, and each operation would still need a
+real host implementation) — a much larger, separate effort than wiring up
 the relay/signer/event-loop path this command closes. `deploy` prints a
 one-line reminder of this whenever a program makes any such call, so it is
 never a silent surprise.

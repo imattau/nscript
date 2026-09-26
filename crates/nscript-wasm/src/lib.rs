@@ -26,7 +26,7 @@ use nscript_runtime::{
     FakeClock, FakeLogHost, FakeOperationHost, FakeRelayHost, FakeSignerHost, FakeTimerHost,
     InMemoryStorage, OperationPolicy, RecordingAudit, Runtime, SignedEvent, UnsignedEvent, eval,
 };
-use nscript_semantics::{CheckedProgram, check, footprint, infer};
+use nscript_semantics::{CheckedProgram, bind_module_events, check, footprint, infer};
 use nscript_syntax::{Diagnostic, Program};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -262,7 +262,9 @@ fn checked_program(source: &str, modules: &[ModuleSource]) -> Result<CheckedProg
     if !typed_diagnostics.is_empty() {
         return Err(diagnostics_json(&typed_diagnostics));
     }
-    checked.ok_or_else(Vec::new)
+    let mut checked = checked.ok_or_else(Vec::new)?;
+    bind_module_events(&loaded.graph, &mut checked);
+    Ok(checked)
 }
 
 #[must_use]
@@ -362,9 +364,10 @@ fn handle_run(source: &str, modules: &[ModuleSource]) -> String {
             "trace": null,
         }));
     }
-    let Some(checked) = checked else {
+    let Some(mut checked) = checked else {
         return error_response("program did not type-check");
     };
+    bind_module_events(&loaded.graph, &mut checked);
     let relay = FakeRelayHost {
         relays: [("fake://public".to_owned(), true)].into_iter().collect(),
         published: Vec::new(),
@@ -517,9 +520,10 @@ fn handle_test_event(source: &str, modules: &[ModuleSource], request: &Value) ->
             "report": null,
         }));
     }
-    let Some(checked) = checked else {
+    let Some(mut checked) = checked else {
         return error_response("program did not type-check");
     };
+    bind_module_events(&loaded.graph, &mut checked);
     let Some(event) = parse_test_event(request.get("event")) else {
         return error_response("test_event requires an `event` object");
     };

@@ -197,6 +197,7 @@ fn a_script_reads_a_real_channel_and_kicks_the_spammer() {
         RecordingAudit::default(),
     );
     let mut log = FakeLogHost::default();
+    let events = std::collections::BTreeMap::new();
 
     for message in &messages {
         let mut session = RuntimeSession {
@@ -206,6 +207,7 @@ fn a_script_reads_a_real_channel_and_kicks_the_spammer() {
             log: &mut log,
             principal: Some(pk(&BOT)),
             idempotency: None,
+            events: &events,
         };
         let event = Value::from_event(&message.to_signed_event());
         run_handler(&program, &body, event, &mut session, EvalLimits::default()).unwrap();
@@ -273,6 +275,7 @@ fn the_script_cannot_do_more_than_the_program_was_granted() {
         RecordingAudit::default(),
     );
     let mut log = FakeLogHost::default();
+    let events = std::collections::BTreeMap::new();
     let nothing = OperationPolicy::default();
     let mut session = RuntimeSession {
         runtime: &mut runtime,
@@ -281,6 +284,7 @@ fn the_script_cannot_do_more_than_the_program_was_granted() {
         log: &mut log,
         principal: Some(pk(&BOT)),
         idempotency: None,
+        events: &events,
     };
     let spam = nscript_runtime::SignedEvent {
         unsigned: nscript_runtime::UnsignedEvent {
@@ -365,6 +369,7 @@ fn a_script_branches_on_a_kick_the_roster_refuses() {
         RecordingAudit::default(),
     );
     let mut log = FakeLogHost::default();
+    let events = std::collections::BTreeMap::new();
     for message in &messages {
         let mut session = RuntimeSession {
             runtime: &mut runtime,
@@ -373,6 +378,7 @@ fn a_script_branches_on_a_kick_the_roster_refuses() {
             log: &mut log,
             principal: Some(pk(&BOT)),
             idempotency: None,
+            events: &events,
         };
         // The refusal is a value the script handled, so neither handler fails.
         run_handler(

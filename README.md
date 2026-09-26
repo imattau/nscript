@@ -23,13 +23,15 @@ publish Note {
 } to public with account
 ```
 
-The project is specification-first. The current milestone defines the language,
-runtime contract, Nostr interoperability, and conformance expectations while the
-reference interpreter is being built.
+NScript is specification-led, with a working Rust compiler and reference
+runtime. The current Draft 0.1 surface is broad; the next phase is focused on
+making one real application workflow dependable from authoring through
+deployment.
 
-The Rust front end now parses and statically checks the Draft 0.1 source corpus,
-can emit an inspectable publication IR, and can execute publication effects
-against deterministic fake hosts without contacting real relays or keys:
+The Rust front end parses and statically checks the Draft 0.1 source corpus,
+emits inspectable IR and manifests, and supports both deterministic simulation
+and a real relay/signer deployment loop. Module operations without a configured
+real host remain simulated by `deploy`:
 
 ```bash
 cargo run -p nscript-cli -- check conformance/valid/default-publish.ns
@@ -41,6 +43,8 @@ cargo run -p nscript-cli -- module check conformance/modules/valid/nip10.nsm
 cargo run -p nscript-cli -- module hash conformance/modules/valid/nip10.nsm
 cargo run -p nscript-cli -- module describe conformance/modules/valid/nip10.nsm
 cargo run -p nscript-cli -- test-event conformance/valid/handler-print.ns --event '{"kind":1,"content":"hello"}'
+cargo run -p nscript-cli -- inspect --json examples/concord-moderation-bot.ns
+cargo run -p nscript-cli -- run examples/concord-moderation-bot.ns --event '{"content":"buy spam now","signer":"mallory"}'
 ```
 
 The compiler front end also builds to `wasm32-unknown-unknown` for in-browser
@@ -250,7 +254,8 @@ remain staged until successful completion.
 
 ## Repository map
 
-- [`PLAN.md`](PLAN.md) records the approved implementation plan.
+- [`ROADMAP.md`](ROADMAP.md) records the current product and release priorities.
+- [`PLAN.md`](PLAN.md) records the implementation history and original phase plan.
 - [`spec/`](spec/) contains the normative language and runtime specification.
 - [`rfcs/`](rfcs/) contains companion proposals, including package distribution.
 - [`conformance/`](conformance/) contains executable examples and negative tests
@@ -264,14 +269,24 @@ remain staged until successful completion.
 
 ## Status
 
-NScript is an early Draft 0.1 implementation. Syntax and semantics remain
-evolving, with a Rust reference runtime and an opt-in Wasmi sandbox backend.
+NScript is an evolving Draft 0.1 implementation. The compiler, simulator,
+package metadata and lockfile commands, browser Studio, and a real relay/signer
+deployment loop exist. The deployment loop does not yet execute general NIP
+module operations against real hosts; those operations are simulated unless a
+host implementation is explicitly wired in. Concord protocol operations have
+real Rust host implementations and end-to-end tests, but are not yet available
+as a configured `nscript deploy` host.
 
 The runnable [`examples/layer3-bot.ns`](examples/layer3-bot.ns) demonstrates
 the current language-facing Layer 3 surface: typed event patterns, native
 publication syntax, local event bindings, conditions, logging, and early
 returns. It uses Nostr capabilities without manually constructing wire tags or
 JSON.
+
+The [`Concord moderation bot`](examples/concord-stream-moderation-bot.ns) shows
+the encrypted-stream handler shape. [`docs/CONCORD-BOT.md`](docs/CONCORD-BOT.md)
+explains what runs in simulation, what is covered by the real-host integration
+tests, and what the live CLI runner still needs.
 
 ## Design principles
 

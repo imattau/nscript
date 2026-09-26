@@ -56,7 +56,9 @@ tag union. Tags declare a fixed wire name and positional fields or literals.
 Optional trailing fields may be omitted; skipped optional positions before a
 later value lower to the declared empty representation. Each wire position is
 assigned exactly once. Dynamic tag names, arbitrary JSON templates, and code
-execution are forbidden.
+execution are forbidden. A program's own `publish` record lowering (field name
+to tag name) is specified in the language document; this section governs the
+module-declared tag unions those programs import.
 
 Content encodings are `text`, `bytes-base64`, `json<T>`, or a named encoding
 provided declaratively by an imported module. JSON uses UTF-8, rejects duplicate

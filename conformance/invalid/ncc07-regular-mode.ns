@@ -1,0 +1,14 @@
+// error: E1201 invalid-event-declaration
+// NCC-07 §6.2: the capability manifest is addressable (kind 30062 with a
+// d tag), so it cannot be declared with plain regular-event semantics.
+use ncc07
+use nip01
+
+event CapabilityManifest {
+    kind: 30062
+    content: Text
+}
+
+publish CapabilityManifest {
+    content: "not addressable";
+}

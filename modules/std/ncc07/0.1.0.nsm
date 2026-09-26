@@ -1,0 +1,27 @@
+module ncc07 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nostr-community-conventions/blob/712385839c5cd9d254c765b1fa900d0670a468dc/ncc-07/README.md"
+
+validator manifest_identifier(value: Text) {
+    require value == "capabilities"
+}
+
+function capabilities(tags: List<Text>) -> List<Text>
+function supports(advertised: List<Text>, wanted: Text) -> Bool
+function capability_namespace(id: Text) -> Text
+function capability_is_valid(id: Text) -> Bool
+
+event CapabilityManifest {
+    kind: 30062
+    mode: addressable
+    content: Text as text
+    tags: List<CapabilityTag> = []
+    field d: Text
+    field cap: List<Text>
+    require manifest_identifier(d)
+}
+
+tag CapabilityTag {
+    wire: "cap"
+    field capability: Text at 1
+}
