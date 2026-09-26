@@ -157,6 +157,37 @@ fn ncc02_service_record_lowers_to_the_pinned_wire_vector() {
 }
 
 #[test]
+fn ncc05_locator_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc05.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc05-locator.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "Locator");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+    // NCC-05 §5.1: the payload is encrypted into `content` as the
+    // handler publishes, so the checked snapshot carries no literal
+    // content — nothing that reaches the wire here could be read in the
+    // clear from the source.
+    assert_eq!(create["content"], expected["content"]);
+    assert!(create["content"].is_null());
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])
@@ -1319,6 +1350,105 @@ fn the_service_registry_publishes_its_record_and_judges_what_it_receives() {
         ),
         "{stdout}"
     );
+}
+
+#[test]
+fn the_locator_bot_encrypts_the_payload_it_publishes_and_judges_what_it_receives() {
+    let path = repository_path("examples/ncc05-locator-bot.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    // No event: both readers idle, and no locator is published.
+    let output = run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("note: 2 handler(s) registered"), "{stdout}");
+    assert!(!stdout.contains("locator for"), "{stdout}");
+
+    // A peer's Service Record inside its window: the payload is rebuilt
+    // from the record, NIP-44-encrypted into `content` (§5.1) and
+    // published as the Locator.
+    let valid = r#"{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://relay.example.com"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1700600000"]]}"#;
+    let output = run(&["--event", valid]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler ServiceRecord: ok"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "locator for relay published: true/1 relays, endpoints [wss://relay.example.com]"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "operation nip44.encrypt_text(Text(\"{\\\"caps\\\":[\\\"nostr-connect\\\"],\\\"endpoints\\\":"
+        ),
+        "{stdout}"
+    );
+
+    // An expired record builds no locator at all.
+    let expired = r#"{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://relay.example.com"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1699999999"]]}"#;
+    let output = run(&["--event", expired]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("service relay rejected: expired or incomplete"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("locator for relay published"), "{stdout}");
+
+    // A locator received in the clear — §5.2's exception, the shape a
+    // reader can judge end to end today — is fresh, so it prints.
+    let readable = r#"{"event_type": "Locator", "kind": 30058, "created_at": 1700000000, "content": "{\"v\":1,\"ttl\":600,\"updated_at\":1700000000,\"endpoints\":[{\"url\":\"203.0.113.42:9735\",\"priority\":10,\"family\":\"ipv4\"}],\"caps\":[\"nostr-connect\"]}", "tags": [["d", "addr"], ["expiration", "1700000600"]]}"#;
+    let output = run(&["--event", readable]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler Locator: ok"), "{stdout}");
+    assert!(
+        stdout.contains("addr publishes [203.0.113.42:9735] for [nostr-connect]"),
+        "{stdout}"
+    );
+
+    // One whose payload window closed, and one whose content cannot be
+    // read as a payload at all (the encrypted envelope a peer published):
+    // both are discarded rather than used (§7 event selection).
+    let stale = r#"{"event_type": "Locator", "kind": 30058, "created_at": 1700000000, "content": "{\"v\":1,\"ttl\":600,\"updated_at\":1699999000,\"endpoints\":[{\"url\":\"203.0.113.42:9735\",\"priority\":10,\"family\":\"ipv4\"}]}", "tags": [["d", "addr"], ["expiration", "1700000600"]]}"#;
+    let sealed = r#"{"event_type": "Locator", "kind": 30058, "created_at": 1700000000, "content": "encrypted-1", "tags": [["d", "addr"], ["expiration", "1700000600"]]}"#;
+    for event in [stale, sealed] {
+        let output = run(&["--event", event]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("locator addr discarded: expired, unaddressed, or payload unreadable"),
+            "{stdout}"
+        );
+    }
 }
 
 #[test]

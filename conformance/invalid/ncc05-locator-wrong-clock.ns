@@ -1,0 +1,19 @@
+// error: E1001 nominal-type-mismatch
+// NCC-05's freshness rules are judged against a clock the caller holds:
+// `payload_is_fresh`'s first parameter is the payload (Text) and its
+// second is an Int, so the arguments here are in the wrong order for the
+// types they carry. Scripts hold no wall clock (spec/language.md §9), so
+// a reader passes a timestamp — the delivered locator's `created_at`, or
+// another value it was given — and the check never reads time itself.
+use ncc05
+use nip01
+
+permissions {
+    log
+}
+
+on Locator {
+    if ncc05.payload_is_fresh(event.created_at, event.content) {
+        print("locator is fresh")
+    }
+}

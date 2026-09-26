@@ -1,0 +1,39 @@
+// NCC-05: a service republishes its Locator (kind 30058, addressed by
+// its `d` locator name) with the §5.3 payload NIP-44-encrypted into
+// `content` — the endpoints and capabilities NCC-05 carries never appear
+// in tags (§5.1) — and a reader judges the locators it receives against
+// a clock the caller supplies.
+use ncc05
+use nip01
+use nip44
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Locator to public
+    sign Locator with account
+    read Locator from public
+    relay public
+    encrypt Text
+    log
+}
+
+on Note where tags.t contains "relocate" {
+    let payload = ncc05.payload(600, event.created_at, [ncc05.endpoint_object("203.0.113.42:9735", 10, "ipv4", "")], ["nostr-connect"])
+    let encrypted = nip44.encrypt_text(payload, event.author)?
+    publish Locator {
+        d: "addr";
+        expiration: 1700003600;
+        content: encrypted;
+    } to public with account
+}
+
+on Locator where tags.d contains "addr" {
+    if ncc05.record_is_fresh(event.tags, event.content, event.created_at) {
+        print(ncc05.locator_name(event.tags) + " publishes " + text(ncc05.payload_endpoints(event.content)) + " for " + text(ncc05.payload_caps(event.content)))
+    } else {
+        print("locator rejected: expired or unaddressed")
+    }
+}

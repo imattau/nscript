@@ -466,7 +466,7 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
                     .unwrap_or_else(|| publication.tags.clone());
                 serde_json::json!({
                     "steps": [
-                        {"op": "create_event", "event": publication.event, "kind": kind, "tags": tags},
+                        {"op": "create_event", "event": publication.event, "kind": kind, "content": publication.content, "tags": tags},
                         {"op": "sign_event", "signer": publication.signer},
                         {"op": "publish_event", "relayset": publication.relayset}
                     ]

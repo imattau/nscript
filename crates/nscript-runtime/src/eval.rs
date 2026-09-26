@@ -706,6 +706,11 @@ impl<H: EvalHost> Interpreter<'_, H> {
             match field.as_str() {
                 "content" => match value {
                     Value::Text(text) => content = Some(text),
+                    // NCC-05 locators (and any other `content: EncryptedText`
+                    // event) publish the payload nip44 handed us whole: the
+                    // wire content is that envelope's bytes, so lowering it
+                    // is not "text vs. not text" but "carry the payload".
+                    Value::Op(OperationValue::EncryptedText(payload)) => content = Some(payload),
                     other => {
                         return Err(fail(format!(
                             "`content` must be text to publish, found a {}",
@@ -2526,6 +2531,96 @@ mod tests {
                 .iter()
                 .any(|(name, _)| name == "id" || name == "kind" || name == "tags")
         );
+    }
+
+    #[test]
+    fn a_locator_publishes_encrypted_content_the_simulator_can_round_trip() {
+        let source = "use nip01\nuse nip46\nuse nip44\nuse ncc05\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    publish Locator to public\n    sign Locator with account\n    relay public\n    encrypt Text\n    log\n}\n\non Note where tags.t contains \"relocate\" {\n    let payload = ncc05.payload(600, event.created_at, [ncc05.endpoint_object(\"203.0.113.42:9735\", 10, \"ipv4\", \"\")], [\"nostr-connect\"])\n    let encrypted = nip44.encrypt_text(payload, event.author)?\n    publish Locator {\n        d: \"addr\";\n        expiration: 1700003600;\n        content: encrypted;\n    } to public with account\n}\n";
+        let (program, mut checked) = checked(source);
+        // A module-declared event only lowers to its declared kind once the
+        // resolved module graph is bound, exactly as `run`/`inspect` do it.
+        let registry = nscript_modules::ModuleRegistry::with_builtins();
+        let graph = registry
+            .resolve(&[nscript_modules::ModuleDependency {
+                name: "ncc05".to_owned(),
+                requirement: semver::VersionReq::STAR,
+            }])
+            .expect("ncc05 resolves");
+        nscript_semantics::bind_module_events(&graph, &mut checked);
+        assert_eq!(
+            checked.events.get("Locator").map(|event| event.kind),
+            Some(30_058)
+        );
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = Runtime::new(
+            FakeRelayHost {
+                relays: [("fake://public".to_owned(), true)].into_iter().collect(),
+                ..FakeRelayHost::default()
+            },
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let policy = policy_for(&checked);
+        let hit = event_from_json(&serde_json::json!({
+            "content": "relocate me",
+            "author": "alice",
+            "created_at": 1_700_000_000,
+            "tags": [["t", "relocate"]],
+        }))
+        .unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &hit,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        assert_eq!(runtime.relay.published.len(), 1);
+        let published = &runtime.relay.published[0];
+        assert_eq!(published.unsigned.event_type, "Locator");
+        assert_eq!(published.unsigned.kind, 30_058);
+        assert_eq!(
+            published.unsigned.tags,
+            vec![
+                ("d".to_owned(), "addr".to_owned()),
+                ("expiration".to_owned(), "1700003600".to_owned()),
+            ],
+            "the record's own fields lower to tags, whatever content carries"
+        );
+        // NCC-05 §5.1: `content` carries the NIP-44 envelope the handler
+        // encrypted, never the payload in the clear — and the same run can
+        // read it back, so what went out really is the payload below.
+        assert_eq!(published.unsigned.content, "encrypted-1");
+        let decrypted = ops
+            .call(
+                9,
+                "nip44",
+                "decrypt_text",
+                &[
+                    OperationValue::EncryptedText("encrypted-1".to_owned()),
+                    OperationValue::PubKey("alice".to_owned()),
+                ],
+            )
+            .unwrap();
+        let OperationValue::Text(payload) = decrypted else {
+            panic!("decrypt_text answers with text: {decrypted:?}");
+        };
+        let payload: serde_json::Value = serde_json::from_str(&payload)
+            .expect("what was encrypted is the §5.3 payload document");
+        assert_eq!(payload["v"], 1);
+        assert_eq!(payload["ttl"], 600);
+        assert_eq!(payload["updated_at"], 1_700_000_000);
+        assert_eq!(payload["endpoints"][0]["url"], "203.0.113.42:9735");
+        assert_eq!(payload["endpoints"][0]["family"], "ipv4");
+        assert_eq!(payload["caps"][0], "nostr-connect");
     }
 
     #[test]

@@ -3506,6 +3506,14 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("ncc02", "record_is_valid") => Some(ncc02_record_is_valid as PureFunction),
         ("ncc02", "attestation_is_valid") => Some(ncc02_attestation_is_valid as PureFunction),
         ("ncc02", "revocation_is_for") => Some(ncc02_revocation_is_for as PureFunction),
+        ("ncc05", "locator_name") => Some(ncc05_locator_name as PureFunction),
+        ("ncc05", "endpoint_object") => Some(ncc05_endpoint_object as PureFunction),
+        ("ncc05", "endpoint_family") => Some(ncc05_endpoint_family as PureFunction),
+        ("ncc05", "payload") => Some(ncc05_payload as PureFunction),
+        ("ncc05", "payload_endpoints") => Some(ncc05_payload_endpoints as PureFunction),
+        ("ncc05", "payload_caps") => Some(ncc05_payload_caps as PureFunction),
+        ("ncc05", "payload_is_fresh") => Some(ncc05_payload_is_fresh as PureFunction),
+        ("ncc05", "record_is_fresh") => Some(ncc05_record_is_fresh as PureFunction),
         ("ncc07", "capabilities") => Some(ncc07_capabilities as PureFunction),
         ("ncc07", "supports") => Some(ncc07_supports as PureFunction),
         ("ncc07", "capability_namespace") => Some(ncc07_capability_namespace as PureFunction),
@@ -3866,6 +3874,302 @@ fn ncc02_revocation_is_for(arguments: &[OperationValue]) -> Result<OperationValu
     Ok(OperationValue::Bool(
         !attestation_id.is_empty() && target == Some(attestation_id.as_str()),
     ))
+}
+
+/// NCC-05 §7 input: the locator name a delivered record is addressed by,
+/// read from the handler-side `name=value` rendering of its tags
+/// (docs/HANDLERS.md). §7's query defaults to `addr`, but a record with
+/// no `d` is not a locator at all, so it extracts as empty text and is
+/// rejected by the caller's guard rather than by this reader.
+fn ncc05_locator_name(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "d", "ncc05.locator_name")
+}
+
+/// A well-formed NCC-05 §5.4 endpoint: a JSON object with a non-empty
+/// `url`, and with `priority`, `family` and `k` typed as §5.4 types them
+/// whenever they are named at all. Unknown keys pass through untouched,
+/// so a payload may carry fields this reader does not model yet. The
+/// builder and every reader share this predicate: a payload one accepts,
+/// the others accept too.
+fn ncc05_parsed_endpoint(
+    entry: &serde_json::Value,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let endpoint = entry.as_object()?.clone();
+    let url = endpoint.get("url")?.as_str()?;
+    if url.is_empty() {
+        return None;
+    }
+    if let Some(priority) = endpoint.get("priority")
+        && !priority.is_i64()
+    {
+        return None;
+    }
+    if let Some(family) = endpoint.get("family")
+        && !family.is_string()
+    {
+        return None;
+    }
+    if let Some(k) = endpoint.get("k")
+        && !k.is_string()
+    {
+        return None;
+    }
+    Some(endpoint)
+}
+
+/// NCC-05 §5.4: one endpoint entry, serialised as the JSON object a
+/// payload carries. An endpoint with no URL is not an endpoint and
+/// serialises as empty text, so a caller that guarded on `url != ""`
+/// never builds a payload entry from nothing.
+fn ncc05_endpoint_object(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(url),
+        OperationValue::Integer(priority),
+        OperationValue::Text(family),
+        OperationValue::Text(k),
+    ] = arguments
+    else {
+        return Err(invalid("ncc05.endpoint_object"));
+    };
+    if url.is_empty() {
+        return Ok(OperationValue::Text(String::new()));
+    }
+    let mut endpoint = serde_json::Map::new();
+    endpoint.insert("url".to_owned(), serde_json::json!(url));
+    endpoint.insert("priority".to_owned(), serde_json::json!(priority));
+    if !family.is_empty() {
+        endpoint.insert("family".to_owned(), serde_json::json!(family));
+    }
+    if !k.is_empty() {
+        endpoint.insert("k".to_owned(), serde_json::json!(k));
+    }
+    Ok(OperationValue::Text(
+        serde_json::Value::Object(endpoint).to_string(),
+    ))
+}
+
+/// NCC-05 §5.4: the `family` an endpoint URL spells out — `onion`, `ipv6`
+/// or `ipv4`, and empty text when the URL does not decide it. A hostname
+/// carries no family in its name and guessing one would move the endpoint
+/// in §7's selection order, so only the URL's own spelling decides: an
+/// `onion` scheme or a `.onion` host, a bracketed literal address, or a
+/// dotted-decimal literal.
+fn ncc05_endpoint_family(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(url)] = arguments else {
+        return Err(invalid("ncc05.endpoint_family"));
+    };
+    let url = url.as_str();
+    let (scheme, rest) = match url.split_once("://") {
+        Some((scheme, rest)) => (scheme.to_ascii_lowercase(), rest),
+        None => (String::new(), url),
+    };
+    if scheme == "onion" {
+        return Ok(OperationValue::Text("onion".to_owned()));
+    }
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if host.starts_with('[') {
+        return Ok(OperationValue::Text(
+            if host.contains(']') { "ipv6" } else { "" }.to_owned(),
+        ));
+    }
+    let host = host.split(':').next().unwrap_or(host);
+    if host.to_ascii_lowercase().ends_with(".onion") {
+        return Ok(OperationValue::Text("onion".to_owned()));
+    }
+    let literal = host.split('.').count() == 4
+        && host
+            .split('.')
+            .all(|octet| !octet.is_empty() && octet.parse::<u8>().is_ok());
+    Ok(OperationValue::Text(
+        if literal { "ipv4" } else { "" }.to_owned(),
+    ))
+}
+
+/// NCC-05 §5.3: the payload a locator encrypts into its content — version,
+/// freshness window and the endpoint list §5.3 names, plus `caps` when the
+/// caller offers any. Building fails closed: a `ttl` that is not a positive
+/// window, or an endpoint element this §5.4 reader does not accept, yields
+/// empty text instead of a payload peers would have to discard (§7 event
+/// selection). A non-text element is the wrong argument shape, not data.
+fn ncc05_payload(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Integer(ttl),
+        OperationValue::Integer(updated_at),
+        OperationValue::List(endpoints),
+        OperationValue::List(caps),
+    ] = arguments
+    else {
+        return Err(invalid("ncc05.payload"));
+    };
+    if *ttl <= 0 {
+        return Ok(OperationValue::Text(String::new()));
+    }
+    let mut entries = Vec::with_capacity(endpoints.len());
+    for endpoint in endpoints {
+        let OperationValue::Text(endpoint) = endpoint else {
+            return Err(invalid("ncc05.payload"));
+        };
+        let endpoint = serde_json::from_str::<serde_json::Value>(endpoint).ok();
+        match endpoint.as_ref().and_then(ncc05_parsed_endpoint) {
+            Some(endpoint) => entries.push(serde_json::Value::Object(endpoint)),
+            None => return Ok(OperationValue::Text(String::new())),
+        }
+    }
+    let mut names = Vec::with_capacity(caps.len());
+    for capability in caps {
+        let OperationValue::Text(capability) = capability else {
+            return Err(invalid("ncc05.payload"));
+        };
+        names.push(serde_json::json!(capability));
+    }
+    let mut payload = serde_json::Map::new();
+    payload.insert("v".to_owned(), serde_json::json!(1));
+    payload.insert("ttl".to_owned(), serde_json::json!(ttl));
+    payload.insert("updated_at".to_owned(), serde_json::json!(updated_at));
+    payload.insert("endpoints".to_owned(), serde_json::Value::Array(entries));
+    if !names.is_empty() {
+        payload.insert("caps".to_owned(), serde_json::Value::Array(names));
+    }
+    Ok(OperationValue::Text(
+        serde_json::Value::Object(payload).to_string(),
+    ))
+}
+
+/// The §7 endpoint selection order as one sort key: ascending `priority`
+/// (§5.4's default of 1000 when a payload omits it), then §7's family
+/// order of onion, ipv6, ipv4, then the URL itself so equal candidates
+/// always order the same way. A payload that is not JSON, or has no
+/// `endpoints` array, offers nothing to try.
+fn ncc05_endpoint_order(payload: &str) -> Vec<(i64, u8, String)> {
+    let Ok(payload) = serde_json::from_str::<serde_json::Value>(payload) else {
+        return Vec::new();
+    };
+    let Some(entries) = payload
+        .get("endpoints")
+        .and_then(|entries| entries.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut endpoints = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let Some(endpoint) = ncc05_parsed_endpoint(entry) else {
+            continue;
+        };
+        let url = endpoint
+            .get("url")
+            .and_then(|url| url.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        let priority = endpoint
+            .get("priority")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(1000);
+        let family = endpoint.get("family").and_then(|family| family.as_str());
+        let family = match family {
+            Some("onion") => 0,
+            Some("ipv6") => 1,
+            Some("ipv4") => 2,
+            _ => 3,
+        };
+        endpoints.push((priority, family, url));
+    }
+    endpoints
+}
+
+/// NCC-05 §7 endpoint selection: the endpoint URLs a payload offers, in
+/// the order a client should try them. Entries this §5.4 reader does not
+/// accept are skipped rather than failing the call — reading a payload a
+/// peer built is never this function's failure to report.
+fn ncc05_payload_endpoints(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(payload)] = arguments else {
+        return Err(invalid("ncc05.payload_endpoints"));
+    };
+    let mut endpoints = ncc05_endpoint_order(payload);
+    endpoints.sort();
+    Ok(OperationValue::List(
+        endpoints
+            .into_iter()
+            .map(|(_, _, url)| OperationValue::Text(url))
+            .collect(),
+    ))
+}
+
+/// NCC-05 §5.3: the capability names a payload advertises, in the order
+/// it lists them. A payload with no `caps`, one that is not JSON, or an
+/// entry that is not text asserts no capability — a peer's payload never
+/// fails this call, it just says less.
+fn ncc05_payload_caps(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(payload)] = arguments else {
+        return Err(invalid("ncc05.payload_caps"));
+    };
+    let caps = serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|payload| {
+            payload
+                .get("caps")
+                .and_then(|caps| caps.as_array())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_default();
+    Ok(OperationValue::List(
+        caps.iter()
+            .filter_map(|capability| capability.as_str())
+            .map(|capability| OperationValue::Text(capability.to_owned()))
+            .collect(),
+    ))
+}
+
+/// The freshness window §7 gives a payload: `updated_at` and `ttl`, both
+/// integers and `ttl` positive, or nothing — a payload this reader cannot
+/// parse (an undecryptable one, §7 event selection) is never fresh.
+fn ncc05_payload_window(payload: &str) -> Option<(i64, i64)> {
+    let payload = serde_json::from_str::<serde_json::Value>(payload).ok()?;
+    let updated_at = payload.get("updated_at")?.as_i64()?;
+    let ttl = payload.get("ttl")?.as_i64()?;
+    (ttl > 0).then_some((updated_at, ttl))
+}
+
+/// NCC-05 §7 freshness validation: whether `now` is inside the payload's
+/// window — `now <= updated_at + ttl` — with anything unparseable
+/// answering "no" rather than letting an expired record through.
+fn ncc05_payload_is_fresh(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(payload), OperationValue::Integer(now)] = arguments else {
+        return Err(invalid("ncc05.payload_is_fresh"));
+    };
+    let fresh = ncc05_payload_window(payload)
+        .is_some_and(|(updated_at, ttl)| *now <= updated_at.saturating_add(ttl));
+    Ok(OperationValue::Bool(fresh))
+}
+
+/// NCC-05 §7 freshness validation and §4.3 expiry: whether a delivered
+/// locator still counts — it is addressed (`d`), its payload is inside
+/// its window, and its optional `expiration` tag has not passed, so the
+/// record is usable until the earliest of the two (§4.3). Each part fails
+/// closed: no `d`, an unparseable payload, and an `expiration` that is
+/// not a Unix second all answer "no".
+fn ncc05_record_is_fresh(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(tags),
+        OperationValue::Text(payload),
+        OperationValue::Integer(now),
+    ] = arguments
+    else {
+        return Err(invalid("ncc05.record_is_fresh"));
+    };
+    let name = tag_lookup(tags, "d", "ncc05.record_is_fresh")?;
+    let addressed = name.is_some_and(|name| !name.is_empty());
+    let fresh = ncc05_payload_window(payload)
+        .is_some_and(|(updated_at, ttl)| *now <= updated_at.saturating_add(ttl));
+    let unexpired = match tag_lookup(tags, "expiration", "ncc05.record_is_fresh")? {
+        None => true,
+        Some(expiration) => expiration
+            .parse::<i64>()
+            .is_ok_and(|expiration| *now < expiration),
+    };
+    Ok(OperationValue::Bool(addressed && fresh && unexpired))
 }
 
 /// NCC-07 §9 step 5: the capability identifiers a delivered manifest
@@ -9104,6 +9408,360 @@ mod tests {
                 &[
                     OperationValue::List(vec![OperationValue::Integer(1)]),
                     OperationValue::Integer(1_700_000_000)
+                ]
+            ),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn ncc05_locator_payload_builds_orders_and_judges_freshness() {
+        let mut host = FakeOperationHost::default();
+        let mut name = |tags: Vec<OperationValue>| {
+            host.call_pure_function("ncc05", "locator_name", &[OperationValue::List(tags)])
+                .expect("extraction succeeds")
+        };
+        assert_eq!(
+            name(vec![
+                OperationValue::Text("d=addr".to_owned()),
+                OperationValue::Text("expiration=1700000600".to_owned()),
+            ]),
+            OperationValue::Text("addr".to_owned())
+        );
+        assert_eq!(
+            name(vec![OperationValue::Text(
+                "expiration=1700000600".to_owned()
+            )]),
+            OperationValue::Text(String::new())
+        );
+        assert_eq!(name(Vec::new()), OperationValue::Text(String::new()));
+
+        let fingerprint = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+        let mut endpoint = |url: &str, priority: i64, family: &str, k: &str| {
+            host.call_pure_function(
+                "ncc05",
+                "endpoint_object",
+                &[
+                    OperationValue::Text(url.to_owned()),
+                    OperationValue::Integer(priority),
+                    OperationValue::Text(family.to_owned()),
+                    OperationValue::Text(k.to_owned()),
+                ],
+            )
+            .expect("serialisation succeeds")
+        };
+        let OperationValue::Text(entry) =
+            endpoint("wss://relay.example.com", 10, "ipv4", fingerprint)
+        else {
+            panic!("endpoint serialises to text");
+        };
+        let entry: Value = serde_json::from_str(&entry).expect("endpoint is JSON");
+        assert_eq!(entry["url"], "wss://relay.example.com");
+        assert_eq!(entry["priority"], 10);
+        assert_eq!(entry["family"], "ipv4");
+        assert_eq!(entry["k"], fingerprint);
+        // `family` and `k` are optional (§5.4): absent rather than empty.
+        let OperationValue::Text(bare) = endpoint("wss://relay.example.com", 10, "", "") else {
+            panic!("endpoint serialises to text");
+        };
+        let bare: Value = serde_json::from_str(&bare).expect("endpoint is JSON");
+        assert!(bare.get("family").is_none());
+        assert!(bare.get("k").is_none());
+        assert_eq!(
+            endpoint("", 10, "ipv4", ""),
+            OperationValue::Text(String::new())
+        );
+
+        let onion = endpoint("onion://vww6ybal4bd7st.onion", 5, "onion", "");
+        let ipv6 = endpoint("[2001:db8::10]:9735", 5, "ipv6", "");
+        let ipv4 = endpoint("203.0.113.42:9735", 5, "ipv4", fingerprint);
+        let low = endpoint("wss://z.example.com", 1, "ipv4", "");
+        let first = endpoint("wss://a.example.com", 5, "ipv4", "");
+        let second = endpoint("wss://b.example.com", 5, "ipv4", "");
+        let exotic = endpoint("wss://other.example.com", 5, "mystery", "");
+        let fallback = endpoint("wss://default.example.com", 1000, "", "");
+        // §5.4's family is read off the URL, never guessed: a hostname
+        // names no family at all.
+        let mut family = |url: &str| {
+            host.call_pure_function(
+                "ncc05",
+                "endpoint_family",
+                &[OperationValue::Text(url.to_owned())],
+            )
+            .expect("classification succeeds")
+        };
+        for (url, expected) in [
+            ("onion://vww6ybal4bd7st", "onion"),
+            ("[2001:db8::10]:9735", "ipv6"),
+            ("203.0.113.42:9735", "ipv4"),
+            ("wss://vww6ybal4bd7st.onion/path", "onion"),
+            ("wss://relay.example.com:443", ""),
+            ("256.0.0.1:80", ""),
+            ("", ""),
+        ] {
+            assert_eq!(
+                family(url),
+                OperationValue::Text(expected.to_owned()),
+                "family of {url}"
+            );
+        }
+        let mut payload = |ttl: i64,
+                           updated_at: i64,
+                           endpoints: Vec<OperationValue>,
+                           caps: Vec<OperationValue>| {
+            host.call_pure_function(
+                "ncc05",
+                "payload",
+                &[
+                    OperationValue::Integer(ttl),
+                    OperationValue::Integer(updated_at),
+                    OperationValue::List(endpoints),
+                    OperationValue::List(caps),
+                ],
+            )
+            .expect("building succeeds")
+        };
+        let OperationValue::Text(built) = payload(
+            600,
+            1_700_000_000,
+            vec![ipv6.clone(), onion.clone(), ipv4.clone()],
+            vec![OperationValue::Text("nostr-connect".to_owned())],
+        ) else {
+            panic!("payload serialises to text");
+        };
+        let document: Value = serde_json::from_str(&built).expect("payload is JSON");
+        assert_eq!(document["v"], 1);
+        assert_eq!(document["ttl"], 600);
+        assert_eq!(document["updated_at"], 1_700_000_000_i64);
+        assert_eq!(document["endpoints"].as_array().unwrap().len(), 3);
+        assert_eq!(document["caps"], json!(["nostr-connect"]));
+        // `caps` is optional (§5.3): an empty list is omitted, not empty.
+        let OperationValue::Text(silent) =
+            payload(600, 1_700_000_000, vec![ipv4.clone()], Vec::new())
+        else {
+            panic!("payload serialises to text");
+        };
+        let silent: Value = serde_json::from_str(&silent).expect("payload is JSON");
+        assert!(silent.get("caps").is_none());
+        // A payload with no usable window or no usable endpoint is empty
+        // text: readers would only discard it (§7 event selection).
+        assert_eq!(
+            payload(0, 1_700_000_000, vec![ipv4.clone()], Vec::new()),
+            OperationValue::Text(String::new())
+        );
+        assert_eq!(
+            payload(
+                600,
+                1_700_000_000,
+                vec![OperationValue::Text("{".to_owned())],
+                Vec::new()
+            ),
+            OperationValue::Text(String::new())
+        );
+        assert_eq!(
+            payload(
+                600,
+                1_700_000_000,
+                vec![OperationValue::Text("{\"priority\":5}".to_owned())],
+                Vec::new()
+            ),
+            OperationValue::Text(String::new())
+        );
+
+        // §7 endpoint selection: ascending priority, then onion, ipv6,
+        // ipv4 (anything else last), then the URL so ties stay stable.
+        let ordered = payload(
+            600,
+            1_700_000_000,
+            vec![
+                second.clone(),
+                exotic.clone(),
+                fallback.clone(),
+                first.clone(),
+                onion.clone(),
+                low.clone(),
+            ],
+            Vec::new(),
+        );
+        let OperationValue::Text(ordered) = ordered else {
+            panic!("payload serialises to text");
+        };
+        let OperationValue::List(order) = host
+            .call_pure_function(
+                "ncc05",
+                "payload_endpoints",
+                &[OperationValue::Text(ordered)],
+            )
+            .expect("reading succeeds")
+        else {
+            panic!("endpoints read back as a list");
+        };
+        assert_eq!(
+            order,
+            vec![
+                OperationValue::Text("wss://z.example.com".to_owned()),
+                OperationValue::Text("onion://vww6ybal4bd7st.onion".to_owned()),
+                OperationValue::Text("wss://a.example.com".to_owned()),
+                OperationValue::Text("wss://b.example.com".to_owned()),
+                OperationValue::Text("wss://other.example.com".to_owned()),
+                OperationValue::Text("wss://default.example.com".to_owned()),
+            ]
+        );
+        // A payload that is not JSON offers nothing to try.
+        assert_eq!(
+            host.call_pure_function(
+                "ncc05",
+                "payload_endpoints",
+                &[OperationValue::Text("{".to_owned())]
+            )
+            .expect("reading succeeds"),
+            OperationValue::List(Vec::new())
+        );
+
+        let mut capabilities = |payload: &str| {
+            host.call_pure_function(
+                "ncc05",
+                "payload_caps",
+                &[OperationValue::Text(payload.to_owned())],
+            )
+            .expect("reading succeeds")
+        };
+        assert_eq!(
+            capabilities(&built),
+            OperationValue::List(vec![OperationValue::Text("nostr-connect".to_owned())])
+        );
+        assert_eq!(capabilities("{}"), OperationValue::List(Vec::new()));
+        assert_eq!(
+            capabilities("{\"caps\":[\"a\",5,\"b\"]}"),
+            OperationValue::List(vec![
+                OperationValue::Text("a".to_owned()),
+                OperationValue::Text("b".to_owned()),
+            ])
+        );
+
+        let mut fresh = |payload: &str, now: i64| {
+            host.call_pure_function(
+                "ncc05",
+                "payload_is_fresh",
+                &[
+                    OperationValue::Text(payload.to_owned()),
+                    OperationValue::Integer(now),
+                ],
+            )
+            .expect("validation succeeds")
+        };
+        // §7: fresh at the far edge of its window, expired one second on.
+        assert_eq!(fresh(&built, 1_700_000_600), OperationValue::Bool(true));
+        assert_eq!(fresh(&built, 1_700_000_601), OperationValue::Bool(false));
+        assert_eq!(fresh(&built, 1_699_999_999), OperationValue::Bool(true));
+        assert_eq!(fresh("{", 1_700_000_000), OperationValue::Bool(false));
+        assert_eq!(
+            fresh(
+                "{\"v\":1,\"ttl\":0,\"updated_at\":1700000000,\"endpoints\":[]}",
+                1_700_000_000
+            ),
+            OperationValue::Bool(false)
+        );
+
+        let mut usable = |tags: &[&str], payload: &str, now: i64| {
+            let tags = tags
+                .iter()
+                .map(|tag| OperationValue::Text((*tag).to_owned()))
+                .collect();
+            host.call_pure_function(
+                "ncc05",
+                "record_is_fresh",
+                &[
+                    OperationValue::List(tags),
+                    OperationValue::Text(payload.to_owned()),
+                    OperationValue::Integer(now),
+                ],
+            )
+            .expect("validation succeeds")
+        };
+        let window = ["d=addr", "expiration=1700003600"];
+        assert_eq!(
+            usable(&window, &built, 1_700_000_600),
+            OperationValue::Bool(true)
+        );
+        // §4.3: expiry is the earliest of the tag and the window, so the
+        // record goes when its own window closes even though the tag is
+        // further out.
+        assert_eq!(
+            usable(&window, &built, 1_700_000_601),
+            OperationValue::Bool(false)
+        );
+        // ...and when the tag arrives first.
+        let early = ["d=addr", "expiration=1700000300"];
+        assert_eq!(
+            usable(&early, &built, 1_700_000_300),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            usable(&early, &built, 1_700_000_299),
+            OperationValue::Bool(true)
+        );
+        // A locator without its address, an expiry that is not a second,
+        // and a payload this reader cannot parse never read as usable.
+        assert_eq!(
+            usable(&["expiration=1700003600"], &built, 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            usable(&["d=addr", "expiration=never"], &built, 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            usable(&["d=addr"], "{", 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+
+        assert!(matches!(
+            host.call_pure_function("ncc05", "payload", &[]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function(
+                "ncc05",
+                "payload",
+                &[
+                    OperationValue::Integer(600),
+                    OperationValue::Integer(1_700_000_000),
+                    OperationValue::List(vec![OperationValue::Integer(1)]),
+                    OperationValue::List(Vec::new())
+                ]
+            ),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function("ncc05", "endpoint_object", &[OperationValue::Integer(1)]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function("ncc05", "endpoint_family", &[OperationValue::Integer(1)]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function("ncc05", "payload_endpoints", &[OperationValue::Integer(1)]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function(
+                "ncc05",
+                "payload_is_fresh",
+                &[OperationValue::Integer(1), OperationValue::Integer(1)]
+            ),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function(
+                "ncc05",
+                "record_is_fresh",
+                &[
+                    OperationValue::List(vec![OperationValue::Integer(1)]),
+                    OperationValue::Text(String::new()),
+                    OperationValue::Integer(1)
                 ]
             ),
             Err(RuntimeError::InvalidOperationArguments { .. })

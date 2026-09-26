@@ -454,9 +454,11 @@ dependencies = [
 name = "nscript-runtime"
 version = "0.1.0"
 dependencies = [
+ "nscript-modules",
  "nscript-semantics",
  "nscript-syntax",
  "rustls",
+ "semver",
  "serde_json",
  "sha2",
  "tungstenite",

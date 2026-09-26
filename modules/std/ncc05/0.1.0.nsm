@@ -1,0 +1,28 @@
+module ncc05 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nostr-community-conventions/blob/fe5981fd83becb0de53386569ede5604ae2ca7ef/ncc-05/README.md"
+use nip44 @ "^0.1"
+
+validator present(value: Text) {
+    require length(value) > 0
+}
+
+function locator_name(tags: List<Text>) -> Text
+function endpoint_object(url: Text, priority: Int, family: Text, k: Text) -> Text
+function endpoint_family(url: Text) -> Text
+function payload(ttl: Int, updated_at: Int, endpoints: List<Text>, caps: List<Text>) -> Text
+function payload_endpoints(payload: Text) -> List<Text>
+function payload_caps(payload: Text) -> List<Text>
+function payload_is_fresh(payload: Text, now: Int) -> Bool
+function record_is_fresh(tags: List<Text>, payload: Text, now: Int) -> Bool
+
+event Locator {
+    kind: 30058
+    mode: addressable
+    content: EncryptedText as text
+    tags: List<LocatorTag> = []
+    field d: Text
+    field expiration: Int
+    field private: Bool
+    require present(d)
+}

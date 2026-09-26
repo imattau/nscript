@@ -1,0 +1,14 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/fe5981fd83becb0de53386569ede5604ae2ca7ef/ncc-05/README.md",
+  "vectors": [
+    {
+      "type": "locator",
+      "kind": 30058,
+      "content": null,
+      "tags": [
+        ["d", "addr"],
+        ["expiration", "1700003600"]
+      ]
+    }
+  ]
+}

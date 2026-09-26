@@ -107,7 +107,7 @@ validation and lowering expressions are defined in the module specification.
 Nostr Community Conventions (NCCs) are shared usage patterns of existing
 primitives, published by the convention repository pinned in the specification
 README. They are implemented as ordinary modules under the `ncc` namespace
-(`ncc00`, `ncc02`, `ncc07`, ...) using the same records, validators, events,
+(`ncc00`, `ncc02`, `ncc05`, `ncc07`, ...) using the same records, validators, events,
 tags, and host operations as NIP modules.
 
 A community-convention module:
@@ -214,6 +214,55 @@ rather than performing it — and scripts hold no wall clock
 (spec/language.md §9), so `now` flows from a delivered event's `created_at`
 or another caller-held timestamp, as `examples/ncc02-service-registry.ns`
 does while publishing its own record and judging the ones it receives.
+
+### NCC-05 encrypted locators
+
+`ncc05` implements the encrypted-reachability convention: a Locator is an
+addressable event of kind 30058 addressed by its required `d` destination
+identifier, carrying the optional `expiration` tag of Unix seconds and the
+optional `private` tag, whose `content` is an encrypted payload document
+rather than public text. NCC-05 §5.1 requires that content be encrypted: a
+`publish Locator` statement lowers its `d` and `expiration` fields to wire
+tags through the ordinary publication path while `content` carries the
+NIP-44 envelope whole — `nip44.encrypt_text`'s result lowers straight into
+the event's content — so the record reaches relays as standard NIP-01
+addressable data, replaced by later revisions under the same address, while
+the payload stays unreadable to anyone without the key. §5.2's single
+exception, a locator whose destination is already public, is the only
+payload permitted in the clear.
+
+What is encrypted is the §5.3 payload document, and pure functions build it
+rather than string assembly: `ncc05.payload(ttl, updated_at, endpoints,
+caps)` renders `{v, ttl, updated_at, endpoints, caps}`, omitting `caps` when
+it is empty and refusing (with empty text) a non-positive `ttl` or an
+endpoint that does not parse as §5.4 demands;
+`ncc05.endpoint_object(url, priority, family, k)` renders one §5.4 endpoint,
+leaving `family` and `k` out when they are empty and rendering no endpoint
+at all for an empty `url`; `ncc05.endpoint_family(url)` classifies a
+destination as `onion`, `ipv6`, or `ipv4` — empty text when the URL's own
+spelling does not decide it, since guessing would move the endpoint in §7's
+selection order; and `ncc05.payload_endpoints(payload)` and
+`ncc05.payload_caps(payload)` read the arrays back out of any payload a
+reader was handed, ordered into §7's attempt order of ascending `priority`
+(§5.4's default of 1000 when a payload omits it), then `onion`, `ipv6`,
+`ipv4`, then the URL itself.
+
+Freshness follows the same time-from-the-caller rule as every other
+convention validator: `ncc05.payload_is_fresh(payload, now)` reports
+`now <= updated_at + ttl`, and `ncc05.record_is_fresh(event.tags,
+event.content, now)` requires the `d` tag, a payload that is itself fresh at
+`now`, and — where the record carries one — an `expiration` tag that has not
+passed, so a Locator is judged against the earlier of its payload window and
+its tag (§8). `ncc05.locator_name(event.tags)` extracts the destination a
+reader is addressed by.
+
+Scripts hold no wall clock (spec/language.md §9), so `now` flows from a
+delivered event's `created_at` or another caller-held timestamp, and who may
+decrypt a peer's locator stays script-visible policy (§9): a reader that
+cannot decrypt a §5.1 envelope discards it rather than using what it cannot
+read, and reading a Locator never grants permissions or satisfies capability
+checks, as `examples/ncc05-locator-bot.ns` does while publishing its own
+locator and judging the ones it receives.
 
 ### NCC-07 capability manifests
 

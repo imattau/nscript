@@ -104,7 +104,17 @@ and a body that rebinds `event` (`let event = ..`) is left alone.
 A field's declared type is what the module says, which is not always what the
 evaluator holds: a `Metadata` event declares its `content` as a record, but the
 evaluator has the raw JSON text. Access below the first level (`event.content.name`)
-is therefore not checked.
+is therefore not checked. NCC-05's `Locator` declares `content` as
+`EncryptedText`, and the delivered value is likewise the raw text of whatever
+the publisher sent — so a reader that was not the encryption's recipient sees a
+string it cannot decode and discards it as unreadable instead of parsing it.
+
+Publishing closes the other half. A `publish` whose `content` is an
+`EncryptedText` value — `nip44.encrypt_text`'s result — lowers that envelope
+into the event's content as it publishes, rather than failing for content that
+is not text. Bind the value to a `let` first: an operation call inside a
+`publish` record's fields is never collected at check time, so it does not
+enter the capability policy and the handler aborts with `CapabilityDenied`.
 
 ## Results
 

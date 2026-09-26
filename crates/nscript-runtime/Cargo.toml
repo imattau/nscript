@@ -20,5 +20,9 @@ default = ["real-hosts"]
 real-hosts = ["dep:rustls", "dep:tungstenite"]
 wasm-engine = ["dep:wasmi"]
 
+[dev-dependencies]
+nscript-modules = { path = "../nscript-modules" }
+semver.workspace = true
+
 [lints]
 workspace = true

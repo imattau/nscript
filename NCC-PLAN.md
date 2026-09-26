@@ -309,6 +309,84 @@ statements around it run only when a timer fires), and NCC-02's resolution
 step 7 — connect, then compare the observed transport key against `k` — is
 not something a script can do, so no function here claims to have done it.
 
+## Stage 4 — NCC-05 encrypted locators *(Done)*
+
+The first encrypted payload, composing `nip44` rather than adding a host
+capability of its own. Shipped the full recipe against the same `fe5981f`
+pin:
+
+- **Module** `modules/std/ncc05/0.1.0.nsm`, registered in `BUILTINS`, with
+  `use nip44 @ "^0.1"` and a `reference` pinned to the convention README. It
+  declares one addressable event — `Locator` (kind 30058: required `d`,
+  optional `expiration` and `private`, `content: EncryptedText`) — plus one
+  validator (`present`) and eight pure functions: `locator_name` extracts
+  the `d` destination; `endpoint_object`/`endpoint_family` build and
+  classify §5.4 endpoints (empty text when the URL's own spelling does not
+  decide the family, since guessing would move it in §7's order); `payload`
+  renders the §5.3 document, refusing — with empty text — a non-positive
+  `ttl` or an endpoint that does not parse, and omitting `caps` when empty;
+  `payload_endpoints`/`payload_caps` read them back, endpoints ordered into
+  §7's attempt order (ascending priority with §5.4's default of 1000, then
+  `onion`, `ipv6`, `ipv4`, then the URL); `payload_is_fresh` reports
+  `now <= updated_at + ttl`; and `record_is_fresh` requires `d`, a payload
+  that is itself fresh, and an `expiration` not yet passed, so §8's earlier
+  deadline is what a record is judged against.
+- **Publish lowering** for encrypted content: `publish` accepts an
+  `EncryptedText` value as `content` and carries the envelope whole rather
+  than failing for content that is not text (`eval.rs`, beside the text
+  case). The wire vector pins the other half — a handler-computed payload
+  reaches `inspect --json` as `content: null`, because the checked snapshot
+  holds only literal tags.
+- **Runtime dispatch** in `nscript-runtime`'s shared pure-function registry,
+  with unit tests for endpoint building and parsing, the family
+  classification table, payload construction and its failures, §7 ordering,
+  freshness boundaries (`now == updated_at + ttl` still fresh, one second
+  later is not, `ttl <= 0` never is), record judgment against both
+  deadlines, and wrong argument shapes.
+- **Fixtures**: `conformance/valid/ncc05-locator.ns` (a handler that
+  rebuilds a peer's payload, encrypts it, and publishes its own Locator,
+  then judges delivered ones) and `conformance/invalid/ncc05-locator-wrong-clock.ns`
+  (`payload_is_fresh(event.tags, ...)` → `E1001`, since the payload argument
+  must be `Text`, not the event's tags).
+- **Wire vector** `conformance/vectors/ncc05.json` (kind 30058, `d` and
+  `expiration` tags, `content: null`), asserted against the `inspect --json`
+  publication trace by a CLI test.
+- **Worked example** `examples/ncc05-locator-bot.ns`: validates a peer's
+  Service Record with `ncc02`, rebuilds the payload from it, NIP-44-encrypts
+  it to the record's owner, and publishes a Locator whose `expiration` is
+  one day from the delivered record's `created_at`; a reader discards any
+  Locator that is expired, unaddressed, or whose payload it cannot read.
+  Run end to end by a CLI test with no event, a valid and an expired record,
+  a plaintext Locator (§5.2), a stale payload, and an encrypted envelope a
+  reader cannot open — the fail-closed case the stage exists for.
+- **Matrix row** and **spec subsection** (`spec/nostr.md` → Community
+  conventions → NCC-05 encrypted locators).
+- **Infrastructure adoption**: services refresh encrypted locators on
+  address change — the example's `on ServiceRecord` handler is exactly that
+  workflow, so a deployed instance publishes a locator for every record it
+  accepts and refuses to use any it cannot read.
+
+Scope notes and follow-ups: NIP-44 stays simulated under `nscript run` (the
+simulator's envelope, not a real encryption — the guardrail that simulated
+operations are labelled as such applies unchanged). Three language gaps this
+stage ran into, none of them NCC-specific:
+
+1. **Delivered content is always `Text`.** `event.content` for a delivered
+   Locator arrives as the raw string the publisher sent, even though the
+   event declares `EncryptedText`, so a reader holding the key still cannot
+   call `nip44.decrypt_text` on it — it fails closed today. Plumb a content
+   type (for example `content_type` on `CheckedEvent`) through event
+   delivery so an `EncryptedText` field reaches the handler typed, and a
+   reader can judge what it decrypted instead of what it cannot read.
+2. **Operation calls inside a `publish` record's fields are never collected
+   at check time**, so they never enter the capability policy and the
+   handler aborts with `CapabilityDenied`. Bind the value to a `let` first
+   (both the fixture and the example do); a fix belongs with the existing
+   publish-field follow-up above.
+3. **`.ns` string literals do not unescape**, so no JSON payload can be
+   written as a literal — `ncc05.payload` builds it as a value instead,
+   which is what §5.3 wants anyway.
+
 ## Guardrails
 
 - No NCC-specific syntax: conventions arrive as typed modules with records,

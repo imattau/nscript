@@ -1,0 +1,96 @@
+// An NCC-05 locator bot: it hears a peer's NCC-02 Service Record,
+// rebuilds that endpoint into the §5.3 payload, NIP-44-encrypts it into
+// `content` (§5.1 — the endpoint never travels in a tag), and publishes
+// its own Locator (kind 30058, addressed by its `d`); and it judges the
+// locators it receives with the module's pure functions, in §7's order.
+//
+// Adoption note: this is the convention's own workflow — a publisher
+// that follows its address, readers that follow the publisher — with
+// NCC-05's freshness rules kept script-visible rather than host
+// behaviour. The payload's `updated_at` is the delivered record's own
+// `created_at`, the locator's `expiration` is a day on from it, and
+// judging either against "now" is the caller's job: `ncc05.record_is_fresh`
+// answers the earliest of the payload window (§7) and that tag (§4.3) in
+// one call. Publishing claims nothing about reachability — building the
+// payload from a service record that validated is all this bot asserts.
+//
+// The reader side is deliberately fail-closed. §7 event selection
+// discards a payload the client cannot open, and a script cannot open a
+// delivered envelope yet: `event.content` arrives as text, so
+// `nip44.decrypt_text` (which takes an EncryptedText) rejects it. A
+// locator published elsewhere is therefore judged only on what it can
+// read and, being unreadable, discarded, while a locator published in
+// the clear under §5.2's exception is judged all the way through.
+// NCC-PLAN records that gap as the next step.
+//
+// Time: scripts hold no wall clock (spec/language.md §9), so every check
+// takes `now` from the caller — here the delivered event's own
+// `created_at`.
+//
+// Try it:
+//
+//   nscript run examples/ncc05-locator-bot.ns
+//       (no --event: both readers idle, nothing published)
+//
+//   nscript run examples/ncc05-locator-bot.ns \
+//       --event '{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://relay.example.com"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1700600000"]]}'
+//       (a peer's record: the payload is rebuilt, encrypted, published)
+//
+//   nscript run examples/ncc05-locator-bot.ns \
+//       --event '{"event_type": "Locator", "kind": 30058, "created_at": 1700000000, "content": "{\"v\":1,\"ttl\":600,\"updated_at\":1700000000,\"endpoints\":[{\"url\":\"203.0.113.42:9735\",\"priority\":10,\"family\":\"ipv4\"}],\"caps\":[\"nostr-connect\"]}", "tags": [["d", "addr"], ["expiration", "1700000600"]]}'
+//       (a locator received in the clear, §5.2: judged and printed)
+use ncc02
+use ncc05
+use nip01
+use nip44
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Locator to public
+    sign Locator with account
+    read ServiceRecord from public
+    read Locator from public
+    relay public
+    encrypt Text
+    log
+}
+
+on ServiceRecord {
+    let id = ncc02.service_id(event.tags)
+    let endpoint = ncc02.endpoint(event.tags)
+    if not ncc02.record_is_valid(event.tags, event.created_at) {
+        print("service " + id + " rejected: expired or incomplete")
+    } else if len(endpoint) == 0 {
+        print("service " + id + " rejected: no endpoint to publish")
+    } else {
+        let payload = ncc05.payload(600, event.created_at, [ncc05.endpoint_object(endpoint, 10, ncc05.endpoint_family(endpoint), ncc02.transport_key(event.tags))], ["nostr-connect"])
+        if len(payload) == 0 {
+            print("service " + id + " rejected: endpoint did not build a payload")
+        } else {
+            // The recipient is the operator the record belongs to: NCC-05
+            // pins that content is encrypted (§5.1) but leaves who may
+            // read it to the publisher's policy (§9). The value is bound
+            // before the publish — an operation call inside a `publish`
+            // field is not collected at check time (NCC-PLAN's follow-up),
+            // so it would be denied as an unapproved capability.
+            let encrypted = nip44.encrypt_text(payload, event.author)?
+            let published = publish Locator {
+                d: "addr";
+                expiration: event.created_at + 86400;
+                content: encrypted;
+            } to public with account
+            print("locator for " + id + " published: " + text(published.accepted) + "/1 relays, endpoints " + text(ncc05.payload_endpoints(payload)))
+        }
+    }
+}
+
+on Locator where tags.d contains "addr" {
+    if ncc05.record_is_fresh(event.tags, event.content, event.created_at) {
+        print(ncc05.locator_name(event.tags) + " publishes " + text(ncc05.payload_endpoints(event.content)) + " for " + text(ncc05.payload_caps(event.content)))
+    } else {
+        print("locator " + ncc05.locator_name(event.tags) + " discarded: expired, unaddressed, or payload unreadable")
+    }
+}

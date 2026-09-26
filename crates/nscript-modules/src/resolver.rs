@@ -39,6 +39,10 @@ const BUILTINS: &[(&str, &str)] = &[
         include_str!("../../../modules/std/ncc02/0.1.0.nsm"),
     ),
     (
+        "ncc05",
+        include_str!("../../../modules/std/ncc05/0.1.0.nsm"),
+    ),
+    (
         "ncc07",
         include_str!("../../../modules/std/ncc07/0.1.0.nsm"),
     ),
@@ -834,7 +838,7 @@ mod tests {
     fn discovers_standard_layout() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules/std");
         let mut registry = ModuleRegistry::default();
-        assert_eq!(registry.load_root(&root).unwrap(), 86);
+        assert_eq!(registry.load_root(&root).unwrap(), 87);
     }
 
     #[test]
