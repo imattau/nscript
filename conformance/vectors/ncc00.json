@@ -1,0 +1,18 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/712385839c5cd9d254c765b1fa900d0670a468dc/ncc-00/README.md",
+  "vectors": [
+    {
+      "type": "supporting-document",
+      "kind": 30053,
+      "content": "# NScript implements NCC-00 and NCC-07\n",
+      "tags": [
+        ["d", "nscript-implements"],
+        ["for", "ncc-00"],
+        ["title", "NScript NCC implementation ledger"],
+        ["published_at", "1766012345"],
+        ["status", "published"],
+        ["type", "implementation"]
+      ]
+    }
+  ]
+}

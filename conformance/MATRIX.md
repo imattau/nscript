@@ -28,6 +28,7 @@ against deterministic host fakes.
 | Concord encrypted stream moderation | `concord-stream-moderation-bot.ns` | `concord-read-stream-ungranted.ns`, `layer3-concord-ungranted-ban.ns` | `nscript-host-crypto/tests/handler.rs`: reader → handler → real kick and independent Guestbook fold |
 | Package resolution | Resolver transitive-version tests | Missing/incompatible package tests | Resolver version-selection vector |
 | NCC-07 capability manifests | `ncc07-manifest.ns` | `ncc07-regular-mode.ns` | `vectors/ncc07.json` publication trace + pure-function runtime tests |
+| NCC-00 document lifecycle | `ncc00-ledger.ns` | `ncc00-succession-wrong-type.ns` | `vectors/ncc00.json` publication trace + pure-function runtime tests |
 
 The Draft 0.1 release-blocker cells are covered by executable vectors or
 inspectable traces. New NIPs and broader runtime features are out of scope for

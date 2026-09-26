@@ -1,0 +1,18 @@
+// error: E1001 nominal-type-mismatch
+// `event.content` is a Text; `succession_is_effective`'s second parameter
+// needs an Int — the caller supplies the clock, because lifecycle rules
+// are judged against the delivered event's timestamp rather than a host
+// wall clock. Fold-query `function`s are type-checked like operations,
+// minus the permission requirement (RFC 0002 §3).
+use ncc00
+use nip01
+
+permissions {
+    log
+}
+
+on NccSuccession {
+    if ncc00.succession_is_effective(event.tags, event.content) {
+        print("succession in force")
+    }
+}

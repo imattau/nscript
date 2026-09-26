@@ -107,6 +107,31 @@ fn ncc07_manifest_lowers_to_the_pinned_wire_vector() {
 }
 
 #[test]
+fn ncc00_ledger_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc00.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc00-ledger.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "NccSupportingDocument");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])
@@ -1120,6 +1145,70 @@ fn the_capability_bot_publishes_its_manifest_and_reads_peer_capabilities() {
         "{stdout}"
     );
     assert!(stdout.contains("ncc:05 namespace: ncc"), "{stdout}");
+}
+
+#[test]
+fn the_implementation_ledger_records_ncc_documents_it_receives() {
+    let path = repository_path("examples/ncc00-implementation-ledger.ns");
+
+    // Startup: only the reader handler is registered; the ledger publishes
+    // nothing until a convention document arrives.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("note: 1 handler(s) registered"), "{stdout}");
+    assert!(!stdout.contains("ledger record"), "{stdout}");
+
+    // A delivered NCC document NScript implements: the handler publishes
+    // the authority-free kind-30053 record that stamps it, timestamped by
+    // the delivered event's own created_at.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(&path)
+        .args([
+            "--event",
+            r##"{"event_type": "NccDocument", "kind": 30050, "id": "doc1", "created_at": 1766012345, "content": "# NCC-00", "tags": [["d", "ncc-00"], ["status", "published"]]}"##,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler NccDocument: ok"), "{stdout}");
+    assert!(
+        stdout.contains("ledger record for ncc-00 (published): true"),
+        "{stdout}"
+    );
+
+    // A convention NScript does not implement: the handler stays quiet.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(&path)
+        .args([
+            "--event",
+            r##"{"event_type": "NccDocument", "kind": 30050, "content": "# NCC-03", "tags": [["d", "ncc-03"], ["status", "published"]]}"##,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler NccDocument: ok"), "{stdout}");
+    assert!(!stdout.contains("ledger record"), "{stdout}");
 }
 
 #[test]

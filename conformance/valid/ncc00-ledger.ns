@@ -1,0 +1,43 @@
+// NCC-00: NScript's implementation ledger — it publishes its record of
+// implemented revisions as an addressable Supporting Document (kind
+// 30053, authority-free per Appendix E) and reads NCC documents and
+// steward successions with the module's lifecycle functions.
+use ncc00
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish NccSupportingDocument to public
+    sign NccSupportingDocument with account
+    read NccDocument from public
+    read NccSuccession from public
+    relay public
+    log
+}
+
+publish NccSupportingDocument {
+    d: "nscript-implements";
+    for: "ncc-00";
+    title: "NScript NCC implementation ledger";
+    published_at: 1766012345;
+    status: "published";
+    type: "implementation";
+    content: "# NScript implements NCC-00 and NCC-07\n";
+} to public with account
+
+on NccDocument where tags.status contains "published" {
+    let id = ncc00.identifier(event.tags)
+    let status = ncc00.status(event.tags)
+    if ncc00.identifier_is_valid(id) and ncc00.status_is_valid(status) {
+        print(id + " is " + status)
+    }
+}
+
+on NccSuccession {
+    if ncc00.succession_is_effective(event.tags, event.created_at) {
+        print("succession in force: " + ncc00.authority_label(true))
+    }
+}

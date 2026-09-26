@@ -3492,6 +3492,12 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("concord05", "invite_is_valid") => Some(invite_is_valid as PureFunction),
         ("concord06", "commitment_matches") => Some(commitment_matches as PureFunction),
         ("nip05", "identifier_matches") => Some(nip05_identifier_matches as PureFunction),
+        ("ncc00", "identifier") => Some(ncc00_identifier as PureFunction),
+        ("ncc00", "status") => Some(ncc00_status as PureFunction),
+        ("ncc00", "identifier_is_valid") => Some(ncc00_identifier_is_valid as PureFunction),
+        ("ncc00", "status_is_valid") => Some(ncc00_status_is_valid as PureFunction),
+        ("ncc00", "succession_is_effective") => Some(ncc00_succession_is_effective as PureFunction),
+        ("ncc00", "authority_label") => Some(ncc00_authority_label as PureFunction),
         ("ncc07", "capabilities") => Some(ncc07_capabilities as PureFunction),
         ("ncc07", "supports") => Some(ncc07_supports as PureFunction),
         ("ncc07", "capability_namespace") => Some(ncc07_capability_namespace as PureFunction),
@@ -3580,6 +3586,121 @@ fn commitment_matches(arguments: &[OperationValue]) -> Result<OperationValue, Ru
         .map_err(|_| invalid("commitment_matches"))?;
     let expected = crate::rekey::epoch_key_commitment(held_epoch, &key_bytes);
     Ok(OperationValue::Bool(expected == *commitment))
+}
+
+/// NCC-00 Appendix A: the NCC identifier an event is addressed by, read
+/// from the handler-side `name=value` rendering of its tags (docs/HANDLERS.md).
+/// The first `d` tag wins; an event with no `d` tag asserts no identifier
+/// and extracts as empty text rather than failing the handler.
+fn ncc00_identifier(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    ncc00_tag_value(arguments, "d", "ncc00.identifier")
+}
+
+/// NCC-00 Appendix A.5: the lifecycle status an event carries, extracted
+/// from its tags the same way as [`ncc00_identifier`]. An event with no
+/// `status` tag extracts as empty text, which `status_is_valid` rejects.
+fn ncc00_status(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    ncc00_tag_value(arguments, "status", "ncc00.status")
+}
+
+/// Shared by [`ncc00_identifier`] and [`ncc00_status`]: the value of the
+/// first `name=` tag, or empty text when the tag is absent. Entries that
+/// are not `name=value` pairs, or that carry a different name, are skipped.
+fn ncc00_tag_value(
+    arguments: &[OperationValue],
+    name: &str,
+    function: &'static str,
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid(function));
+    };
+    for tag in tags {
+        let OperationValue::Text(tag) = tag else {
+            return Err(invalid(function));
+        };
+        if let Some((tag_name, value)) = tag.split_once('=')
+            && tag_name == name
+        {
+            return Ok(OperationValue::Text(value.to_owned()));
+        }
+    }
+    Ok(OperationValue::Text(String::new()))
+}
+
+/// NCC-00 §Numbering: whether an identifier names an NCC — the `ncc-`
+/// prefix completed by at least one digit (the `ncc-XX` form Appendix A
+/// writes). `ncc-`, `ncc-7a` and `NCC-07` are not identifiers.
+fn ncc00_identifier_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(id)] = arguments else {
+        return Err(invalid("ncc00.identifier_is_valid"));
+    };
+    let valid = id.strip_prefix("ncc-").is_some_and(|digits| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    });
+    Ok(OperationValue::Bool(valid))
+}
+
+/// NCC-00 §A.5: whether a status is one of the four lowercase values the
+/// convention defines. Statuses outside the list — including capitalised
+/// spellings — are invalid rather than treated as free text.
+fn ncc00_status_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(status)] = arguments else {
+        return Err(invalid("ncc00.status_is_valid"));
+    };
+    let valid = matches!(
+        status.as_str(),
+        "draft" | "published" | "superseded" | "withdrawn"
+    );
+    Ok(OperationValue::Bool(valid))
+}
+
+/// NCC-00 §Succession: whether a succession record is in force at the
+/// caller's `now`. Time is never read inside the host — the script passes
+/// it in (§Guardrails). A record with no `effective_at` tag is in force
+/// from authoring; a record whose `effective_at` has arrived is in force;
+/// a malformed `effective_at` never reads as effective, so a broken
+/// handover cannot be mistaken for a timed one.
+fn ncc00_succession_is_effective(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags), OperationValue::Integer(now)] = arguments else {
+        return Err(invalid("ncc00.succession_is_effective"));
+    };
+    let mut effective_at = None;
+    for tag in tags {
+        let OperationValue::Text(tag) = tag else {
+            return Err(invalid("ncc00.succession_is_effective"));
+        };
+        if let Some((name, value)) = tag.split_once('=')
+            && name == "effective_at"
+        {
+            effective_at = Some(value);
+            break;
+        }
+    }
+    let Some(effective_at) = effective_at else {
+        return Ok(OperationValue::Bool(true));
+    };
+    let effective = effective_at
+        .parse::<i64>()
+        .is_ok_and(|scheduled| *now >= scheduled);
+    Ok(OperationValue::Bool(effective))
+}
+
+/// NCC-00 §Appendix B: the label a client shows for how authority over an
+/// identifier is held — steward-acknowledged when a recognised succession
+/// record exists, de-facto (adopted) when the community simply uses a
+/// document. The label is display guidance, never a permission.
+fn ncc00_authority_label(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Bool(steward_acknowledged)] = arguments else {
+        return Err(invalid("ncc00.authority_label"));
+    };
+    let label = if *steward_acknowledged {
+        "Steward-acknowledged"
+    } else {
+        "De-facto (adopted)"
+    };
+    Ok(OperationValue::Text(label.to_owned()))
 }
 
 /// NCC-07 §9 step 5: the capability identifiers a delivered manifest
@@ -8440,6 +8561,118 @@ mod tests {
         assert_eq!(valid(""), OperationValue::Bool(false));
         assert!(matches!(
             host.call_pure_function("ncc07", "capabilities", &[OperationValue::Integer(1)]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn ncc00_lifecycle_functions_extract_validate_and_judge_effectiveness() {
+        let mut host = FakeOperationHost::default();
+        let tags = vec![
+            OperationValue::Text("d=ncc-07".to_owned()),
+            OperationValue::Text("status=published".to_owned()),
+            OperationValue::Text("effective_at=1700000000".to_owned()),
+            OperationValue::Text("title=Capability manifests".to_owned()),
+        ];
+        let mut tag = |name: &str| {
+            host.call_pure_function("ncc00", name, &[OperationValue::List(tags.clone())])
+                .expect("extraction succeeds")
+        };
+        assert_eq!(tag("identifier"), OperationValue::Text("ncc-07".to_owned()));
+        assert_eq!(tag("status"), OperationValue::Text("published".to_owned()));
+        assert_eq!(
+            host.call_pure_function(
+                "ncc00",
+                "identifier",
+                &[OperationValue::List(vec![OperationValue::Text(
+                    "title=only".to_owned()
+                )])]
+            )
+            .expect("an absent identifier extracts as empty text"),
+            OperationValue::Text(String::new())
+        );
+        let mut identifier_valid = |id: &str| {
+            host.call_pure_function(
+                "ncc00",
+                "identifier_is_valid",
+                &[OperationValue::Text(id.to_owned())],
+            )
+            .expect("validation succeeds")
+        };
+        assert_eq!(identifier_valid("ncc-00"), OperationValue::Bool(true));
+        assert_eq!(identifier_valid("ncc-7"), OperationValue::Bool(true));
+        assert_eq!(identifier_valid("ncc-"), OperationValue::Bool(false));
+        assert_eq!(identifier_valid("ncc-07x"), OperationValue::Bool(false));
+        assert_eq!(identifier_valid("NCC-07"), OperationValue::Bool(false));
+        assert_eq!(identifier_valid(""), OperationValue::Bool(false));
+        let mut status_valid = |status: &str| {
+            host.call_pure_function(
+                "ncc00",
+                "status_is_valid",
+                &[OperationValue::Text(status.to_owned())],
+            )
+            .expect("validation succeeds")
+        };
+        for status in ["draft", "published", "superseded", "withdrawn"] {
+            assert_eq!(status_valid(status), OperationValue::Bool(true));
+        }
+        assert_eq!(status_valid("informal"), OperationValue::Bool(false));
+        assert_eq!(status_valid("Published"), OperationValue::Bool(false));
+        assert_eq!(status_valid(""), OperationValue::Bool(false));
+        let mut effective = |tags: &[&str], now: i64| {
+            let tags = tags
+                .iter()
+                .map(|tag| OperationValue::Text((*tag).to_owned()))
+                .collect();
+            host.call_pure_function(
+                "ncc00",
+                "succession_is_effective",
+                &[OperationValue::List(tags), OperationValue::Integer(now)],
+            )
+            .expect("effectiveness evaluation succeeds")
+        };
+        // No `effective_at`: in force from authoring.
+        assert_eq!(
+            effective(&["d=ncc-07"], 1_699_999_999),
+            OperationValue::Bool(true)
+        );
+        // Scheduled and arrived, scheduled and not yet arrived.
+        assert_eq!(
+            effective(&["effective_at=1700000000"], 1_700_000_000),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            effective(&["effective_at=1700000000"], 1_699_999_999),
+            OperationValue::Bool(false)
+        );
+        // A malformed schedule never reads as effective.
+        assert_eq!(
+            effective(&["effective_at=tomorrow"], 1_700_000_000),
+            OperationValue::Bool(false)
+        );
+        let mut label = |acknowledged: bool| {
+            host.call_pure_function(
+                "ncc00",
+                "authority_label",
+                &[OperationValue::Bool(acknowledged)],
+            )
+            .expect("labelling succeeds")
+        };
+        assert_eq!(
+            label(true),
+            OperationValue::Text("Steward-acknowledged".to_owned())
+        );
+        assert_eq!(
+            label(false),
+            OperationValue::Text("De-facto (adopted)".to_owned())
+        );
+        assert!(matches!(
+            host.call_pure_function("ncc00", "succession_is_effective", &[]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function("ncc00", "identifier", &[OperationValue::Integer(1)]),
             Err(RuntimeError::InvalidOperationArguments { .. })
         ));
     }

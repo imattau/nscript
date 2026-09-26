@@ -1,0 +1,61 @@
+// An NCC implementation ledger bot (NCC-00): it watches for NCC
+// documents arriving on kind 30050 and, for each revision NScript
+// actually implements, publishes a Supporting Document (kind 30053)
+// recording that fact — NScript's statement of which conventions it
+// implements, as queryable data.
+//
+// Adoption note: NScript publishes no kind-30050 convention document of
+// its own — that would claim stewardship of a convention it does not
+// author. The record ships as an authority-free supporting document
+// instead: NCC-00 Appendix E is explicit that supporting documents
+// confer no authority, so the ledger is evidence of adoption, never an
+// approval or a capability (§Appendix D: endorsements and succession
+// are signals, not votes). The `published_at` tag comes from the
+// delivered event's `created_at` because scripts have no wall-clock
+// read (spec/language.md §9): the record is timestamped by the document
+// it records, not by the host.
+//
+// Try it:
+//
+//   nscript run examples/ncc00-implementation-ledger.ns
+//       (no --event: registers the reader; the ledger publishes when a
+//       convention document arrives)
+//
+//   nscript run examples/ncc00-implementation-ledger.ns \
+//       --event '{"event_type": "NccDocument", "kind": 30050, "id": "doc1", "created_at": 1766012345, "content": "# NCC-00 ...", "tags": [["d", "ncc-00"], ["title", "Publishing NCCs on Nostr"], ["published_at", "1766012345"], ["status", "published"]]}'
+//       (matches the ledger: publishes the ncc-00 implementation record)
+use ncc00
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish NccSupportingDocument to public
+    sign NccSupportingDocument with account
+    read NccDocument from public
+    relay public
+    log
+}
+
+on NccDocument {
+    let id = ncc00.identifier(event.tags)
+    if ncc00.identifier_is_valid(id) {
+        let implemented = ["ncc-00", "ncc-07"]
+        let doc_status = ncc00.status(event.tags)
+        if implemented contains id and ncc00.status_is_valid(doc_status) {
+            let record = publish NccSupportingDocument {
+                d: "nscript-implements-" + id,
+                for: id,
+                title: "NScript implements " + id,
+                published_at: event.created_at,
+                status: "published",
+                type: "implementation",
+                for_event: "event:" + event.id,
+                content: "# " + id + " in NScript\n\nThis record states that NScript implements " + id + ".\n",
+            } to public with account
+            print("ledger record for " + id + " (" + doc_status + "): " + text(record.accepted))
+        }
+    }
+}

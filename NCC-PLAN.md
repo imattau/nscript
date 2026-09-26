@@ -186,6 +186,56 @@ is declarative (event `require` lines are not evaluated), and the module tag
 union drives lowering via `lower_tags` but unknown publish fields still pass
 unchecked — see follow-ups above.
 
+## Stage 2 — NCC-00 document lifecycle *(Done)*
+
+Shipped the full recipe against the pinned commit:
+
+- **Module** `modules/std/ncc00/0.1.0.nsm`, registered in `BUILTINS`, with
+  `reference` pinned to the convention README. It declares four addressable
+  events — `NccDocument` (kind 30050: `d`, `title`, `published_at`,
+  `status`), `NccSuccession` (kind 30051: `d`, `authoritative`),
+  `NccEndorsement` (kind 30052: `d`, `endorses`), and
+  `NccSupportingDocument` (kind 30053: its own per-author `d`, `for`,
+  `title`, `published_at`, `status`) — plus three validators
+  (`ncc_identifier`, `ncc_status`, `event_reference`) and six pure
+  functions: `identifier`/`status` extract from the handler-side
+  `name=value` tag rendering, `identifier_is_valid`/`status_is_valid` check
+  §A.5's prefix and four statuses, `succession_is_effective(tags, now)`
+  judges effectiveness against a caller-supplied clock (absent
+  `effective_at` is in force from authoring; malformed never is), and
+  `authority_label` renders Appendix B's `Steward-acknowledged` /
+  `De-facto (adopted)` labels — display guidance, never a permission.
+- **Runtime dispatch** in `nscript-runtime`'s shared pure-function registry,
+  with unit tests for extraction, validity, effectiveness, labels, and wrong
+  argument shapes.
+- **Fixtures**: `conformance/valid/ncc00-ledger.ns` (publishes an
+  implementation supporting document and reads documents and successions)
+  and `conformance/invalid/ncc00-succession-wrong-type.ns`
+  (`succession_is_effective(event.tags, event.content)` → `E1001
+  nominal-type-mismatch`: scripts hold no wall clock, so the caller must
+  pass an `Int` timestamp).
+- **Wire vector** `conformance/vectors/ncc00.json` (kind 30053, six tags in
+  construct order), asserted against the `inspect --json` publication trace
+  by a CLI test.
+- **Worked example** `examples/ncc00-implementation-ledger.ns`: watches
+  kind 30050 and, for each revision NScript implements, stamps an
+  authority-free kind-30053 record — `published_at` taken from the delivered
+  event's `created_at`. Exercised end to end by a CLI run test with no
+  event (nothing publishes), an implemented document (record published), and
+  an unimplemented one (handler stays quiet).
+- **Matrix row** and **spec subsection** (`spec/nostr.md` → Community
+  conventions → NCC-00 document lifecycle).
+- **Adoption (open decision 3 resolved)**: NScript publishes no kind-30050
+  document of its own — that would claim stewardship of a convention it does
+  not author. The implemented-revisions record ships as the example bot's
+  kind-30053 supporting documents; Appendix E makes those authority-free, so
+  the ledger is evidence of adoption, never an approval or a capability.
+
+Scope notes (same gaps as 0d): event `require` lines are declarative and
+never evaluated, and unknown publish fields still pass unchecked — the
+module's required-tag discipline rides on the shared lowering path rather
+than runtime enforcement.
+
 ## Guardrails
 
 - No NCC-specific syntax: conventions arrive as typed modules with records,
@@ -203,5 +253,3 @@ unchecked — see follow-ups above.
 1. NCC-03: fix the upstream kind model, or stay deferred (blocks stage 7 only).
 2. Stage 5: identity-reference resolution inside `deploy`, or script-level
    resolution only (decide at stage 5).
-3. Stage 2: whether NScript itself publishes its own extension documents as
-   kind-30050 events, or only exposes the module to user scripts.

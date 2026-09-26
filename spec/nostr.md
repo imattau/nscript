@@ -127,6 +127,50 @@ Extensions MUST NOT change the meaning of conforming source when a convention
 module is absent: conventions are ignorable by default, and no NIP or language
 keyword depends on them.
 
+### NCC-00 document lifecycle
+
+`ncc00` implements the document-lifecycle convention: an NCC is an
+addressable event of kind 30050 addressed by an `ncc-XX` identifier in its
+`d` tag, carrying required `title`, `published_at`, and `status` tags whose
+value is one of `draft`, `published`, `superseded`, `withdrawn` (§A.5).
+Steward handover is a kind-30051 succession record whose required
+`authoritative=event:<id>` reference names the document the current steward
+recognises; adoption is a kind-30052 endorsement whose required
+`endorses=event:<id>` reference names the document being supported;
+supporting material — guides, implementation notes, FAQs — is a kind-30053
+supporting document addressed by its own per-author `d` and pinned to an NCC
+with `for=ncc-XX`. A `publish NccDocument` (or succession, endorsement, or
+supporting-document) statement lowers its fields to wire tags through the
+ordinary publication path, so the lifecycle reaches relays as standard
+NIP-01 addressable data and each address keeps only the author's latest
+revision.
+
+Lifecycle rules are exposed as pure functions whose time comes from the
+caller: `ncc00.identifier(event.tags)` and `ncc00.status(event.tags)`
+extract the addressed identifier and status from the handler-side
+`name=value` rendering of an event's tags; `ncc00.identifier_is_valid(id)`
+checks the `ncc-` prefix against the digits that must complete it, and
+`ncc00.status_is_valid(status)` checks §A.5's four values;
+`ncc00.succession_is_effective(event.tags, now)` reports whether a
+succession record is in force at the caller's `now` — a record with no
+`effective_at` is in force from authoring, one whose `effective_at` has
+arrived is in force, and a malformed `effective_at` never reads as
+effective; `ncc00.authority_label(steward_acknowledged)` renders Appendix
+B's resolution labels, `Steward-acknowledged` and `De-facto (adopted)`.
+Scripts hold no wall clock (spec/language.md §9), so `published_at` and
+`now` flow from a delivered event's `created_at` or another caller-held
+timestamp.
+
+NScript publishes no kind-30050 convention document of its own: doing so
+would claim stewardship of a convention it does not author. Its record of
+which NCC revisions it implements ships instead as authority-free kind-30053
+supporting documents — Appendix E is explicit that supporting documents
+confer no authority — published by
+`examples/ncc00-implementation-ledger.ns`. Succession and endorsement
+records remain adoption signals: they never grant permissions or satisfy
+capability checks, and `ncc00.authority_label` is display guidance, not a
+trust decision.
+
 ### NCC-07 capability manifests
 
 `ncc07` implements the capability-manifest convention: a service advertises

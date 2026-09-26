@@ -1,0 +1,93 @@
+module ncc00 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nostr-community-conventions/blob/712385839c5cd9d254c765b1fa900d0670a468dc/ncc-00/README.md"
+
+validator ncc_identifier(value: Text) {
+    require contains(value, "ncc-")
+}
+
+validator ncc_status(value: Text) {
+    require value == "draft" or value == "published" or value == "superseded" or value == "withdrawn"
+}
+
+validator event_reference(value: Text) {
+    require contains(value, "event:")
+}
+
+function identifier(tags: List<Text>) -> Text
+function status(tags: List<Text>) -> Text
+function identifier_is_valid(id: Text) -> Bool
+function status_is_valid(status: Text) -> Bool
+function succession_is_effective(tags: List<Text>, now: Int) -> Bool
+function authority_label(steward_acknowledged: Bool) -> Text
+
+event NccDocument {
+    kind: 30050
+    mode: addressable
+    content: Text as text
+    tags: List<NccDocumentTag> = []
+    field d: Text
+    field title: Text
+    field published_at: Int
+    field status: Text
+    field summary: Text
+    field t: List<Text>
+    field lang: Text
+    field version: Text
+    field supersedes: List<Text>
+    field license: Text
+    field authors: List<Text>
+    require ncc_identifier(d)
+    require ncc_status(status)
+}
+
+event NccSuccession {
+    kind: 30051
+    mode: addressable
+    content: Text as text
+    tags: List<NccSuccessionTag> = []
+    field d: Text
+    field authoritative: Text
+    field steward: Text
+    field previous: Text
+    field reason: Text
+    field effective_at: Int
+    require ncc_identifier(d)
+    require event_reference(authoritative)
+}
+
+event NccEndorsement {
+    kind: 30052
+    mode: addressable
+    content: Text as text
+    tags: List<NccEndorsementTag> = []
+    field d: Text
+    field endorses: Text
+    field status: Text
+    field role: List<Text>
+    field implementation: Text
+    field note: Text
+    field t: List<Text>
+    require ncc_identifier(d)
+    require event_reference(endorses)
+}
+
+event NccSupportingDocument {
+    kind: 30053
+    mode: addressable
+    content: Text as text
+    tags: List<NccSupportingDocumentTag> = []
+    field d: Text
+    field for: Text
+    field title: Text
+    field published_at: Int
+    field status: Text
+    field for_event: Text
+    field type: Text
+    field lang: Text
+    field t: List<Text>
+    field authors: List<Text>
+    field license: Text
+    require ncc_identifier(for)
+    require ncc_status(status)
+}
