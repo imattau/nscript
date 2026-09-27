@@ -709,8 +709,13 @@ builds and compares; NCC-13 does not define their identity either (§3).
   `operator_for` shape) and `requirement_address`/`requirement_constraint`
   split it back, while `requires`/`optional_dependencies`/`conflicts` read
   every repeated entry, in order, for the caller to AND-fold (§13);
-  `operator_for_tag`/`operator_project`/`operator_application` build and
-  read the `ncc:13:publish` operator claim (§33); `semver_is_valid` and
+  `release_operator_for`/`release_operator_project`/
+  `release_operator_application` build and read the `ncc:13:publish`
+  operator claim (§33) — named distinctly from NCC-10's
+  `operator_for_tag`, since importing both modules in one program
+  requires every declared name across them to be unique (a real
+  collision found composing the two in `examples/service-operator-bot.ns`);
+  `semver_is_valid` and
   `semver_compare` implement SemVer §11 precedence (major/minor/patch,
   build metadata parsed and discarded, prerelease ranked below the release
   it precedes, prerelease identifiers compared per §11.4); and

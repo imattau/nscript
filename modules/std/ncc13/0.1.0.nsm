@@ -23,9 +23,9 @@ function requirement_constraint(entry: Text) -> Text
 function requires(tags: List<Text>) -> List<Text>
 function optional_dependencies(tags: List<Text>) -> List<Text>
 function conflicts(tags: List<Text>) -> List<Text>
-function operator_for_tag(project_pubkey: Text, application_id: Text) -> Text
-function operator_project(tags: List<Text>) -> Text
-function operator_application(tags: List<Text>) -> Text
+function release_operator_for(project_pubkey: Text, application_id: Text) -> Text
+function release_operator_project(tags: List<Text>) -> Text
+function release_operator_application(tags: List<Text>) -> Text
 function semver_is_valid(candidate: Text) -> Bool
 function semver_compare(a: Text, b: Text) -> Int
 function version_satisfies(scheme: Text, candidate: Text, constraint: Text) -> Bool

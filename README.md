@@ -288,6 +288,15 @@ the encrypted-stream handler shape. [`docs/CONCORD-BOT.md`](docs/CONCORD-BOT.md)
 explains what runs in simulation, what is covered by the real-host integration
 tests, and what the live CLI runner still needs.
 
+Every other convention-specific example exercises one NCC in isolation.
+[`examples/service-operator-bot.ns`](examples/service-operator-bot.ns) instead
+composes the whole service cluster this codebase has landed — NCC-02, 05, 06,
+07, 09, 10, 11 and 13 — the way a real operator would actually use them
+together: advertise capabilities and endpoints, delegate scoped operator
+authority instead of a signing key, cut a signed software release, judge
+operator-claimed status against the grant that is supposed to authorise it,
+and decide whether a peer's endpoints are worth depending on.
+
 ## Design principles
 
 1. Nostr is the environment, not a library.
