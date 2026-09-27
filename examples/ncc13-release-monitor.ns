@@ -1,0 +1,102 @@
+// An NCC-13 release monitor for a single Software Application address: it
+// publishes its own release, then judges every Release Artifact Set it
+// receives for that application against a fixed "installed" version and a
+// preferred channel, and separately selects a matching NIP-94 artefact by
+// platform. NCC-13 does not define automatic installation (§27) or a
+// dependency solver (§14) — this bot reports what a package manager would
+// decide, nothing more.
+//
+// Adoption note: package semantics stay entirely client-side (§46) — the
+// Release Artifact Set, its NIP-94 artefacts, the Software Application and
+// the Git repository it references remain ordinary NIP-51/94/34 events, so
+// this bot interprets them without any relay or protocol change.
+//
+// Try it:
+//
+//   nscript run examples/ncc13-release-monitor.ns
+//       (no --event: the bot idles, nothing published)
+//
+//   nscript run examples/ncc13-release-monitor.ns \
+//       --event '{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "cut a release", "tags": [["t", "publish-release"]]}'
+//       (publishes 1.4.2 on the stable channel)
+//
+//   nscript run examples/ncc13-release-monitor.ns \
+//       --event '{"event_type": "ReleaseArtifactSet", "kind": 30063, "created_at": 1790380000, "content": "", "tags": [["d", "com.example.app@1.5.0"], ["a", "32267:aaa:com.example.app"], ["version", "1.5.0"], ["version_scheme", "semver"], ["channel", "beta"]]}'
+//       (a beta release the bot declines: wrong channel)
+//
+//   nscript run examples/ncc13-release-monitor.ns \
+//       --event '{"event_type": "ReleaseArtifactSet", "kind": 30063, "created_at": 1790380000, "content": "", "tags": [["d", "com.example.app@1.4.2"], ["a", "32267:aaa:com.example.app"], ["version", "1.4.2"], ["version_scheme", "semver"], ["channel", "stable"]]}'
+//       (a stable release the bot accepts as an upgrade)
+//
+//   nscript run examples/ncc13-release-monitor.ns \
+//       --event '{"event_type": "ArtefactMetadata", "kind": 1063, "created_at": 1790380000, "content": "", "tags": [["url", "https://example.com/app_amd64.deb"], ["os", "linux"], ["arch", "amd64"], ["format", "deb"]]}'
+//       (an artefact the bot's linux/arm64 platform does not match)
+use ncc13
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ReleaseArtifactSet to public
+    sign ReleaseArtifactSet with account
+    read ReleaseArtifactSet from public
+    read ArtefactMetadata from public
+    relay public
+    log
+}
+
+on Note where tags.t contains "publish-release" {
+    let runtime_dependency = ncc13.requirement("32267:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:com.example.runtime", ">=2.0.0")
+    let published = publish ReleaseArtifactSet {
+        d: "com.example.app@1.4.2";
+        a: "32267:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:com.example.app";
+        version: "1.4.2";
+        version_scheme: "semver";
+        channel: "stable";
+        requires: [runtime_dependency];
+        content: "1.4.2: dependency bump to runtime 2.x";
+    } to public with account
+    print("release published: " + text(published.accepted) + "/1 relays")
+}
+
+// §26-28: discovery and upgrade selection. The monitor tracks its own
+// "installed" version and preferred channel; a release outside that
+// channel, or that the scheme does not judge greater, is reported but not
+// treated as an upgrade candidate.
+on ReleaseArtifactSet {
+    let installed_version = "1.4.1"
+    let preferred_channel = "stable"
+    let application = ncc13.application(event.tags)
+    let candidate_version = ncc13.version(event.tags)
+    let scheme = ncc13.version_scheme(event.tags)
+    let channel = ncc13.channel(event.tags)
+    let right_channel = channel == preferred_channel
+    let newer = ncc13.version_satisfies(scheme, candidate_version, ">" + installed_version)
+    if right_channel and newer {
+        print("upgrade candidate: " + application + "@" + candidate_version + " (" + channel + ", " + scheme + ")")
+    } else {
+        print("not an upgrade: " + application + "@" + candidate_version + " (" + channel + ") — right channel " + text(right_channel) + ", newer " + text(newer))
+    }
+    for entry in ncc13.requires(event.tags) {
+        print("  requires " + ncc13.requirement_address(entry) + " " + ncc13.requirement_constraint(entry))
+    }
+    for entry in ncc13.conflicts(event.tags) {
+        print("  conflicts with " + ncc13.requirement_address(entry) + " " + ncc13.requirement_constraint(entry))
+    }
+}
+
+// §19-20: artefact selection against this monitor's own platform. §19 step
+// 3 (supported package format) is local policy the script still owns —
+// artefact_matches only judges os/arch.
+on ArtefactMetadata {
+    let local_os = "linux"
+    let local_arch = "arm64"
+    let matches = ncc13.artefact_matches(ncc13.artefact_os(event.tags), ncc13.artefact_arch(event.tags), local_os, local_arch)
+    if matches {
+        print("selected artefact: " + ncc13.artefact_format(event.tags))
+    } else {
+        print("artefact " + ncc13.artefact_os(event.tags) + "/" + ncc13.artefact_arch(event.tags) + " does not match " + local_os + "/" + local_arch)
+    }
+}

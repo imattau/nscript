@@ -1,0 +1,71 @@
+module ncc13 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nostr-community-conventions/blob/186c3ad50966a2319c354ace12e0a5a2267b75d9/ncc-13/README.md"
+use ncc09 @ "^0.1"
+
+validator present(value: Text) {
+    require length(value) > 0
+}
+
+validator version_scheme_value(value: Text) {
+    require value == "semver" or value == "calver" or value == "opaque"
+}
+
+function application(tags: List<Text>) -> Text
+function version(tags: List<Text>) -> Text
+function version_scheme(tags: List<Text>) -> Text
+function channel(tags: List<Text>) -> Text
+function source(tags: List<Text>) -> Text
+function commit(tags: List<Text>) -> Text
+function requirement(address: Text, constraint: Text) -> Text
+function requirement_address(entry: Text) -> Text
+function requirement_constraint(entry: Text) -> Text
+function requires(tags: List<Text>) -> List<Text>
+function optional_dependencies(tags: List<Text>) -> List<Text>
+function conflicts(tags: List<Text>) -> List<Text>
+function operator_for_tag(project_pubkey: Text, application_id: Text) -> Text
+function operator_project(tags: List<Text>) -> Text
+function operator_application(tags: List<Text>) -> Text
+function semver_is_valid(candidate: Text) -> Bool
+function semver_compare(a: Text, b: Text) -> Int
+function version_satisfies(scheme: Text, candidate: Text, constraint: Text) -> Bool
+function artefact_os(tags: List<Text>) -> Text
+function artefact_arch(tags: List<Text>) -> Text
+function artefact_format(tags: List<Text>) -> Text
+function artefact_matches(entry_os: Text, entry_arch: Text, wanted_os: Text, wanted_arch: Text) -> Bool
+
+event ReleaseArtifactSet {
+    kind: 30063
+    mode: addressable
+    content: Text as text
+    tags: List<ReleaseArtifactSetTag> = []
+    field d: Text
+    field a: Text
+    field version: Text
+    field version_scheme: Text
+    field channel: Text
+    field source: Text
+    field commit: Text
+    field requires: List<Text>
+    field optional: List<Text>
+    field conflicts: List<Text>
+    field e: List<Text>
+    field operator_for: Text
+    require present(d)
+    require present(a)
+    require present(version)
+}
+
+event ArtefactMetadata {
+    kind: 1063
+    mode: regular
+    content: Text as text
+    tags: List<ArtefactMetadataTag> = []
+    field url: Text
+    field x: Text
+    field m: Text
+    field size: Int
+    field os: Text
+    field arch: Text
+    field format: Text
+}

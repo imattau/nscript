@@ -1,0 +1,76 @@
+// NCC-13: a software release is a NIP-51 Release Artifact Set (kind
+// 30063) profiled with package-manager metadata. NCC-13 does not define a
+// new event — it only adds version, channel, dependency, compatibility,
+// and provenance tags to an object NIP-51 already owns (§2), so this
+// module declares no events for the Software Application (32267) or Git
+// Repository (30617) it references by address, only the release itself and
+// its NIP-94 artefact's `os`/`arch`/`format` selectors.
+//
+// The `requires`/`conflicts` two-column entries are built by the module's
+// pure functions rather than typed as literal tag columns, because a `.ns`
+// string literal cannot carry the tag column separator (the same reason
+// NCC-10's `operator_for` and NCC-11's `rule`/`trust certifier` are built,
+// not written literally) — a handler computes them from a script-visible
+// dependency address and constraint.
+use ncc13
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ReleaseArtifactSet to public
+    sign ReleaseArtifactSet with account
+    read ReleaseArtifactSet from public
+    read ArtefactMetadata from public
+    relay public
+    log
+}
+
+on Note where tags.t contains "publish-release" {
+    let runtime_dependency = ncc13.requirement("32267:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:com.example.runtime", ">=2.0.0")
+    let legacy_conflict = ncc13.requirement("32267:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:com.example.legacy", "<2.0.0")
+    let published = publish ReleaseArtifactSet {
+        d: "com.example.app@1.4.2";
+        a: "32267:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:com.example.app";
+        version: "1.4.2";
+        version_scheme: "semver";
+        channel: "stable";
+        source: "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:example-app";
+        commit: "7f83b1657ff1fc53b92dc18148a1d65dfa13514f";
+        requires: [runtime_dependency];
+        conflicts: [legacy_conflict];
+        content: "Release notes for 1.4.2";
+    } to public with account
+    print("release published: " + text(published.accepted) + "/1 relays")
+}
+
+// A package manager already tracking `installed_version` for this
+// application decides whether a delivered release is an eligible upgrade:
+// the right channel, an ordered scheme, and a version this scheme judges
+// greater than what is installed.
+on ReleaseArtifactSet {
+    let installed_version = "1.4.1"
+    let scheme = ncc13.version_scheme(event.tags)
+    let channel = ncc13.channel(event.tags)
+    let is_upgrade = channel == "stable" and ncc13.version_satisfies(scheme, ncc13.version(event.tags), ">" + installed_version)
+    print("release " + ncc13.application(event.tags) + "@" + ncc13.version(event.tags) + " (" + channel + "): upgrade candidate " + text(is_upgrade))
+    for entry in ncc13.requires(event.tags) {
+        print("requires " + ncc13.requirement_address(entry) + " " + ncc13.requirement_constraint(entry))
+    }
+    for entry in ncc13.conflicts(event.tags) {
+        print("conflicts with " + ncc13.requirement_address(entry) + " " + ncc13.requirement_constraint(entry))
+    }
+}
+
+// Artefact selection: NCC-13 places `os`/`arch`/`format` on the NIP-94
+// File Metadata event the release's `e` tags reference, not on the release
+// itself (§15) — a package manager reads them off each artefact it
+// receives and picks the one that matches its own platform.
+on ArtefactMetadata {
+    let wanted_os = "linux"
+    let wanted_arch = "arm64"
+    let matches = ncc13.artefact_matches(ncc13.artefact_os(event.tags), ncc13.artefact_arch(event.tags), wanted_os, wanted_arch)
+    print("artefact " + ncc13.artefact_format(event.tags) + " matches " + wanted_os + "/" + wanted_arch + ": " + text(matches))
+}

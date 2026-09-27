@@ -14,6 +14,7 @@ pub mod stream;
 pub mod voice;
 pub mod wire;
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::{fs, path::PathBuf};
@@ -3528,6 +3529,7 @@ type PureFunction = fn(&[OperationValue]) -> Result<OperationValue, RuntimeError
 /// The fold queries RFC 0002 §3 proposes, resolved by `(module, function)`.
 /// Adding one here is the whole implementation: every [`OperationHost`]
 /// answers it identically, with no per-host wiring.
+#[allow(clippy::too_many_lines)]
 fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
     match (module, function) {
         ("concord05", "invite_is_valid") => Some(invite_is_valid as PureFunction),
@@ -3606,6 +3608,28 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("ncc11", "rule_value_is_valid") => Some(ncc11_rule_value_is_valid as PureFunction),
         ("ncc11", "rule") => Some(ncc11_rule as PureFunction),
         ("ncc11", "certifier") => Some(ncc11_certifier as PureFunction),
+        ("ncc13", "application") => Some(ncc13_application as PureFunction),
+        ("ncc13", "version") => Some(ncc13_version as PureFunction),
+        ("ncc13", "version_scheme") => Some(ncc13_version_scheme as PureFunction),
+        ("ncc13", "channel") => Some(ncc13_channel as PureFunction),
+        ("ncc13", "source") => Some(ncc13_source as PureFunction),
+        ("ncc13", "commit") => Some(ncc13_commit as PureFunction),
+        ("ncc13", "requirement") => Some(ncc13_requirement as PureFunction),
+        ("ncc13", "requirement_address") => Some(ncc13_requirement_address as PureFunction),
+        ("ncc13", "requirement_constraint") => Some(ncc13_requirement_constraint as PureFunction),
+        ("ncc13", "requires") => Some(ncc13_requires as PureFunction),
+        ("ncc13", "optional_dependencies") => Some(ncc13_optional_dependencies as PureFunction),
+        ("ncc13", "conflicts") => Some(ncc13_conflicts as PureFunction),
+        ("ncc13", "operator_for_tag") => Some(ncc13_operator_for_tag as PureFunction),
+        ("ncc13", "operator_project") => Some(ncc13_operator_project as PureFunction),
+        ("ncc13", "operator_application") => Some(ncc13_operator_application as PureFunction),
+        ("ncc13", "semver_is_valid") => Some(ncc13_semver_is_valid as PureFunction),
+        ("ncc13", "semver_compare") => Some(ncc13_semver_compare as PureFunction),
+        ("ncc13", "version_satisfies") => Some(ncc13_version_satisfies as PureFunction),
+        ("ncc13", "artefact_os") => Some(ncc13_artefact_os as PureFunction),
+        ("ncc13", "artefact_arch") => Some(ncc13_artefact_arch as PureFunction),
+        ("ncc13", "artefact_format") => Some(ncc13_artefact_format as PureFunction),
+        ("ncc13", "artefact_matches") => Some(ncc13_artefact_matches as PureFunction),
         _ => None,
     }
 }
@@ -5790,6 +5814,394 @@ fn ncc11_certifier(arguments: &[OperationValue]) -> Result<OperationValue, Runti
         "certifier",
         pubkey,
     ])))
+}
+
+// ---------------------------------------------------------------------------
+// NCC-13: software package release profile. A kind-30063 NIP-51 Release
+// Artifact Set carries package-manager metadata over objects NCC-13 does not
+// own (the NIP-51 set itself, its NIP-94 artefacts, and the Software
+// Application and Git repository it references) — §2 forbids redefining
+// what those NIPs already provide, so every function here reads or builds a
+// tag value, never a whole event. Version ordering is scoped exactly to §13:
+// five relational operators, AND-combined, no ranges — a general SemVer
+// range library is explicitly out of scope for v0.1.
+// ---------------------------------------------------------------------------
+
+/// NCC-13 §4.1: the release's single required parent Software Application
+/// address, from its `a` tag.
+fn ncc13_application(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "a", "ncc13.application")
+}
+
+/// NCC-13 §7: the version string a release represents, interpreted only
+/// under its declared `version_scheme`.
+fn ncc13_version(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "version", "ncc13.version")
+}
+
+/// NCC-13 §8.4: the declared version scheme, defaulting to `"opaque"` when
+/// absent so an unscoped version string is never assumed ordered.
+fn ncc13_version_scheme(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc13.version_scheme"));
+    };
+    let scheme = tag_lookup(tags, "version_scheme", "ncc13.version_scheme")?;
+    Ok(OperationValue::Text(
+        scheme
+            .filter(|value| !value.is_empty())
+            .unwrap_or("opaque")
+            .to_owned(),
+    ))
+}
+
+/// NCC-13 §9.1: the release channel, defaulting to `"stable"` when absent.
+fn ncc13_channel(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc13.channel"));
+    };
+    let channel = tag_lookup(tags, "channel", "ncc13.channel")?;
+    Ok(OperationValue::Text(
+        channel
+            .filter(|value| !value.is_empty())
+            .unwrap_or("stable")
+            .to_owned(),
+    ))
+}
+
+/// NCC-13 §21: the optional NIP-34 source repository address a release
+/// claims to derive from.
+fn ncc13_source(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "source", "ncc13.source")
+}
+
+/// NCC-13 §22: the optional source commit a release claims to derive from.
+fn ncc13_commit(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "commit", "ncc13.commit")
+}
+
+/// NCC-13 §10-12: build a `requires`/`optional`/`conflicts` tag's two-column
+/// value — a Software Application address and a version constraint.
+fn ncc13_requirement(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(address),
+        OperationValue::Text(constraint),
+    ] = arguments
+    else {
+        return Err(invalid("ncc13.requirement"));
+    };
+    Ok(OperationValue::Text(join_tag_columns(&[
+        address, constraint,
+    ])))
+}
+
+fn ncc13_requirement_columns(entry: &str) -> (String, String) {
+    let columns = tag_value_columns(entry);
+    (
+        columns.first().copied().unwrap_or_default().to_owned(),
+        columns.get(1).copied().unwrap_or_default().to_owned(),
+    )
+}
+
+/// NCC-13 §10-12: the Software Application address half of a requirement
+/// entry built by [`ncc13_requirement`].
+fn ncc13_requirement_address(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(entry)] = arguments else {
+        return Err(invalid("ncc13.requirement_address"));
+    };
+    Ok(OperationValue::Text(ncc13_requirement_columns(entry).0))
+}
+
+/// NCC-13 §10-12: the version-constraint half of a requirement entry built
+/// by [`ncc13_requirement`].
+fn ncc13_requirement_constraint(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(entry)] = arguments else {
+        return Err(invalid("ncc13.requirement_constraint"));
+    };
+    Ok(OperationValue::Text(ncc13_requirement_columns(entry).1))
+}
+
+/// NCC-13 §10: every `requires` entry, in order. §13's cumulative-AND rule
+/// means a repeated address is deliberate — the caller folds every matching
+/// entry's constraint together, not just the first.
+fn ncc13_requires(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc13.requires"));
+    };
+    Ok(OperationValue::List(
+        tag_values(tags, "requires", "ncc13.requires")?
+            .into_iter()
+            .map(|value| OperationValue::Text(value.to_owned()))
+            .collect(),
+    ))
+}
+
+/// NCC-13 §11: every `optional` entry, in order. Failing one of these MUST
+/// NOT, by itself, make the release uninstallable (§11) — that policy lives
+/// in the calling script, not here.
+fn ncc13_optional_dependencies(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc13.optional_dependencies"));
+    };
+    Ok(OperationValue::List(
+        tag_values(tags, "optional", "ncc13.optional_dependencies")?
+            .into_iter()
+            .map(|value| OperationValue::Text(value.to_owned()))
+            .collect(),
+    ))
+}
+
+/// NCC-13 §12: every `conflicts` entry, in order.
+fn ncc13_conflicts(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc13.conflicts"));
+    };
+    Ok(OperationValue::List(
+        tag_values(tags, "conflicts", "ncc13.conflicts")?
+            .into_iter()
+            .map(|value| OperationValue::Text(value.to_owned()))
+            .collect(),
+    ))
+}
+
+/// NCC-13 §33: build the two-column `operator_for` tag's value — the
+/// project's own pubkey and the application id it authorises release
+/// automation to publish under, mirroring NCC-10's `operator_for` shape.
+fn ncc13_operator_for_tag(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(project_pubkey),
+        OperationValue::Text(application_id),
+    ] = arguments
+    else {
+        return Err(invalid("ncc13.operator_for_tag"));
+    };
+    Ok(OperationValue::Text(join_tag_columns(&[
+        project_pubkey,
+        application_id,
+    ])))
+}
+
+fn ncc13_operator_for_columns(
+    arguments: &[OperationValue],
+    function: &'static str,
+) -> Result<(String, String), RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid(function));
+    };
+    let value = tag_lookup(tags, "operator_for", function)?.unwrap_or_default();
+    Ok(ncc13_requirement_columns(value))
+}
+
+/// NCC-13 §33: the principal a release names itself as publishing for, from
+/// its `operator_for` tag's first column.
+fn ncc13_operator_project(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    Ok(OperationValue::Text(
+        ncc13_operator_for_columns(arguments, "ncc13.operator_project")?.0,
+    ))
+}
+
+/// NCC-13 §33: the application id an `operator_for` tag names, from its
+/// second column.
+fn ncc13_operator_application(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    Ok(OperationValue::Text(
+        ncc13_operator_for_columns(arguments, "ncc13.operator_application")?.1,
+    ))
+}
+
+/// A version's `major.minor.patch` triple plus its dot-separated prerelease
+/// identifiers, ignoring build metadata (`+...`) per `SemVer` §10 — build
+/// metadata never affects precedence.
+struct Semver<'a> {
+    major: u64,
+    minor: u64,
+    patch: u64,
+    prerelease: Vec<&'a str>,
+}
+
+fn parse_semver(candidate: &str) -> Option<Semver<'_>> {
+    let core = candidate.split('+').next().unwrap_or(candidate);
+    let (numeric, prerelease) = match core.split_once('-') {
+        Some((numeric, prerelease)) => (numeric, prerelease),
+        None => (core, ""),
+    };
+    let mut parts = numeric.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let prerelease = if prerelease.is_empty() {
+        Vec::new()
+    } else {
+        prerelease.split('.').collect()
+    };
+    Some(Semver {
+        major,
+        minor,
+        patch,
+        prerelease,
+    })
+}
+
+/// `SemVer` §11's prerelease identifier comparison: numeric identifiers
+/// compare numerically and always sort lower than alphanumeric ones, equal
+/// alphanumeric identifiers compare lexically, and a prefix that runs out of
+/// identifiers first sorts lower.
+fn compare_prerelease(a: &[&str], b: &[&str]) -> Ordering {
+    for pair in a.iter().zip(b.iter()) {
+        let (left, right) = pair;
+        let ordering = match (left.parse::<u64>(), right.parse::<u64>()) {
+            (Ok(left), Ok(right)) => left.cmp(&right),
+            (Ok(_), Err(_)) => Ordering::Less,
+            (Err(_), Ok(_)) => Ordering::Greater,
+            (Err(_), Err(_)) => left.cmp(right),
+        };
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+fn compare_semver(a: &Semver<'_>, b: &Semver<'_>) -> Ordering {
+    a.major
+        .cmp(&b.major)
+        .then(a.minor.cmp(&b.minor))
+        .then(a.patch.cmp(&b.patch))
+        .then_with(
+            || match (a.prerelease.is_empty(), b.prerelease.is_empty()) {
+                (true, true) => Ordering::Equal,
+                // SemVer §11.3: a version without a prerelease has higher
+                // precedence than one with, once major.minor.patch agree.
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => compare_prerelease(&a.prerelease, &b.prerelease),
+            },
+        )
+}
+
+/// NCC-13 §7: whether a string parses as `major.minor.patch` (each a
+/// non-negative integer) with an optional dot-separated prerelease and an
+/// optional build-metadata suffix.
+fn ncc13_semver_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(candidate)] = arguments else {
+        return Err(invalid("ncc13.semver_is_valid"));
+    };
+    Ok(OperationValue::Bool(parse_semver(candidate).is_some()))
+}
+
+/// NCC-13 §8.1: `SemVer` precedence between two version strings, `-1`/`0`/`1`.
+/// Only meaningful when both parse as `SemVer`; an unparsable side is treated
+/// as lower than any version that does parse, and equal to another
+/// unparsable string only when the raw text matches, so an invalid
+/// comparison never silently reports an order between two malformed inputs.
+fn ncc13_semver_compare(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(a), OperationValue::Text(b)] = arguments else {
+        return Err(invalid("ncc13.semver_compare"));
+    };
+    let ordering = match (parse_semver(a), parse_semver(b)) {
+        (Some(left), Some(right)) => compare_semver(&left, &right),
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+        (None, None) => a.cmp(b),
+    };
+    Ok(OperationValue::Integer(match ordering {
+        Ordering::Less => -1,
+        Ordering::Equal => 0,
+        Ordering::Greater => 1,
+    }))
+}
+
+/// NCC-13 §13: whether `candidate` satisfies a single constraint (`=`, `>`,
+/// `>=`, `<`, or `<=`, followed by a version literal) under `scheme`.
+/// Non-`semver` schemes support equality only (§8.2's `CalVer` note and
+/// §8.3's opaque-equality-only rule); a relational operator against a
+/// non-semver scheme never claims satisfaction. Multiple constraints for
+/// the same dependency are `ANDed` by the caller folding this over each one
+/// (§13) — this function judges exactly one.
+fn ncc13_version_satisfies(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(scheme),
+        OperationValue::Text(candidate),
+        OperationValue::Text(constraint),
+    ] = arguments
+    else {
+        return Err(invalid("ncc13.version_satisfies"));
+    };
+    let (operator, literal) = if let Some(rest) = constraint.strip_prefix(">=") {
+        (">=", rest)
+    } else if let Some(rest) = constraint.strip_prefix("<=") {
+        ("<=", rest)
+    } else if let Some(rest) = constraint.strip_prefix('=') {
+        ("=", rest)
+    } else if let Some(rest) = constraint.strip_prefix('>') {
+        (">", rest)
+    } else if let Some(rest) = constraint.strip_prefix('<') {
+        ("<", rest)
+    } else {
+        return Ok(OperationValue::Bool(false));
+    };
+    let satisfied = if operator == "=" {
+        candidate == literal
+    } else if scheme != "semver" {
+        false
+    } else {
+        match (parse_semver(candidate), parse_semver(literal)) {
+            (Some(candidate), Some(literal)) => {
+                let ordering = compare_semver(&candidate, &literal);
+                match operator {
+                    ">" => ordering == Ordering::Greater,
+                    ">=" => ordering != Ordering::Less,
+                    "<" => ordering == Ordering::Less,
+                    "<=" => ordering != Ordering::Greater,
+                    _ => unreachable!(),
+                }
+            }
+            _ => false,
+        }
+    };
+    Ok(OperationValue::Bool(satisfied))
+}
+
+/// NCC-13 §15: an artefact's declared operating system, from its `os` tag.
+fn ncc13_artefact_os(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "os", "ncc13.artefact_os")
+}
+
+/// NCC-13 §15: an artefact's declared architecture, from its `arch` tag.
+fn ncc13_artefact_arch(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "arch", "ncc13.artefact_arch")
+}
+
+/// NCC-13 §18: an artefact's declared package format, from its `format` tag.
+fn ncc13_artefact_format(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "format", "ncc13.artefact_format")
+}
+
+/// NCC-13 §19-20: whether an artefact's declared `os`/`arch` match what the
+/// local system wants, where `"any"` on either side of the pair is the
+/// platform-independent wildcard. Package format is deliberately excluded:
+/// §19 step 3 (`supported package format`) is local policy membership, not
+/// an equality the artefact itself can decide.
+fn ncc13_artefact_matches(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(entry_os),
+        OperationValue::Text(entry_arch),
+        OperationValue::Text(wanted_os),
+        OperationValue::Text(wanted_arch),
+    ] = arguments
+    else {
+        return Err(invalid("ncc13.artefact_matches"));
+    };
+    let os_matches = entry_os == "any" || entry_os == wanted_os;
+    let arch_matches = entry_arch == "any" || entry_arch == wanted_arch;
+    Ok(OperationValue::Bool(os_matches && arch_matches))
 }
 
 fn checked_to_operation(argument: &CheckedArgument) -> OperationValue {
@@ -11382,6 +11794,224 @@ mod tests {
             value_valid("ncc:99:future", "whatever"),
             OperationValue::Bool(true),
             "unknown keys are opaque, never invalid"
+        );
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn ncc13_release_functions_extract_compare_and_match() {
+        let mut host = FakeOperationHost::default();
+        let text = |value: &str| OperationValue::Text(value.to_owned());
+        let mut call = |function: &str, arguments: &[OperationValue]| {
+            host.call_pure_function("ncc13", function, arguments)
+                .expect("pure function succeeds")
+        };
+
+        // §7/§8.4/§9.1: extraction, and the opaque/stable defaults when the
+        // optional tags are absent.
+        let runtime_requirement = call(
+            "requirement",
+            &[text("32267:pub:com.example.runtime"), text(">=2.0.0")],
+        );
+        let OperationValue::Text(runtime_requirement_text) = runtime_requirement.clone() else {
+            panic!("requirement builder returns text");
+        };
+        let tags = OperationValue::List(vec![
+            text("d=com.example.app@1.4.2"),
+            text("a=32267:pub:com.example.app"),
+            text("version=1.4.2"),
+            text(&format!("requires={runtime_requirement_text}")),
+        ]);
+        assert_eq!(
+            call("application", std::slice::from_ref(&tags)),
+            text("32267:pub:com.example.app")
+        );
+        assert_eq!(call("version", std::slice::from_ref(&tags)), text("1.4.2"));
+        assert_eq!(
+            call("version_scheme", std::slice::from_ref(&tags)),
+            text("opaque"),
+            "an absent version_scheme defaults to opaque, never an assumed order"
+        );
+        assert_eq!(
+            call("channel", std::slice::from_ref(&tags)),
+            text("stable"),
+            "an absent channel defaults to stable"
+        );
+        let scoped_tags =
+            OperationValue::List(vec![text("version_scheme=semver"), text("channel=beta")]);
+        assert_eq!(
+            call("version_scheme", std::slice::from_ref(&scoped_tags)),
+            text("semver")
+        );
+        assert_eq!(
+            call("channel", std::slice::from_ref(&scoped_tags)),
+            text("beta")
+        );
+
+        // §10-12: the two-column requirement builder and its readers.
+        assert_eq!(
+            tag_value_columns(&runtime_requirement_text),
+            vec!["32267:pub:com.example.runtime", ">=2.0.0"]
+        );
+        assert_eq!(
+            call(
+                "requirement_address",
+                std::slice::from_ref(&runtime_requirement)
+            ),
+            text("32267:pub:com.example.runtime")
+        );
+        assert_eq!(
+            call(
+                "requirement_constraint",
+                std::slice::from_ref(&runtime_requirement)
+            ),
+            text(">=2.0.0")
+        );
+        assert_eq!(
+            call("requires", std::slice::from_ref(&tags)),
+            OperationValue::List(vec![text(&runtime_requirement_text)])
+        );
+        assert_eq!(
+            call("optional_dependencies", std::slice::from_ref(&tags)),
+            OperationValue::List(vec![])
+        );
+        assert_eq!(
+            call("conflicts", std::slice::from_ref(&tags)),
+            OperationValue::List(vec![])
+        );
+
+        // §33: the two-column operator_for tag NCC-09 operator publication
+        // uses, mirroring NCC-10's shape.
+        let operator_for = call(
+            "operator_for_tag",
+            &[text("projectpubkey"), text("com.example.app")],
+        );
+        let OperationValue::Text(operator_for_text) = operator_for.clone() else {
+            panic!("operator_for_tag builder returns text");
+        };
+        let operator_tags =
+            OperationValue::List(vec![text(&format!("operator_for={operator_for_text}"))]);
+        assert_eq!(
+            call("operator_project", std::slice::from_ref(&operator_tags)),
+            text("projectpubkey")
+        );
+        assert_eq!(
+            call("operator_application", std::slice::from_ref(&operator_tags)),
+            text("com.example.app")
+        );
+
+        // §7/§8.1: SemVer validity and precedence, including the
+        // prerelease-before-release rule (§11.3) and prerelease identifier
+        // comparison (§11.4).
+        let mut valid = |candidate: &str| call("semver_is_valid", &[text(candidate)]);
+        assert_eq!(valid("1.4.2"), OperationValue::Bool(true));
+        assert_eq!(valid("1.4.2-beta.1"), OperationValue::Bool(true));
+        assert_eq!(valid("1.4.2+build.5"), OperationValue::Bool(true));
+        assert_eq!(valid("1.4"), OperationValue::Bool(false));
+        assert_eq!(valid("phoenix-7"), OperationValue::Bool(false));
+        let mut compare = |a: &str, b: &str| call("semver_compare", &[text(a), text(b)]);
+        assert_eq!(compare("1.4.2", "1.4.2"), OperationValue::Integer(0));
+        assert_eq!(compare("1.4.1", "1.4.2"), OperationValue::Integer(-1));
+        assert_eq!(compare("2.0.0", "1.4.2"), OperationValue::Integer(1));
+        assert_eq!(
+            compare("1.0.0-alpha", "1.0.0"),
+            OperationValue::Integer(-1),
+            "a prerelease has lower precedence than the release it precedes"
+        );
+        assert_eq!(
+            compare("1.0.0-alpha", "1.0.0-alpha.1"),
+            OperationValue::Integer(-1),
+            "a smaller set of prerelease identifiers sorts lower when the prefix agrees"
+        );
+        assert_eq!(
+            compare("1.0.0-alpha.1", "1.0.0-alpha.beta"),
+            OperationValue::Integer(-1),
+            "numeric prerelease identifiers always sort below alphanumeric ones"
+        );
+        assert_eq!(
+            compare("1.0.0", "not-a-version"),
+            OperationValue::Integer(1),
+            "an unparsable side never outranks a valid version"
+        );
+
+        // §13: constraint satisfaction, AND-folded by the caller over
+        // repeated tags; equality works for every scheme, relational
+        // operators only for semver.
+        let mut satisfies = |scheme: &str, candidate: &str, constraint: &str| {
+            call(
+                "version_satisfies",
+                &[text(scheme), text(candidate), text(constraint)],
+            )
+        };
+        assert_eq!(
+            satisfies("semver", "2.4.0", ">=2.0.0"),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            satisfies("semver", "2.4.0", "<3.0.0"),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            satisfies("semver", "3.0.0", "<3.0.0"),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            satisfies("semver", "2.0.0", ">=2.0.0"),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            satisfies("opaque", "phoenix-7", "=phoenix-7"),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            satisfies("opaque", "phoenix-7", ">=phoenix-6"),
+            OperationValue::Bool(false),
+            "a relational operator never claims satisfaction outside semver"
+        );
+
+        // §15/§19-20: artefact selection over os/arch, "any" as the
+        // platform-independent wildcard on either side, format excluded.
+        let artefact_tags = OperationValue::List(vec![
+            text("url=https://example.com/app.deb"),
+            text("os=linux"),
+            text("arch=arm64"),
+            text("format=deb"),
+        ]);
+        assert_eq!(
+            call("artefact_os", std::slice::from_ref(&artefact_tags)),
+            text("linux")
+        );
+        assert_eq!(
+            call("artefact_arch", std::slice::from_ref(&artefact_tags)),
+            text("arm64")
+        );
+        assert_eq!(
+            call("artefact_format", std::slice::from_ref(&artefact_tags)),
+            text("deb")
+        );
+        let mut matches = |entry_os: &str, entry_arch: &str, wanted_os: &str, wanted_arch: &str| {
+            call(
+                "artefact_matches",
+                &[
+                    text(entry_os),
+                    text(entry_arch),
+                    text(wanted_os),
+                    text(wanted_arch),
+                ],
+            )
+        };
+        assert_eq!(
+            matches("linux", "arm64", "linux", "arm64"),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            matches("linux", "amd64", "linux", "arm64"),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            matches("any", "any", "windows", "amd64"),
+            OperationValue::Bool(true),
+            "any/any is the platform-independent wildcard"
         );
     }
 

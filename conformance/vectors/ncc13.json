@@ -1,0 +1,19 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/186c3ad50966a2319c354ace12e0a5a2267b75d9/ncc-13/README.md",
+  "vectors": [
+    {
+      "type": "release-artifact-set",
+      "kind": 30063,
+      "content": "Release notes for 1.4.2",
+      "tags": [
+        ["d", "com.example.app@1.4.2"],
+        ["a", "32267:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:com.example.app"],
+        ["version", "1.4.2"],
+        ["version_scheme", "semver"],
+        ["channel", "stable"],
+        ["source", "30617:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:example-app"],
+        ["commit", "7f83b1657ff1fc53b92dc18148a1d65dfa13514f"]
+      ]
+    }
+  ]
+}

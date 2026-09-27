@@ -36,6 +36,7 @@ against deterministic host fakes.
 | NCC-09 scoped operator authority | `ncc09-authority-grant.ns` | `ncc09-grant-wrong-clock.ns` | `vectors/ncc09.json` publication trace + pure-function runtime tests and delegation bot run test |
 | NCC-10 service operational state | `ncc10-service-state.ns` | `ncc10-state-wrong-type.ns` | `vectors/ncc10.json` publication trace + pure-function runtime tests and status bot run test |
 | NCC-11 portable trust policy | `ncc11-trust-policy.ns` | `ncc11-rule-value-wrong-type.ns` | `vectors/ncc11.json` publication trace + pure-function runtime tests, policy client run test and three-column deploy e2e |
+| NCC-13 software package release profile | `ncc13-package-release.ns` | `ncc13-version-satisfies-wrong-type.ns` | `vectors/ncc13.json` publication trace + pure-function runtime tests (SemVer precedence, constraint satisfaction, artefact matching) and release/artefact handler run tests |
 
 The Draft 0.1 release-blocker cells are covered by executable vectors or
 inspectable traces. New NIPs and broader runtime features are out of scope for

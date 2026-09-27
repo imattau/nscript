@@ -26,7 +26,7 @@ lowering behaviour.
 
 Nostr Community Conventions were reviewed against
 [`imattau/nostr-community-conventions`](https://github.com/imattau/nostr-community-conventions)
-commit [`fe5981fd`](https://github.com/imattau/nostr-community-conventions/tree/adad77869d2a3be2ce8c5f673b88711e02df0bfb).
+commit [`186c3ad5`](https://github.com/imattau/nostr-community-conventions/tree/186c3ad50966a2319c354ace12e0a5a2267b75d9).
 Community-convention modules follow the same rule: a release MUST record a new
 pin when updating their lowering behaviour. The integration plan lives in
 [`../NCC-PLAN.md`](../NCC-PLAN.md).
