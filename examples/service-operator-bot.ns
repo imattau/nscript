@@ -1,0 +1,300 @@
+// A Nostr service operator: one relay identity, run end to end through
+// the NCC service cluster this codebase has landed — NCC-02, 05, 06, 07,
+// 09, 10, 11 and 13 — composed the way a real operator would actually use
+// them together, rather than each convention's own isolated demo.
+//
+// The story: "relay-ops" is a relay operated under one Nostr identity.
+// This script is that identity. On its own refresh cycle it advertises
+// what it is (NCC-07), where it is (NCC-02, NCC-05), and how it is doing
+// (NCC-10). On request it delegates two narrow, time-bounded operational
+// scopes to a CI/automation key (NCC-09) instead of handing that key its
+// signing key, and cuts a signed release of its own control-plane
+// software (NCC-13). As a reader, it judges every operator-claimed status
+// against the NCC-09 grant that is supposed to authorise it, decides
+// whether a peer relay's endpoints are worth depending on (NCC-06 over
+// NCC-02/05 facts), and reports what a portable trust policy (NCC-11)
+// says about key pinning and stale fallback — the policy data other
+// handlers would consult if a script could keep state across events.
+//
+// Deliberately out of scope: NCC-00 (document lifecycle), NCC-03
+// (elections) and NCC-08 (identity rotation) each already have their own
+// dedicated example and are orthogonal to a service's ongoing operation
+// — rotating this identity is a one-time event, not part of the refresh
+// cycle a running service performs.
+//
+// Every fact this script cannot carry between events is called out where
+// it matters: a script sees one event at a time and keeps no store
+// (NCC-PLAN), so "the grant I already saw" and "the policy I already
+// read" are script-visible constants an operator maintains, not state
+// the runtime remembers for it.
+//
+// Try it:
+//
+//   nscript run examples/service-operator-bot.ns
+//       (no --event: publishes the capability manifest, service record
+//       and operational state; the 24h refresh timer is registered)
+//
+//   nscript run examples/service-operator-bot.ns --as aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+//       --event '{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "refresh", "tags": [["t", "refresh-locator"]]}'
+//       (encrypts the locator to the configured principal and publishes it;
+//       `--as` provisions `me`, which the host would otherwise supply)
+//
+//   nscript run examples/service-operator-bot.ns \
+//       --event '{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "bring up CI", "tags": [["t", "authorise-operator"]]}'
+//       (delegates ncc:10:publish and ncc:13:publish to the automation key)
+//
+//   nscript run examples/service-operator-bot.ns \
+//       --event '{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "ship it", "tags": [["t", "cut-release"]]}'
+//       (publishes a signed release of the control-plane software)
+//
+//   nscript run examples/service-operator-bot.ns \
+//       --event '{"event_type": "ServiceState", "kind": 30065, "created_at": 1790380000, "content": "", "tags": [["d", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:relay-ops"], ["service", "relay-ops"], ["state", "maintenance"], ["operator_for", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\u001frelay-ops"]]}'
+//       (an operator-claimed state: accepted, because the automation key
+//       holds an active ncc:10:publish grant)
+//
+//   nscript run examples/service-operator-bot.ns \
+//       --event '{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1790380000, "content": "", "tags": [["d", "peer-relay"], ["u", "wss://peer.example.com"], ["k", "6666666666666666666666666666666666666666666666666666666666666666"], ["exp", "1799999999"]]}'
+//       (a peer relay's record: validated before its locator is trusted)
+//
+//   nscript run examples/service-operator-bot.ns \
+//       --event '{"event_type": "Locator", "kind": 30058, "created_at": 1790380000, "content": "{\"v\":1,\"ttl\":600,\"updated_at\":1790380000,\"endpoints\":[{\"url\":\"wss://peer.example.com\",\"priority\":10},{\"url\":\"ws://peer-onion.onion\"}]}", "tags": [["d", "peer-relay"], ["expiration", "1790470000"]]}'
+//       (the peer's locator: ranked by §E.1, judged for dependency)
+//
+//   nscript run examples/service-operator-bot.ns \
+//       --event '{"event_type": "TrustPolicy", "kind": 30067, "created_at": 1790380000, "content": "", "tags": [["d", "default"], ["rule", "ncc:02:key-pinning", "require"], ["rule", "ncc:05:stale-fallback", "deny"]]}'
+//       (a portable policy: reported for the operator to apply)
+//
+//   nscript run examples/service-operator-bot.ns \
+//       --event '{"event_type": "ReleaseArtifactSet", "kind": 30063, "created_at": 1790380000, "content": "", "tags": [["d", "com.example.relay-ops@1.4.2"], ["a", "32267:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:com.example.relay-ops"], ["version", "1.4.2"], ["version_scheme", "semver"], ["channel", "stable"]]}'
+//       (a stable release: judged as an upgrade over the tracked version)
+use ncc02
+use ncc05
+use ncc06
+use ncc07
+use ncc09
+use ncc10
+use ncc11
+use ncc13
+use nip01
+use nip44
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish CapabilityManifest to public
+    publish ServiceRecord to public
+    publish Locator to public
+    publish ServiceState to public
+    publish AuthorityGrant to public
+    publish ReleaseArtifactSet to public
+    sign CapabilityManifest with account
+    sign ServiceRecord with account
+    sign Locator with account
+    sign ServiceState with account
+    sign AuthorityGrant with account
+    sign ReleaseArtifactSet with account
+    read ServiceRecord from public
+    read Locator from public
+    read ServiceState from public
+    read AuthorityGrant from public
+    read TrustPolicy from public
+    read ReleaseArtifactSet from public
+    relay public
+    clock
+    encrypt Text
+    log
+}
+
+// This service's own identity and endpoint — script-visible data the
+// operator maintains, the same idiom every earlier NCC-02/05/07/10
+// example uses for its own constants.
+fn service_pubkey() -> Text {
+    return "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+}
+
+// Only literal-field publishes belong directly in a schedule body: a
+// computed field or an operation call there runs through the CLI's
+// top-level startup simulation rather than ordinary statement execution
+// (`run_startup_operations` in nscript-cli — module operation calls at
+// top level are collected and reported on their own, not interleaved
+// with the surrounding `let`/`print` statements the way a handler runs
+// them). The encrypted Locator refresh below needs `nip44.encrypt_text`,
+// so it moves to its own handler, exactly where NCC-05's own worked
+// example puts the identical encrypt-then-publish sequence.
+every 24h {
+    let manifest = publish CapabilityManifest {
+        d: "capabilities";
+        cap: ["ncc:02", "ncc:05", "ncc:07", "ncc:09", "ncc:10", "ncc:13"];
+        content: "";
+    } to public with account
+
+    let record = publish ServiceRecord {
+        d: "relay-ops";
+        u: "wss://relay-ops.example.com";
+        k: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+        exp: 1799999999;
+        content: "";
+    } to public with account
+
+    let state = publish ServiceState {
+        d: "relay-ops";
+        service: "relay-ops";
+        state: "operational";
+        content: "";
+    } to public with account
+
+    print("refresh: manifest " + text(manifest.accepted) + ", record " + text(record.accepted) + ", state " + text(state.accepted))
+}
+
+// NCC-05 §5.1: the endpoint travels only inside encrypted content. It is
+// encrypted to this service's own configured principal (`me`) — who may
+// resolve the locator is the publisher's own policy (§9), and here that
+// policy is "whoever the host provisions as this program's principal",
+// the same identity an NCC-09 grant would need to name before an
+// automation key could read it instead.
+on Note where tags.t contains "refresh-locator" {
+    let payload = ncc05.payload(600, event.created_at, [ncc05.endpoint_object("wss://relay-ops.example.com", 10, "clearnet", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")], [])
+    let encrypted = nip44.encrypt_text(payload, me)?
+    let locator = publish Locator {
+        d: "relay-ops";
+        expiration: event.created_at + 86400;
+        content: encrypted;
+    } to public with account
+    print("locator published: " + text(locator.accepted) + "/1 relays")
+}
+
+// NCC-09 as principal: delegate two narrow, time-bounded scopes to an
+// automation key instead of handing it this service's signing key.
+// ncc:10:publish lets it report operational state; ncc:13:publish lets
+// it cut releases — CI publishing a release is exactly §34's model.
+on Note where tags.t contains "authorise-operator" {
+    let automation = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    let published = publish AuthorityGrant {
+        d: "relay-ops:" + automation;
+        service: "relay-ops";
+        p: automation;
+        status: "active";
+        scope: ["ncc:10:publish", "ncc:13:publish"];
+        valid_from: event.created_at;
+        expiration: event.created_at + 2592000;
+        note: "CI/release automation";
+        content: "";
+    } to public with account
+    print("operator grant published: " + text(published.accepted) + "/1 relays")
+}
+
+// NCC-13 as publisher: a signed release of this service's own
+// control-plane software, declaring what it needs and what it cannot
+// run alongside.
+on Note where tags.t contains "cut-release" {
+    let runtime_dependency = ncc13.requirement("32267:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff:com.example.ops-runtime", ">=2.0.0")
+    let legacy_conflict = ncc13.requirement("32267:1111111111111111111111111111111111111111111111111111111111111111:com.example.relay-ops-legacy", "<2.0.0")
+    let published = publish ReleaseArtifactSet {
+        d: "com.example.relay-ops@1.4.2";
+        a: "32267:" + service_pubkey() + ":com.example.relay-ops";
+        version: "1.4.2";
+        version_scheme: "semver";
+        channel: "stable";
+        requires: [runtime_dependency];
+        conflicts: [legacy_conflict];
+        content: "1.4.2: NCC-09 scoped operator support";
+    } to public with account
+    print("release published: " + text(published.accepted) + "/1 relays")
+}
+
+// Reader: an operator-claimed state names its principal in a
+// two-column operator_for tag (§12), but the claim alone grants nothing
+// (§13) — it is authoritative only while the automation key holds an
+// active ncc:10:publish grant. A script holds no store, so the grant it
+// is judged against is the one this operator most recently issued,
+// carried here as data rather than recalled from the AuthorityGrant
+// handler above.
+on ServiceState {
+    if not ncc10.state_is_recognised(ncc10.state(event.tags)) {
+        print("state rejected: not one of the five NCC-10 states")
+    } else if ncc10.is_direct(event.tags) {
+        print("relay-ops reports " + ncc10.state(event.tags) + " directly")
+    } else {
+        let automation = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        let known_grant = [
+            "d=relay-ops:" + automation,
+            "service=relay-ops",
+            "p=" + automation,
+            "status=active",
+            "scope=ncc:10:publish",
+            "scope=ncc:13:publish",
+            "valid_from=1790380000",
+            "expiration=1792972000"
+        ]
+        let claimed_by = ncc10.operator_service(event.tags)
+        if ncc09.authorises(known_grant, "ncc:10:publish", event.created_at) {
+            print("operator " + claimed_by + " claims " + ncc10.state(event.tags) + " for relay-ops: accepted, ncc:10:publish is active")
+        } else {
+            print("operator " + claimed_by + " claims " + ncc10.state(event.tags) + " for relay-ops: rejected, no active ncc:10:publish grant")
+        }
+    }
+}
+
+// Reader: judge a signed release the same way a package manager
+// consuming relay-ops's own releases would — channel, then SemVer order
+// against the version this operator has deployed.
+on ReleaseArtifactSet {
+    let installed_version = "1.4.1"
+    let preferred_channel = "stable"
+    let application = ncc13.application(event.tags)
+    let candidate = ncc13.version(event.tags)
+    let scheme = ncc13.version_scheme(event.tags)
+    let channel = ncc13.channel(event.tags)
+    let upgrade = channel == preferred_channel and ncc13.version_satisfies(scheme, candidate, ">" + installed_version)
+    print("release " + application + "@" + candidate + " (" + channel + "): upgrade candidate " + text(upgrade))
+}
+
+// Reader: NCC-11 policy data. §22 — this can never weaken a mandatory
+// protocol requirement, only state a preference the operator applies
+// elsewhere; a real deployment would persist these two rules and consult
+// them in the ServiceRecord/Locator handlers below (NCC-PLAN's
+// cross-event-state gap is why this script only reports them here).
+on TrustPolicy {
+    let pinning = ncc11.rule_value(event.tags, "ncc:02:key-pinning")
+    let stale_fallback = ncc11.rule_value(event.tags, "ncc:05:stale-fallback")
+    print("policy " + ncc11.policy_id(event.tags) + ": key pinning " + pinning + ", stale fallback " + stale_fallback)
+}
+
+// Reader: a peer relay this operator might depend on. Its ServiceRecord
+// has to validate under NCC-02 before its Locator is worth reading at
+// all — accepting an invalid record's Locator would trust an endpoint
+// nobody signed for.
+on ServiceRecord where tags.d contains "peer-relay" {
+    if ncc02.record_is_valid(event.tags, event.created_at) {
+        print("peer-relay record valid: " + ncc02.endpoint(event.tags) + " over " + ncc02.endpoint_scheme(ncc02.endpoint(event.tags)))
+    } else {
+        print("peer-relay record rejected: expired or incomplete")
+    }
+}
+
+// Reader: the peer's Locator, ranked by NCC-06 §E.1 with the peer's own
+// pinned `k` in hand — this is the fact a `requires` dependency on that
+// peer's software application would be betting on being reachable.
+on Locator where tags.d contains "peer-relay" {
+    if not ncc05.record_is_fresh(event.tags, event.content, event.created_at) {
+        print("peer-relay locator discarded: stale or unreadable")
+    } else {
+        let peer_key = "6666666666666666666666666666666666666666666666666666666666666666"
+        let endpoints = ncc05.payload_endpoints(event.content)
+        let ranked = ncc06.transport_order(endpoints, peer_key)
+        print("peer-relay endpoints, ranked: " + text(ranked))
+    }
+}
+
+// Reader: an NCC-09 grant received from someone else naming this
+// operator as the delegate — the other direction from the principal
+// section above.
+on AuthorityGrant where tags.p contains service_pubkey() {
+    if ncc09.grant_is_valid(event.tags, event.created_at) {
+        print("received a grant for " + ncc09.service(event.tags) + ": scopes " + text(ncc09.scopes(event.tags)))
+    } else {
+        print("received grant rejected: revoked, expired, not yet valid, or incomplete")
+    }
+}

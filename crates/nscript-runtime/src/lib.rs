@@ -3620,9 +3620,13 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("ncc13", "requires") => Some(ncc13_requires as PureFunction),
         ("ncc13", "optional_dependencies") => Some(ncc13_optional_dependencies as PureFunction),
         ("ncc13", "conflicts") => Some(ncc13_conflicts as PureFunction),
-        ("ncc13", "operator_for_tag") => Some(ncc13_operator_for_tag as PureFunction),
-        ("ncc13", "operator_project") => Some(ncc13_operator_project as PureFunction),
-        ("ncc13", "operator_application") => Some(ncc13_operator_application as PureFunction),
+        ("ncc13", "release_operator_for") => Some(ncc13_release_operator_for as PureFunction),
+        ("ncc13", "release_operator_project") => {
+            Some(ncc13_release_operator_project as PureFunction)
+        }
+        ("ncc13", "release_operator_application") => {
+            Some(ncc13_release_operator_application as PureFunction)
+        }
         ("ncc13", "semver_is_valid") => Some(ncc13_semver_is_valid as PureFunction),
         ("ncc13", "semver_compare") => Some(ncc13_semver_compare as PureFunction),
         ("ncc13", "version_satisfies") => Some(ncc13_version_satisfies as PureFunction),
@@ -5970,13 +5974,15 @@ fn ncc13_conflicts(arguments: &[OperationValue]) -> Result<OperationValue, Runti
 /// NCC-13 §33: build the two-column `operator_for` tag's value — the
 /// project's own pubkey and the application id it authorises release
 /// automation to publish under, mirroring NCC-10's `operator_for` shape.
-fn ncc13_operator_for_tag(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+fn ncc13_release_operator_for(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
     let [
         OperationValue::Text(project_pubkey),
         OperationValue::Text(application_id),
     ] = arguments
     else {
-        return Err(invalid("ncc13.operator_for_tag"));
+        return Err(invalid("ncc13.release_operator_for"));
     };
     Ok(OperationValue::Text(join_tag_columns(&[
         project_pubkey,
@@ -5997,19 +6003,21 @@ fn ncc13_operator_for_columns(
 
 /// NCC-13 §33: the principal a release names itself as publishing for, from
 /// its `operator_for` tag's first column.
-fn ncc13_operator_project(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+fn ncc13_release_operator_project(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
     Ok(OperationValue::Text(
-        ncc13_operator_for_columns(arguments, "ncc13.operator_project")?.0,
+        ncc13_operator_for_columns(arguments, "ncc13.release_operator_project")?.0,
     ))
 }
 
 /// NCC-13 §33: the application id an `operator_for` tag names, from its
 /// second column.
-fn ncc13_operator_application(
+fn ncc13_release_operator_application(
     arguments: &[OperationValue],
 ) -> Result<OperationValue, RuntimeError> {
     Ok(OperationValue::Text(
-        ncc13_operator_for_columns(arguments, "ncc13.operator_application")?.1,
+        ncc13_operator_for_columns(arguments, "ncc13.release_operator_application")?.1,
     ))
 }
 
@@ -11881,22 +11889,30 @@ mod tests {
         );
 
         // §33: the two-column operator_for tag NCC-09 operator publication
-        // uses, mirroring NCC-10's shape.
+        // uses, mirroring NCC-10's shape (under its own name — NCC-10
+        // already exports `operator_for_tag`, and importing both modules
+        // in one program requires every declared name to be unique).
         let operator_for = call(
-            "operator_for_tag",
+            "release_operator_for",
             &[text("projectpubkey"), text("com.example.app")],
         );
         let OperationValue::Text(operator_for_text) = operator_for.clone() else {
-            panic!("operator_for_tag builder returns text");
+            panic!("release_operator_for builder returns text");
         };
         let operator_tags =
             OperationValue::List(vec![text(&format!("operator_for={operator_for_text}"))]);
         assert_eq!(
-            call("operator_project", std::slice::from_ref(&operator_tags)),
+            call(
+                "release_operator_project",
+                std::slice::from_ref(&operator_tags)
+            ),
             text("projectpubkey")
         );
         assert_eq!(
-            call("operator_application", std::slice::from_ref(&operator_tags)),
+            call(
+                "release_operator_application",
+                std::slice::from_ref(&operator_tags)
+            ),
             text("com.example.app")
         );
 

@@ -2182,6 +2182,179 @@ fn the_release_monitor_publishes_judges_upgrades_and_selects_artefacts() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
+fn the_service_operator_bot_composes_the_full_ncc_service_cluster() {
+    let path = repository_path("examples/service-operator-bot.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    // No event: the schedule's literal-field publishes (manifest, record,
+    // state) run at startup and the 24h timer registers.
+    let output = run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("timer schedule-0"), "{stdout}");
+    assert!(stdout.contains("9 handler(s) registered"), "{stdout}");
+
+    // The encrypted locator refresh needs a configured principal (`me`).
+    let refresh = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "refresh", "tags": [["t", "refresh-locator"]]}"#;
+    let output = run(&["--as", &"a".repeat(64), "--event", refresh]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("locator published: true/1 relays"),
+        "{stdout}"
+    );
+
+    // NCC-09 as principal: delegate two scopes to an automation key.
+    let authorise = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "bring up CI", "tags": [["t", "authorise-operator"]]}"#;
+    let output = run(&["--event", authorise]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("operator grant published: true/1 relays"),
+        "{stdout}"
+    );
+
+    // NCC-13 as publisher: a signed release with a dependency and a conflict.
+    let cut_release = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "ship it", "tags": [["t", "cut-release"]]}"#;
+    let output = run(&["--event", cut_release]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("release published: true/1 relays"),
+        "{stdout}"
+    );
+
+    // An operator-claimed state is accepted only while the NCC-09 grant
+    // this operator issued to itself as "known" is active for that scope.
+    let operator = "b".repeat(64);
+    let operator_claim = format!(
+        r#"{{"event_type": "ServiceState", "kind": 30065, "created_at": 1790380000, "content": "", "tags": [["d", "{operator}:relay-ops"], ["service", "relay-ops"], ["state", "maintenance"], ["operator_for", "{operator}\u001frelay-ops"]]}}"#
+    );
+    let output = run(&["--event", &operator_claim]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("accepted, ncc:10:publish is active"),
+        "{stdout}"
+    );
+
+    // A direct state is reported as the service's own claim.
+    let direct = r#"{"event_type": "ServiceState", "kind": 30065, "created_at": 1790380000, "content": "", "tags": [["d", "relay-ops"], ["service", "relay-ops"], ["state", "operational"]]}"#;
+    let output = run(&["--event", direct]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("relay-ops reports operational directly"),
+        "{stdout}"
+    );
+
+    // A peer's ServiceRecord is validated under NCC-02 before its Locator
+    // (below) is judged worth depending on.
+    let peer_record = r#"{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1790380000, "content": "", "tags": [["d", "peer-relay"], ["u", "wss://peer.example.com"], ["k", "6666666666666666666666666666666666666666666666666666666666666666"], ["exp", "1799999999"]]}"#;
+    let output = run(&["--event", peer_record]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("peer-relay record valid"), "{stdout}");
+
+    // The peer's Locator: ranked by NCC-06 over the NCC-05 payload.
+    let peer_locator = r#"{"event_type": "Locator", "kind": 30058, "created_at": 1790380000, "content": "{\"v\":1,\"ttl\":600,\"updated_at\":1790380000,\"endpoints\":[{\"url\":\"wss://peer.example.com\",\"priority\":10},{\"url\":\"ws://peer-onion.onion\"}]}", "tags": [["d", "peer-relay"], ["expiration", "1790470000"]]}"#;
+    let output = run(&["--event", peer_locator]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(
+            "peer-relay endpoints, ranked: [wss://peer.example.com, ws://peer-onion.onion]"
+        ),
+        "{stdout}"
+    );
+
+    // NCC-11 policy data is reported for the operator to apply elsewhere.
+    let policy = r#"{"event_type": "TrustPolicy", "kind": 30067, "created_at": 1790380000, "content": "", "tags": [["d", "default"], ["rule", "ncc:02:key-pinning", "require"], ["rule", "ncc:05:stale-fallback", "deny"]]}"#;
+    let output = run(&["--event", policy]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("policy default: key pinning require, stale fallback deny"),
+        "{stdout}"
+    );
+
+    // A signed release from this service is judged an upgrade candidate.
+    let release = format!(
+        r#"{{"event_type": "ReleaseArtifactSet", "kind": 30063, "created_at": 1790380000, "content": "", "tags": [["d", "com.example.relay-ops@1.4.2"], ["a", "32267:{}:com.example.relay-ops"], ["version", "1.4.2"], ["version_scheme", "semver"], ["channel", "stable"]]}}"#,
+        "c".repeat(64)
+    );
+    let output = run(&["--event", &release]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("upgrade candidate true"), "{stdout}");
+
+    // NCC-09 as reader: a grant received naming this operator as delegate.
+    let received_grant = format!(
+        r#"{{"event_type": "AuthorityGrant", "kind": 30064, "created_at": 1790380000, "content": "", "tags": [["d", "peer-relay:{c}"], ["service", "peer-relay"], ["p", "{c}"], ["status", "active"], ["scope", "ncc:10:publish"], ["expiration", "1799999999"]]}}"#,
+        c = "c".repeat(64)
+    );
+    let output = run(&["--event", &received_grant]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("received a grant for peer-relay: scopes [ncc:10:publish]"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn the_support_ticket_bot_labels_urgent_tickets_and_always_acknowledges() {
     let path = repository_path("examples/support-ticket-bot.ns");
     let run = |extra: &[&str]| {

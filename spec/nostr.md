@@ -501,9 +501,11 @@ NCC-11's rule extraction.
 value (a Software Application address and a constraint); `ncc13.requires`,
 `ncc13.optional_dependencies` and `ncc13.conflicts` read the repeated tags
 back, and `ncc13.requirement_address`/`ncc13.requirement_constraint` split
-one entry. `ncc13.operator_for_tag` builds NCC-13's own `operator_for`
+one entry. `ncc13.release_operator_for` builds NCC-13's own `operator_for`
 two-column tag for the `ncc:13:publish` NCC-09 scope (§33), mirroring
-NCC-10's `operator_for` shape rather than inventing a new one.
+NCC-10's `operator_for` shape rather than inventing a new one — named
+distinctly from `ncc10.operator_for_tag` because importing both modules in
+one program requires every declared name across them to be unique.
 `ncc13.artefact_matches` judges §19-20's `os`/`arch` selection, with `"any"`
 on either side as the platform-independent wildcard; package format
 (§19 step 3) is left to the script, since "supported" is local policy
