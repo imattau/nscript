@@ -1,0 +1,14 @@
+module ncc06 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nostr-community-conventions/blob/adad77869d2a3be2ce8c5f673b88711e02df0bfb/ncc-06/README.md"
+use ncc02 @ "^0.1"
+use ncc05 @ "^0.1"
+
+function identity_reference(url: Text) -> Bool
+function identity_key(url: Text) -> Text
+function record_outranks(a_usable: Bool, a_marker: Int, a_id: Text, b_usable: Bool, b_marker: Int, b_id: Text) -> Bool
+function locator_marker(payload: Text, created_at: Int) -> Int
+function transport_rank(url: Text, k: Text) -> Int
+function transport_order(endpoints: List<Text>, k: Text) -> List<Text>
+function k_required(url: Text) -> Bool
+function freshness_mode(has_fresh: Bool, record_age: Int, max_staleness: Int) -> Text

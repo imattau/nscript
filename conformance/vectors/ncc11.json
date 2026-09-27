@@ -1,0 +1,13 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/adad77869d2a3be2ce8c5f673b88711e02df0bfb/ncc-11/README.md",
+  "vectors": [
+    {
+      "type": "trust-policy",
+      "kind": 30067,
+      "content": "",
+      "tags": [
+        ["d", "default"]
+      ]
+    }
+  ]
+}

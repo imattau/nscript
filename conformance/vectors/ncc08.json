@@ -1,0 +1,19 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/adad77869d2a3be2ce8c5f673b88711e02df0bfb/ncc-08/README.md",
+  "vectors": [
+    {
+      "type": "handover-proposal",
+      "kind": 1070,
+      "content": "",
+      "tags": [
+        ["role", "predecessor"],
+        ["handover", "8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f"],
+        ["service", "relay"],
+        ["p", "2222222222222222222222222222222222222222222222222222222222222222"],
+        ["effective", "1790466400"],
+        ["expires", "1790552800"],
+        ["reason", "planned service key rotation"]
+      ]
+    }
+  ]
+}

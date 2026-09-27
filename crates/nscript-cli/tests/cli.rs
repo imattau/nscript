@@ -188,6 +188,161 @@ fn ncc05_locator_lowers_to_the_pinned_wire_vector() {
 }
 
 #[test]
+fn ncc06_service_profile_lowers_to_the_pinned_wire_vectors() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc06.json")).unwrap(),
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path(
+            "conformance/valid/ncc06-service-profile.ns",
+        ))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    // NCC-06 declares no event kinds of its own: the profile's sidecar
+    // lowers the NCC-02 Service Record at startup and the NCC-05 Locator
+    // from its relocate handler, both pinned here in declaration order.
+    let record = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(record["op"], "create_event");
+    assert_eq!(record["event"], "ServiceRecord");
+    assert_eq!(record["kind"], vector["vectors"][0]["kind"]);
+    assert_eq!(record["tags"], vector["vectors"][0]["tags"]);
+    assert_eq!(record["content"], vector["vectors"][0]["content"]);
+    let locator = &value["publication_trace"][1]["steps"][0];
+    assert_eq!(locator["op"], "create_event");
+    assert_eq!(locator["event"], "Locator");
+    assert_eq!(locator["kind"], vector["vectors"][1]["kind"]);
+    assert_eq!(locator["tags"], vector["vectors"][1]["tags"]);
+    // NCC-05 §5.1 (carried by the profile): the payload is encrypted as
+    // the handler publishes, so the checked snapshot carries no literal
+    // content for the locator.
+    assert_eq!(locator["content"], vector["vectors"][1]["content"]);
+    assert!(locator["content"].is_null());
+}
+
+#[test]
+fn ncc08_handover_proposal_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc08.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc08-handover.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "Handover");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+    // NCC-08 lowers the predecessor proposal as its own event; the
+    // successor's acceptance is the other half, published by the other
+    // identity, so this fixture carries only the proposal.
+    assert_eq!(create["content"], expected["content"]);
+    assert_eq!(vector["vectors"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn ncc09_authority_grant_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc09.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path(
+            "conformance/valid/ncc09-authority-grant.ns",
+        ))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "AuthorityGrant");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+    assert_eq!(create["content"], expected["content"]);
+}
+
+#[test]
+fn ncc10_service_state_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc10.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc10-service-state.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "ServiceState");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+    assert_eq!(create["content"], expected["content"]);
+}
+
+#[test]
+fn ncc11_trust_policy_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc11.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc11-trust-policy.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "TrustPolicy");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+    // The rules and certifiers are computed by module builders at publish
+    // time (a `.ns` literal cannot carry the tag column separator), so the
+    // checked snapshot holds only the literal `d`. The three-column
+    // lowering those builders produce is asserted by the deploy test below
+    // and by the runtime's own tag round-trip test.
+    assert_eq!(create["content"], expected["content"]);
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])
@@ -1452,6 +1607,412 @@ fn the_locator_bot_encrypts_the_payload_it_publishes_and_judges_what_it_receives
 }
 
 #[test]
+fn the_service_monitor_judges_records_and_locators_under_ncc06() {
+    let path = repository_path("examples/ncc06-service-monitor.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    // No event: both readers idle, nothing judged.
+    let output = run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("note: 2 handler(s) registered"), "{stdout}");
+    assert!(!stdout.contains("service relay"), "{stdout}");
+
+    // A fresh record with a concrete endpoint: §E.1 ranks it in the top
+    // tier (secure, pinned k in hand) and §E.2 states the obligation
+    // that follows from presenting key material.
+    let concrete = r#"{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://relay.example.com"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1700600000"]]}"#;
+    let output = run(&["--event", concrete]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler ServiceRecord: ok"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "service relay serves wss://relay.example.com at §E.1 rank 0 with pinned k 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08; §E.2 requires the connection to match it"
+        ),
+        "{stdout}"
+    );
+
+    // An identity reference names a key, not a socket: §Scope decodes
+    // which key and never dereferences the reference itself.
+    let reference = r#"{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1700600000"]]}"#;
+    let output = run(&["--event", reference]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(
+            "service relay names identity 7e7e9c42a91bfef19fa929e5fda1b72e0ebc1a4c1141673e2794234d86addf4e; resolve its records over the publication relays, never the reference"
+        ),
+        "{stdout}"
+    );
+
+    // An expired record is rejected before it is tiered anywhere.
+    let expired = r#"{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://relay.example.com"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1699999999"]]}"#;
+    let output = run(&["--event", expired]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("service relay rejected: expired or incomplete"),
+        "{stdout}"
+    );
+
+    // A fresh locator: §E.1 regroups its endpoints — secure with k,
+    // then onion, then insecure — keeping the payload's order within
+    // each tier.
+    let fresh = r#"{"event_type": "Locator", "kind": 30058, "created_at": 1700000000, "content": "{\"v\":1,\"ttl\":600,\"updated_at\":1700000000,\"endpoints\":[{\"url\":\"ws://a.example.com\"},{\"url\":\"wss://b.example.com\"},{\"url\":\"onion://vww6ybal4bd7st.onion\"}]}", "tags": [["d", "addr"], ["expiration", "1700000600"]]}"#;
+    let output = run(&["--event", fresh]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler Locator: ok"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "locator addr is fresh (§D.3): [wss://b.example.com, onion://vww6ybal4bd7st.onion, ws://a.example.com]"
+        ),
+        "{stdout}"
+    );
+
+    // An expiration tag that has passed over a recently built payload:
+    // §D.3's bounded staleness surfaces as "stale" — printed for the
+    // operator, not acted on.
+    let stale = r#"{"event_type": "Locator", "kind": 30058, "created_at": 1700000000, "content": "{\"v\":1,\"ttl\":600,\"updated_at\":1700000000,\"endpoints\":[{\"url\":\"wss://old.example.com\"}]}", "tags": [["d", "addr"], ["expiration", "1699999999"]]}"#;
+    let output = run(&["--event", stale]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("locator addr is stale (§D.3): [wss://old.example.com]"),
+        "{stdout}"
+    );
+
+    // A payload too old to fall back on (§D.2, past the staleness
+    // bound): discarded rather than used.
+    let failed = r#"{"event_type": "Locator", "kind": 30058, "created_at": 1700000000, "content": "{\"v\":1,\"ttl\":600,\"updated_at\":1699990000,\"endpoints\":[{\"url\":\"wss://old.example.com\"}]}", "tags": [["d", "addr"], ["expiration", "1700000600"]]}"#;
+    let output = run(&["--event", failed]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("locator addr discarded: freshness failed (§D.2)"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_rotation_bot_acknowledges_proposals_and_reports_acceptances() {
+    let path = repository_path("examples/ncc08-rotation-bot.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let handover = "8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f";
+
+    // No event: the watcher idles, nothing is published.
+    let output = run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("note: 2 handler(s) registered"), "{stdout}");
+    assert!(!stdout.contains("accepted "), "{stdout}");
+
+    // A predecessor proposal for the service this bot takes over: the
+    // successor signs the matching acceptance, which is published.
+    let proposal = format!(
+        r#"{{"event_type": "Handover", "kind": 1070, "created_at": 1790380000, "content": "", "tags": [["role", "predecessor"], ["handover", "{handover}"], ["service", "relay"], ["p", "2222222222222222222222222222222222222222222222222222222222222222"], ["effective", "1790466400"], ["expires", "1790552800"]]}}"#
+    );
+    let output = run(&["--event", &proposal]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler Handover: ok"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("accepted {handover} for relay: true/1 relays")),
+        "{stdout}"
+    );
+
+    // A proposal for a service this bot does not take over is ignored.
+    let other_service = format!(
+        r#"{{"event_type": "Handover", "kind": 1070, "created_at": 1790380000, "content": "", "tags": [["role", "predecessor"], ["handover", "{handover}"], ["service", "media"], ["p", "2222222222222222222222222222222222222222222222222222222222222222"]]}}"#
+    );
+    let output = run(&["--event", &other_service]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("proposal ignored: this bot takes over `relay` only, not media"),
+        "{stdout}"
+    );
+
+    // An incomplete proposal is rejected rather than acknowledged.
+    let incomplete = format!(
+        r#"{{"event_type": "Handover", "kind": 1070, "created_at": 1790380000, "content": "", "tags": [["role", "predecessor"], ["handover", "{handover}"], ["service", "relay"]]}}"#
+    );
+    let output = run(&["--event", &incomplete]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("proposal rejected: incomplete or backdated"),
+        "{stdout}"
+    );
+
+    // A peer's acceptance is judged on its shape; one missing its
+    // proposal reference is incomplete, not a completed handover.
+    let acceptance = format!(
+        r#"{{"event_type": "Handover", "kind": 1070, "created_at": 1790383600, "content": "", "tags": [["role", "successor"], ["handover", "{handover}"], ["service", "relay"], ["p", "1111111111111111111111111111111111111111111111111111111111111111"], ["e", "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"]]}}"#
+    );
+    let output = run(&["--event", &acceptance]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&format!(
+            "acceptance {handover} acknowledges 1111111111111111111111111111111111111111111111111111111111111111 for relay"
+        )),
+        "{stdout}"
+    );
+    let broken = format!(
+        r#"{{"event_type": "Handover", "kind": 1070, "created_at": 1790383600, "content": "", "tags": [["role", "successor"], ["handover", "{handover}"], ["service", "relay"], ["p", "1111111111111111111111111111111111111111111111111111111111111111"]]}}"#
+    );
+    let output = run(&["--event", &broken]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("acceptance rejected: incomplete"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_delegation_bot_publishes_a_scoped_grant_and_judges_grants() {
+    let path = repository_path("examples/ncc09-operator-grant-bot.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let operator = "a".repeat(64);
+    let output = run(&[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("publication 0: 1/1 relays accepted"),
+        "{stdout}"
+    );
+
+    let active = format!(
+        r#"{{"event_type": "AuthorityGrant", "kind": 30064, "created_at": 1791000000, "content": "", "tags": [["d", "relay:{operator}"], ["service", "relay"], ["p", "{operator}"], ["status", "active"], ["scope", "ncc:10:publish"], ["valid_from", "1790380000"], ["expiration", "1792972000"]]}}"#
+    );
+    let output = run(&["--event", &active]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler AuthorityGrant: ok"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "grant {operator} for relay is ncc scope ncc:10:publish, delegated: true"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("all scopes: [ncc:10:publish] (spelling valid: true)"),
+        "{stdout}"
+    );
+
+    // An expired grant stays validly shaped but grants nothing.
+    let expired = format!(
+        r#"{{"event_type": "AuthorityGrant", "kind": 30064, "created_at": 1795000000, "content": "", "tags": [["d", "relay:{operator}"], ["service", "relay"], ["p", "{operator}"], ["status", "active"], ["scope", "ncc:10:publish"], ["expiration", "1792972000"]]}}"#
+    );
+    let output = run(&["--event", &expired]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("grant rejected: revoked, expired, not yet valid, or incomplete"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_status_bot_publishes_operator_state_and_reports_states() {
+    let path = repository_path("examples/ncc10-status-bot.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let service_pubkey = "c".repeat(64);
+    let maintain = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "please maintain", "tags": [["t", "maintain"]]}"#;
+    let output = run(&["--event", maintain]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler Note: ok"), "{stdout}");
+    assert!(
+        stdout.contains("operator state published: true/1 relays"),
+        "{stdout}"
+    );
+
+    // A direct service state is reported as such.
+    let direct = r#"{"event_type": "ServiceState", "kind": 30065, "created_at": 1791000000, "content": "", "tags": [["d", "relay"], ["service", "relay"], ["state", "operational"]]}"#;
+    let output = run(&["--event", direct]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("service relay reports operational directly"),
+        "{stdout}"
+    );
+
+    // An operator state names its principal, still only a claim.
+    let operator = format!(
+        r#"{{"event_type": "ServiceState", "kind": 30065, "created_at": 1791000000, "content": "", "tags": [["d", "{service_pubkey}:relay"], ["service", "relay"], ["state", "maintenance"], ["operator_for", "{service_pubkey}", "relay"]]}}"#
+    );
+    let output = run(&["--event", &operator]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&format!(
+            "operator claims maintenance for {service_pubkey} (relay)"
+        )),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_policy_client_publishes_and_evaluates_trust_policy() {
+    let path = repository_path("examples/ncc11-policy-client.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let publish = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "publish", "tags": [["t", "publish-policy"]]}"#;
+    let output = run(&["--event", publish]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler Note: ok"), "{stdout}");
+    assert!(
+        stdout.contains("policy published: true/1 relays"),
+        "{stdout}"
+    );
+
+    // A policy received with three-column rule tags is read back and its
+    // values checked against the rules NCC-11 defines.
+    let policy = r#"{"event_type": "TrustPolicy", "kind": 30067, "created_at": 1790380000, "content": "", "tags": [["d", "default"], ["rule", "ncc:02:key-pinning", "require"], ["rule", "ncc:05:stale-fallback", "allow"], ["rule", "ncc:05:transport:wss", "allow"], ["rule", "ncc:05:transport:http", "deny"], ["rule", "ncc:10:operator-state", "deny"]]}"#;
+    let output = run(&["--event", policy]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler TrustPolicy: ok"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "policy default rules [ncc:02:key-pinning, ncc:05:stale-fallback, ncc:05:transport:wss, ncc:05:transport:http, ncc:10:operator-state]"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("key pinning require (known rule: true, value valid: true)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("transport wss allow, http deny; operator state deny"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn the_support_ticket_bot_labels_urgent_tickets_and_always_acknowledges() {
     let path = repository_path("examples/support-ticket-bot.ns");
     let run = |extra: &[&str]| {
@@ -1892,5 +2453,288 @@ mod deploy_with_real_hosts {
             "{stdout}"
         );
         assert!(!stdout.contains("reply: impostor"), "{stdout}");
+    }
+
+    /// A bootstrap relay answering exactly what identity resolution
+    /// asks: one bounded query for the identity's NCC-02 Service Record
+    /// and NCC-05 Locator, answered with both events and EOSE. Both are
+    /// signed for real by the identity's own key, so §A's id
+    /// recomputation and signature verification both hold. After the
+    /// resolver unsubscribes, the relay waits for the startup publish
+    /// the pool fans out to every relay it holds.
+    fn fake_records_relay(pubkey: &str, service: &Value, locator: &Value) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("ws://{}", listener.local_addr().expect("addr"));
+        let pubkey = pubkey.to_owned();
+        let service = service.clone();
+        let locator = locator.clone();
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut socket = tungstenite::accept(stream).expect("handshake");
+
+            // 1) NCC-06 §C.2: the identity's two record kinds, by author.
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "REQ");
+            assert_eq!(frame[2]["kinds"], json!([30059, 30058]));
+            assert_eq!(frame[2]["authors"], json!([pubkey]));
+            let sub_id = frame[1].clone();
+            send(&mut socket, &json!(["EVENT", sub_id, service]));
+            send(&mut socket, &json!(["EVENT", sub_id, locator]));
+            send(&mut socket, &json!(["EOSE", sub_id]));
+
+            // 2) The resolver's unsubscribe (skipped), then the startup
+            // publish fanned out to every pooled relay.
+            loop {
+                let frame = read_json(&mut socket);
+                if frame[0] == "EVENT" {
+                    assert_eq!(frame[1]["content"], "resolved deploy started");
+                    send(&mut socket, &json!(["OK", frame[1]["id"], true, ""]));
+                    break;
+                }
+            }
+        });
+        url
+    }
+
+    /// The endpoint identity resolution picks. Nothing arrives until
+    /// resolution connects it, and then only the startup publish — a
+    /// script with no handlers watches for nothing.
+    fn fake_resolved_relay() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("ws://{}", listener.local_addr().expect("addr"));
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut socket = tungstenite::accept(stream).expect("handshake");
+            loop {
+                let frame = read_json(&mut socket);
+                if frame[0] == "EVENT" {
+                    assert_eq!(frame[1]["content"], "resolved deploy started");
+                    send(&mut socket, &json!(["OK", frame[1]["id"], true, ""]));
+                    break;
+                }
+            }
+        });
+        url
+    }
+
+    /// The identity's NCC-02 Service Record and NCC-05 Locator, signed
+    /// for real by `identity_secret` and pointing at `target_url`. The
+    /// payload's `ttl` spans decades from its stamp because the resolver
+    /// judges freshness against the wall clock, whenever the test runs.
+    fn identity_records(identity_secret: &[u8; 32], target_url: &str) -> (Value, Value) {
+        let service = signed_event(
+            identity_secret,
+            30059,
+            &json!([
+                ["d", "relay"],
+                ["u", target_url],
+                [
+                    "k",
+                    "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+                ],
+                ["exp", "1900000000"],
+            ]),
+            "",
+            1_700_000_100,
+        );
+        let payload = format!(
+            "{{\"v\":1,\"ttl\":2000000000,\"updated_at\":1700000000,\
+             \"endpoints\":[{{\"url\":\"{target_url}\",\"priority\":10}}]}}"
+        );
+        let locator = signed_event(
+            identity_secret,
+            30058,
+            &json!([["d", "addr"], ["expiration", "1900000000"]]),
+            &payload,
+            1_700_000_200,
+        );
+        (service, locator)
+    }
+
+    /// NCC-06 end to end: `--relay` holds an identity reference
+    /// (`wss://npub…`), which deploy never connects to. It queries the
+    /// concrete bootstrap relay for the identity's records (§C.2),
+    /// selects under §A, walks §E.1 to the locator's concrete endpoint,
+    /// prints the selection — including the `k` it did not verify (§E.2)
+    /// — connects that endpoint instead, and the startup publication
+    /// lands on both relays.
+    #[test]
+    fn deploy_resolves_an_identity_reference_through_the_publication_relays() {
+        let identity_secret = [34_u8; 32];
+        let pubkey = hex(&xonly_pubkey(&identity_secret).unwrap());
+        let identity = "wss://npub1gekhljh9v0jukzdq6xrshdvqx3yqgctc0xs5jjw0yg597xaw8uns47vduw";
+        let target_url = fake_resolved_relay();
+        let (service, locator) = identity_records(&identity_secret, &target_url);
+        let bootstrap_url = fake_records_relay(&pubkey, &service, &locator);
+
+        let bunker_secret = [35_u8; 32];
+        let user_secret = [36_u8; 32];
+        let bunker_url = fake_bunker(bunker_secret, user_secret);
+        let bunker_pubkey_hex = hex(&xonly_pubkey(&bunker_secret).unwrap());
+        let bunker_connection_string = format!("bunker://{bunker_pubkey_hex}?relay={bunker_url}");
+
+        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    publish Note to public\n    sign Note with account\n    relay public\n}\n\npublish Note {\n    content: \"resolved deploy started\",\n} to public with account\n";
+        let path =
+            std::env::temp_dir().join(format!("nscript-deploy-resolve-{}.ns", std::process::id()));
+        std::fs::write(&path, source).unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("deploy")
+            .arg(&path)
+            .args(["--relay", &bootstrap_url])
+            .args(["--relay", identity])
+            .args(["--signer", &format!("account={bunker_connection_string}")])
+            .args(["--cycles", "1"])
+            .args(["--poll-interval", "0"])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("connecting to 1 relay(s), resolving 1 identity reference(s)..."),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(&format!("  connected: {bootstrap_url}")),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(&format!("  {identity} resolved through 1 relay(s):")),
+            "{stdout}"
+        );
+        let short = |event: &Value| event["id"].as_str().unwrap()[..12].to_owned();
+        assert!(
+            stdout.contains(&format!(
+                "    2 candidate record(s); selected service {}, locator {}",
+                short(&service),
+                short(&locator)
+            )),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(&format!(
+                "    endpoint {target_url} (from ncc05 locator, NCC-06 \u{a7}E.1 rank 3)"
+            )),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(
+                "    k: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 \
+                 (required: no, verified: no \u{2014} TLS key pinning is not implemented)"
+            ),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains(&format!("    connected: {target_url}")),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("provisioning signer `account`... connected"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("publication 0: 2/2 relays accepted"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("no handlers registered; nothing to watch for"),
+            "{stdout}"
+        );
+    }
+
+    /// A relay that delivers one trigger Note to a handler subscription and
+    /// then asserts the three-column `rule` and `trust certifier` tags the
+    /// handler's policy publish puts on the wire, answering its `OK`. It
+    /// panics — before sending the `OK` — if any tag is missing, so `deploy`
+    /// reports the publication as rejected and the test fails with it.
+    fn fake_three_column_policy_relay() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!("ws://{}", listener.local_addr().expect("addr"));
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            let mut socket = tungstenite::accept(stream).expect("handshake");
+
+            // The handler's subscription, answered with one matching Note.
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "REQ");
+            let sub_id = frame[1].clone();
+            let note = json!({
+                "id": "e".repeat(64), "pubkey": "a".repeat(64), "created_at": 1_790_380_000,
+                "kind": 1, "tags": [["t", "publish-policy"]], "content": "publish", "sig": "b".repeat(128)
+            });
+            send(&mut socket, &json!(["EVENT", sub_id, note]));
+            send(&mut socket, &json!(["EOSE", sub_id]));
+
+            // The policy the handler publishes: every column on the wire.
+            let frame = read_json(&mut socket);
+            assert_eq!(frame[0], "EVENT");
+            let tags = frame[1]["tags"].as_array().expect("tags array").clone();
+            for expected in [
+                json!(["d", "default"]),
+                json!(["rule", "ncc:02:key-pinning", "require"]),
+                json!([
+                    "trust",
+                    "certifier",
+                    "abababababababababababababababababababababababababababababababab"
+                ]),
+            ] {
+                assert!(
+                    tags.contains(&expected),
+                    "missing wire tag {expected}: {tags:?}"
+                );
+            }
+            send(&mut socket, &json!(["OK", frame[1]["id"], true, ""]));
+        });
+        url
+    }
+
+    /// NCC-11 end to end: a handler builds a policy with the module's
+    /// three-column builders and publishes it over a real relay, which
+    /// asserts the exact wire tags. This is the coverage the `inspect`
+    /// vector cannot give: the rules are computed at publish time, so the
+    /// checked snapshot only holds the literal `d`.
+    #[test]
+    fn deploy_publishes_three_column_policy_tags() {
+        let relay_url = fake_three_column_policy_relay();
+        let bunker_secret = [37_u8; 32];
+        let user_secret = [38_u8; 32];
+        let bunker_url = fake_bunker(bunker_secret, user_secret);
+        let bunker_pubkey_hex = hex(&xonly_pubkey(&bunker_secret).unwrap());
+        let bunker_connection_string = format!("bunker://{bunker_pubkey_hex}?relay={bunker_url}");
+
+        let source = "use ncc11\nuse nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    publish TrustPolicy to public\n    sign TrustPolicy with account\n    read Note from public\n    relay public\n    log\n}\n\non Note where tags.t contains \"publish-policy\" {\n    let pinning = ncc11.rule(\"ncc:02:key-pinning\", \"require\")\n    let certifier = ncc11.certifier(\"abababababababababababababababababababababababababababababababab\")\n    publish TrustPolicy {\n        d: \"default\";\n        rule: [pinning];\n        trust: [certifier];\n        content: \"\";\n    } to public with account\n}\n";
+        let path =
+            std::env::temp_dir().join(format!("nscript-deploy-policy-{}.ns", std::process::id()));
+        std::fs::write(&path, source).unwrap();
+
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("deploy")
+            .arg(&path)
+            .args(["--relay", &relay_url])
+            .args(["--signer", &format!("account={bunker_connection_string}")])
+            .args(["--cycles", "1"])
+            .args(["--poll-interval", "0"])
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("cycle 1: 1 dispatched, 0 failed"),
+            "{stdout}"
+        );
     }
 }

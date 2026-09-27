@@ -1,0 +1,105 @@
+// An NCC-06 service monitor: a client that follows the profile while
+// judging the records it receives — NCC-02's Service Record and
+// NCC-05's Locator, under NCC-06's own rules. The profile adds no event
+// kinds and no relay round-trips a script can make (a handler sees one
+// event at a time), so everything §A, §D and §E decide is kept
+// script-visible as the modules' pure functions: §Scope's
+// identity-reference guard, §E.1's transport tiers, §E.2's `k`
+// requirement, and §D's fresh/stale/failed verdict.
+//
+// What this monitor does NOT do, deliberately: §A selection compares
+// several candidate records at once (discarding, then freshness marker,
+// then event id) and no script can hold more than one event at a time —
+// NCC-PLAN records that gap, and `nscript deploy` resolves identity
+// references with those rules in its own Rust resolver. §D.3's stale
+// fallback needs a cache, and a script has no store to keep one in; the
+// monitor instead prints the verdict — the surface §D.3 requires — and
+// acts on "failed" only.
+//
+// Adoption note: this is a reader, not a publisher. It never
+// dereferences an identity reference (`wss://npub…`, §Scope) and never
+// connects anywhere — publishing claims nothing about reachability and
+// a script cannot open a connection (spec/language.md §10) — it only
+// reports what §E.1 and §E.2 would tell a connecting client, with the
+// service's pinned `k` (NCC-02) read from the record it judges.
+//
+// Time: scripts hold no wall clock (spec/language.md §9), so every check
+// takes `now` from the caller — here the delivered event's own
+// `created_at`.
+//
+// Try it:
+//
+//   nscript run examples/ncc06-service-monitor.ns
+//       (no --event: both readers idle, nothing printed)
+//
+//   nscript run examples/ncc06-service-monitor.ns \
+//       --event '{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://relay.example.com"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1700600000"]]}'
+//       (a concrete endpoint: tiered and reported with its pinned k)
+//
+//   nscript run examples/ncc06-service-monitor.ns \
+//       --event '{"event_type": "ServiceRecord", "kind": 30059, "created_at": 1700000000, "content": "", "tags": [["d", "relay"], ["u", "wss://npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg"], ["k", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"], ["exp", "1700600000"]]}'
+//       (an identity reference: named, never dereferenced — §Scope)
+//
+//   nscript run examples/ncc06-service-monitor.ns \
+//       --event '{"event_type": "Locator", "kind": 30058, "created_at": 1700000000, "content": "{\"v\":1,\"ttl\":600,\"updated_at\":1700000000,\"endpoints\":[{\"url\":\"ws://a.example.com\"},{\"url\":\"wss://b.example.com\"},{\"url\":\"onion://vww6ybal4bd7st.onion\"}]}", "tags": [["d", "addr"], ["expiration", "1700000600"]]}'
+//       (a fresh locator: endpoints ordered into §E.1's tiers)
+use ncc02
+use ncc05
+use ncc06
+use nip01
+
+relayset public = configured
+
+permissions {
+    read ServiceRecord from public
+    read Locator from public
+    relay public
+    log
+}
+
+on ServiceRecord {
+    let id = ncc02.service_id(event.tags)
+    let endpoint = ncc02.endpoint(event.tags)
+    if not ncc02.record_is_valid(event.tags, event.created_at) {
+        print("service " + id + " rejected: expired or incomplete")
+    } else if ncc06.identity_reference(endpoint) {
+        // §Scope: an identity reference names a key, not a socket. The
+        // monitor decodes which key (§Scope's npub or hex form) and
+        // stops — resolution goes over the publication relays with §A's
+        // rules, never to the reference itself.
+        print("service " + id + " names identity " + ncc06.identity_key(endpoint) + "; resolve its records over the publication relays, never the reference")
+    } else {
+        // §E.1 tiers the endpoint with the service's own `k` in hand —
+        // secure-with-k ranks above secure-without — and §E.2 says which
+        // transports must present key material at all.
+        let k = ncc02.transport_key(event.tags)
+        if ncc06.k_required(endpoint) {
+            print("service " + id + " serves " + endpoint + " at §E.1 rank " + text(ncc06.transport_rank(endpoint, k)) + " with pinned k " + k + "; §E.2 requires the connection to match it")
+        } else {
+            print("service " + id + " serves " + endpoint + " at §E.1 rank " + text(ncc06.transport_rank(endpoint, k)) + "; §E.2 requires no k for this transport")
+        }
+    }
+}
+
+on Locator where tags.d contains "addr" {
+    // §D's verdict, taken against the delivered record's own created_at
+    // as "now": freshness is NCC-05's answer (payload window and the
+    // `expiration` tag), and the payload's trail behind that record
+    // (`created_at` minus its `updated_at` marker, §A.2 step 3) is what
+    // §D.3's bounded staleness window measures — "stale" is surfaced and
+    // not acted on here, "failed" is discarded outright.
+    let fresh = ncc05.record_is_fresh(event.tags, event.content, event.created_at)
+    let marker = ncc06.locator_marker(event.content, event.created_at)
+    let mode = ncc06.freshness_mode(fresh, event.created_at - marker, 3600)
+    if mode == "failed" {
+        print("locator " + ncc05.locator_name(event.tags) + " discarded: freshness failed (§D.2)")
+    } else {
+        // §E.1 orders the candidate set with the service's `k` in hand.
+        // The reader normally carries that over from the ServiceRecord it
+        // judged alongside this Locator; a script holds no cross-event
+        // state (NCC-PLAN), so the monitor names the profile's pinned
+        // fingerprint as data instead of recalling it.
+        let endpoints = ncc05.payload_endpoints(event.content)
+        print("locator " + ncc05.locator_name(event.tags) + " is " + mode + " (§D.3): " + text(ncc06.transport_order(endpoints, "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")))
+    }
+}

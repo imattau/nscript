@@ -1,0 +1,44 @@
+// NCC-10: a service declares its current operational state as addressable
+// kind-30065 state. The state is self-reported, never an observation — an
+// `operational` event claims normal operation, not reachability (§22) —
+// and a newer state event replaces the older one under the same
+// `kind + pubkey + d` address (§10), so the current event is the whole
+// claim. Absence of a state means unknown, never `operational` (§21).
+//
+// Time: scripts hold no wall clock (spec/language.md §9); the optional
+// `since` and `expected_until` timestamps are data the caller passes, and
+// passing `expected_until` does not itself change the state (§8).
+use ncc10
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ServiceState to public
+    sign ServiceState with account
+    read ServiceState from public
+    relay public
+    log
+}
+
+publish ServiceState {
+    d: "relay";
+    service: "relay";
+    state: "maintenance";
+    since: 1790380000;
+    expected_until: 1790387200;
+    incident: "incident-2026-09-26-01";
+    content: "Scheduled maintenance.";
+} to public with account
+
+on ServiceState {
+    if not ncc10.state_is_recognised(ncc10.state(event.tags)) {
+        print("state rejected: not one of the five NCC-10 states")
+    } else if ncc10.is_direct(event.tags) {
+        print("service " + ncc10.state_service(event.tags) + " reports " + ncc10.state(event.tags) + " directly")
+    } else {
+        print("operator claims " + ncc10.state(event.tags) + " for service " + ncc10.principal(event.tags) + " (" + ncc10.operator_service(event.tags) + "); authority still needs NCC-09")
+    }
+}

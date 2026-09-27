@@ -7,7 +7,7 @@ use std::{
 };
 
 use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_hex, parse_module};
-use nscript_runtime::SubscriptionHost;
+use nscript_runtime::{ClockHost, SubscriptionHost};
 use nscript_semantics::{analyze_with_modules, bind_module_events, check};
 use nscript_syntax::{Diagnostic, Program, parse_program};
 use semver::VersionReq;
@@ -913,6 +913,17 @@ fn event_kind(graph: &nscript_modules::ResolvedModuleGraph, name: &str) -> Optio
 /// idempotency (keyed by handler and event id) is what keeps that safe
 /// rather than re-running a handler on events it already saw, at the cost
 /// of relay traffic a `since` cursor would avoid — not yet implemented.
+///
+/// `--relay` also accepts an identity reference (`wss://npub1...`,
+/// NCC-06 §Scope): such a URL is never connected to directly. Before
+/// anything publishes, deploy queries the concrete `--relay`s for the
+/// identity's NCC-02 Service Records and NCC-05 Locators, applies §A's
+/// selection and §E.1's transport preference, prints what it selected —
+/// including the `k` it did *not* verify (§E.2's pinning is not
+/// implemented, and a printed `k` must not imply one) — and connects to
+/// the endpoint the records name instead. At least one concrete relay is
+/// required to bootstrap those queries (§C.2), and a resolution that
+/// finds no usable endpoint fails the deploy rather than guessing.
 #[allow(clippy::too_many_lines)]
 fn deploy_program(arguments: &[String]) -> ExitCode {
     let (arguments, options) = match take_deploy_options(arguments) {
@@ -940,16 +951,105 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
     let mut checked = checked.expect("checked program");
     bind_module_events(&graph, &mut checked);
 
-    println!("connecting to {} relay(s)...", options.relays.len());
+    // NCC-06 §Scope: an identity reference (`wss://npub1...`) is never
+    // dereferenced. The concrete relays below stand in for its
+    // publication relay set (§C.2) and answer what records the identity
+    // publishes — resolving them first is what "connecting" to the
+    // reference means.
+    let (identities, concrete): (Vec<String>, Vec<String>) = options
+        .relays
+        .iter()
+        .cloned()
+        .partition(|url| nscript_runtime::identity_reference_key(url).is_some());
+    if !identities.is_empty() && concrete.is_empty() {
+        eprintln!(
+            "error: {} resolves only through other relays; deploy needs at least one \
+             concrete --relay to query its NCC-02/NCC-05 records (NCC-06 \u{a7}C.2)",
+            identities[0]
+        );
+        return ExitCode::from(2);
+    }
+    if identities.is_empty() {
+        println!("connecting to {} relay(s)...", concrete.len());
+    } else {
+        println!(
+            "connecting to {} relay(s), resolving {} identity reference(s)...",
+            concrete.len(),
+            identities.len()
+        );
+    }
     let mut relay = nscript_runtime::RealRelayPool::new();
-    for url in &options.relays {
+    for url in &concrete {
         if let Err(error) = relay.add_relay(url.clone()) {
             eprintln!("error: could not connect to {url}: {error:?}");
             return ExitCode::from(1);
         }
         println!("  connected: {url}");
     }
-
+    for identity in &identities {
+        let resolution = match nscript_runtime::resolve_identity_reference(
+            &mut relay,
+            &concrete,
+            identity,
+            nscript_runtime::RealClock.now(),
+            |pubkey, id, signature| nscript_host_crypto::schnorr::verify(pubkey, id, signature),
+        ) {
+            Ok(resolution) => resolution,
+            Err(error) => {
+                let detail = match &error {
+                    nscript_runtime::RuntimeError::RelayUnavailable { relayset } => {
+                        format!("no bootstrap relay answered: {relayset}")
+                    }
+                    nscript_runtime::RuntimeError::EvaluationError { message } => message.clone(),
+                    other => format!("{other:?}"),
+                };
+                eprintln!("error: could not resolve {identity}: {detail}");
+                return ExitCode::from(1);
+            }
+        };
+        let picked = |record: &Option<nscript_runtime::SignedEvent>| match record {
+            Some(event) => event.id.get(..12).unwrap_or(event.id.as_str()).to_owned(),
+            None => "-".to_owned(),
+        };
+        println!(
+            "  {identity} resolved through {} relay(s):",
+            resolution.relays_queried
+        );
+        println!(
+            "    {} candidate record(s); selected service {}, locator {}",
+            resolution.candidates,
+            picked(&resolution.service_record),
+            picked(&resolution.locator)
+        );
+        println!(
+            "    endpoint {} (from {}, NCC-06 \u{a7}E.1 rank {})",
+            resolution.endpoint, resolution.endpoint_source, resolution.transport_rank
+        );
+        if resolution.k.is_empty() {
+            println!(
+                "    k: none published{}",
+                if resolution.k_required {
+                    " (NCC-06 \u{a7}E.2 wanted a key for this transport)"
+                } else {
+                    ""
+                }
+            );
+        } else {
+            println!(
+                "    k: {} (required: {}, verified: no — TLS key pinning is not implemented)",
+                resolution.k,
+                if resolution.k_required { "yes" } else { "no" }
+            );
+        }
+        if let Err(error) = relay.add_relay(resolution.endpoint.clone()) {
+            eprintln!(
+                "error: could not connect to resolved endpoint {}: {error:?}",
+                resolution.endpoint
+            );
+            return ExitCode::from(1);
+        }
+        println!("    connected: {}", resolution.endpoint);
+    }
     let mut signer = nscript_runtime::Nip46SignerHost::new(
         nscript_host_crypto::nip46::RealNip46Transport::new(),
     );

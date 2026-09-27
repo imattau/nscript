@@ -1,0 +1,75 @@
+// NCC-06: the profile adds no event kinds of its own — a sidecar
+// publishes the NCC-02 Service Record and NCC-05 Locator the profile is
+// built from (§Service Requirements 3–4), and a client judges both with
+// NCC-06's rules as script-visible pure functions: §A's record
+// selection, §E.1's transport tiering, §E.2's `k` requirement, §D's
+// freshness verdict.
+//
+// Time: scripts hold no wall clock (spec/language.md §9), so every check
+// takes `now` from the caller — here the delivered event's own
+// `created_at`, the convention the other NCC fixtures use.
+//
+// Cross-event state: a script cannot hold one event's `k` while reading
+// another event (NCC-PLAN records this gap), so the locator reader names
+// the profile's pinned fingerprint as data rather than recalling it from
+// the Service Record it also received.
+use ncc02
+use ncc05
+use ncc06
+use nip01
+use nip44
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ServiceRecord to public
+    publish Locator to public
+    sign ServiceRecord with account
+    sign Locator with account
+    read ServiceRecord from public
+    read Locator from public
+    relay public
+    encrypt Text
+    log
+}
+
+publish ServiceRecord {
+    d: "relay";
+    u: "wss://relay.example.com";
+    k: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+    exp: 1767446400;
+    content: "";
+} to public with account
+
+on Note where tags.t contains "relocate" {
+    let payload = ncc05.payload(600, event.created_at, [ncc05.endpoint_object("wss://relay.example.com", 10, "", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")], ["nostr-connect"])
+    let encrypted = nip44.encrypt_text(payload, event.author)?
+    publish Locator {
+        d: "addr";
+        expiration: 1700003600;
+        content: encrypted;
+    } to public with account
+}
+
+on ServiceRecord where tags.d contains "relay" {
+    if not ncc02.record_is_valid(event.tags, event.created_at) {
+        print("service record rejected: expired or incomplete")
+    } else {
+        let endpoint = ncc02.endpoint(event.tags)
+        if ncc06.identity_reference(endpoint) {
+            print(endpoint + " is an identity reference; resolve its records first (NCC-06 §Scope)")
+        } else {
+            let rank = ncc06.transport_rank(endpoint, ncc02.transport_key(event.tags))
+            print(ncc02.service_id(event.tags) + " serves " + endpoint + " at NCC-06 §E.1 rank " + text(rank) + ", k required: " + text(ncc06.k_required(endpoint)))
+        }
+    }
+}
+
+on Locator where tags.d contains "addr" {
+    let fresh = ncc05.record_is_fresh(event.tags, event.content, event.created_at)
+    let marker = ncc06.locator_marker(event.content, event.created_at)
+    let endpoints = ncc05.payload_endpoints(event.content)
+    print(ncc05.locator_name(event.tags) + ": " + ncc06.freshness_mode(fresh, event.created_at - marker, 3600) + ", endpoints in NCC-06 §E.1 order " + text(ncc06.transport_order(endpoints, "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")))
+}

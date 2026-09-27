@@ -1,0 +1,18 @@
+// error: E1001 nominal-type-mismatch
+// NCC-09's grant check is judged against a clock the caller holds:
+// `grant_is_valid`'s second parameter is an Int, so `event.content` (a
+// Text) cannot stand in for the time. Scripts hold no wall clock
+// (spec/language.md §9), so a reader passes the delivered grant's
+// `created_at`.
+use ncc09
+use nip01
+
+permissions {
+    log
+}
+
+on AuthorityGrant {
+    if ncc09.grant_is_valid(event.tags, event.content) {
+        print("grant is valid")
+    }
+}

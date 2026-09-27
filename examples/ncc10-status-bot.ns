@@ -1,0 +1,65 @@
+// An NCC-10 status bot: an authorised operator publishes its principal
+// service's operational state under its own key, and reports the states it
+// sees. The operator state is addressed by `<service-pubkey>:<service-id>`
+// and names the principal in a three-column `operator_for` tag (§12) — the
+// claim alone grants nothing, so §13 still has to resolve the operator's
+// NCC-09 grant before the state is authoritative.
+//
+// Adoption note: this is the operator half of the status workflow. A
+// service publishes direct state itself with `d=<service-id>`; an operator
+// may publish only when its NCC-09 grant carries `ncc:10:publish` (§11).
+// An operational state is an assertion, not a probe (§22), and a missing
+// state is unknown rather than `operational` (§21) — the reader here treats
+// an operator claim as exactly that until authority is checked.
+//
+// Time: passing `expected_until` is informational and does not change the
+// state (§8); no clock is read.
+//
+// Try it:
+//
+//   nscript run examples/ncc10-status-bot.ns
+//       (no --event: the reader idles, nothing published)
+//
+//   nscript run examples/ncc10-status-bot.ns \
+//       --event '{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "please maintain", "tags": [["t", "maintain"]]}'
+//       (a maintenance signal: the operator state is published)
+use ncc10
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ServiceState to public
+    sign ServiceState with account
+    read ServiceState from public
+    relay public
+    log
+}
+
+on Note where tags.t contains "maintain" {
+    // The principal's pubkey and the service it operates: script-visible
+    // policy, not something the operator chooses at runtime.
+    let d = ncc10.operator_address("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "relay")
+    let claim = ncc10.operator_for_tag("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "relay")
+    let published = publish ServiceState {
+        d: d;
+        service: "relay";
+        state: "maintenance";
+        expected_until: 1790387200;
+        operator_for: claim;
+        content: "Scheduled maintenance.";
+    } to public with account
+    print("operator state published: " + text(published.accepted) + "/1 relays")
+}
+
+on ServiceState {
+    if not ncc10.state_is_recognised(ncc10.state(event.tags)) {
+        print("state rejected: not one of the five NCC-10 states")
+    } else if ncc10.is_direct(event.tags) {
+        print("service " + ncc10.state_service(event.tags) + " reports " + ncc10.state(event.tags) + " directly")
+    } else {
+        print("operator claims " + ncc10.state(event.tags) + " for " + ncc10.principal(event.tags) + " (" + ncc10.operator_service(event.tags) + ")")
+    }
+}

@@ -31,6 +31,11 @@ against deterministic host fakes.
 | NCC-00 document lifecycle | `ncc00-ledger.ns` | `ncc00-succession-wrong-type.ns` | `vectors/ncc00.json` publication trace + pure-function runtime tests |
 | NCC-02 endpoint identity binding | `ncc02-service-record.ns` | `ncc02-validity-wrong-clock.ns` | `vectors/ncc02.json` publication trace + pure-function runtime tests |
 | NCC-05 encrypted locators | `ncc05-locator.ns` | `ncc05-locator-wrong-clock.ns` | `vectors/ncc05.json` publication trace + handler publish round-trip test |
+| NCC-06 service profile | `ncc06-service-profile.ns` | `ncc06-locator-marker-wrong-clock.ns` | `vectors/ncc06.json` publication trace + resolver unit tests and deploy identity-resolution test |
+| NCC-08 service identity rotation | `ncc08-handover.ns` | `ncc08-proposal-wrong-clock.ns` | `vectors/ncc08.json` publication trace + pure-function runtime tests and successor bot round-trip test |
+| NCC-09 scoped operator authority | `ncc09-authority-grant.ns` | `ncc09-grant-wrong-clock.ns` | `vectors/ncc09.json` publication trace + pure-function runtime tests and delegation bot run test |
+| NCC-10 service operational state | `ncc10-service-state.ns` | `ncc10-state-wrong-type.ns` | `vectors/ncc10.json` publication trace + pure-function runtime tests and status bot run test |
+| NCC-11 portable trust policy | `ncc11-trust-policy.ns` | `ncc11-rule-value-wrong-type.ns` | `vectors/ncc11.json` publication trace + pure-function runtime tests, policy client run test and three-column deploy e2e |
 
 The Draft 0.1 release-blocker cells are covered by executable vectors or
 inspectable traces. New NIPs and broader runtime features are out of scope for

@@ -86,15 +86,18 @@ protocol breadth.
 
 - Land NCC-07 (capability manifest) first as the smallest end-to-end slice,
   then NCC-00 (document lifecycle), then the service cluster NCC-02, NCC-05,
-  NCC-06, then NCC-08 (identity handover); NCC-03 lands last (see
-  Explicitly deferred below).
+  NCC-06, then NCC-08 (identity handover), then the post-pin additions
+  NCC-09 (scoped operator authority), NCC-10 (operational state) and NCC-11
+  (portable trust policy) with the three-column tag support they need;
+  NCC-03 lands last (see Explicitly deferred below).
 - Build the real record-fields-to-wire-tags lowering path for declared events,
   so `publish <record>` statements emit correct kinds and tags on real relays.
   Module operation calls remain simulated until a host is wired in.
 - Every landed NCC ships a module, valid and invalid fixtures, a wire vector,
   a matrix row, a `spec/nostr.md` subsection, and either a documented
   infrastructure adoption (capability publication, service records, identity-
-  first resolution, identity rotation) or an explicit non-adoption note.
+  first resolution, identity rotation, operator authority, operational state,
+  trust policy) or an explicit non-adoption note.
 
 **Exit criteria:** each landed NCC meets the recipe above, the pinned NCC
 commit is recorded, and no doc describes a convention as implemented while its

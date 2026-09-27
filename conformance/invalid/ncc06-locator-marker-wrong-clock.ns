@@ -1,0 +1,21 @@
+// error: E1001 nominal-type-mismatch
+// NCC-06 derives a locator's §D marker from the payload it is carrying:
+// `locator_marker`'s first parameter is the payload (Text) and its second
+// is an Int. The arguments here are in the wrong order for the types they
+// carry — the same clock inversion the NCC-02 and NCC-05 fixtures make.
+// Scripts hold no wall clock (spec/language.md §9), so a reader passes the
+// delivered record's `created_at` as the time and the check never reads
+// time itself.
+use ncc05
+use ncc06
+use nip01
+
+permissions {
+    log
+}
+
+on Locator {
+    if ncc06.locator_marker(event.created_at, event.content) > 0 {
+        print("payload marker trails the record")
+    }
+}

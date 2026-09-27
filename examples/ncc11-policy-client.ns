@@ -1,0 +1,59 @@
+// An NCC-11 policy client: it publishes a portable trust policy for the
+// current NCC service stack and evaluates the policies it receives,
+// reporting the preference each rule states and whether the value is one
+// the rule defines. The policy is preference, not authority — NCC-11
+// cannot weaken a mandatory protocol requirement (§22), an unknown rule is
+// ignored rather than fatal (§24), and a rule it does not carry means "no
+// preference", not allow or deny (§21).
+//
+// Adoption note: this is the data half of trust policy. A service stack or
+// an agent reads the same rules instead of embedding its own trust
+// decisions, so every consumer can share one published policy. Which named
+// policy is active stays a local choice (§19), and a private rule lives in
+// NIP-44-encrypted `content` (§16) that a client combines with the public
+// rules after decrypting it — private rules take precedence for the policy
+// owner (§17).
+//
+// Try it:
+//
+//   nscript run examples/ncc11-policy-client.ns
+//       (no --event: the client idles, nothing published)
+//
+//   nscript run examples/ncc11-policy-client.ns \
+//       --event '{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "publish", "tags": [["t", "publish-policy"]]}'
+//       (a signal to publish the policy)
+use ncc11
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish TrustPolicy to public
+    sign TrustPolicy with account
+    read TrustPolicy from public
+    relay public
+    log
+}
+
+on Note where tags.t contains "publish-policy" {
+    let pinning = ncc11.rule("ncc:02:key-pinning", "require")
+    let stale = ncc11.rule("ncc:05:stale-fallback", "allow")
+    let wss = ncc11.rule("ncc:05:transport:wss", "allow")
+    let http = ncc11.rule("ncc:05:transport:http", "deny")
+    let operator_state = ncc11.rule("ncc:10:operator-state", "deny")
+    let published = publish TrustPolicy {
+        d: "default";
+        rule: [pinning, stale, wss, http, operator_state];
+        content: "";
+    } to public with account
+    print("policy published: " + text(published.accepted) + "/1 relays")
+}
+
+on TrustPolicy {
+    let pinning = ncc11.rule_value(event.tags, "ncc:02:key-pinning")
+    print("policy " + ncc11.policy_id(event.tags) + " rules " + text(ncc11.rule_keys(event.tags)))
+    print("key pinning " + pinning + " (known rule: " + text(ncc11.rule_is_known("ncc:02:key-pinning")) + ", value valid: " + text(ncc11.rule_value_is_valid("ncc:02:key-pinning", pinning)) + ")")
+    print("transport wss " + ncc11.rule_value(event.tags, "ncc:05:transport:wss") + ", http " + ncc11.rule_value(event.tags, "ncc:05:transport:http") + "; operator state " + ncc11.rule_value(event.tags, "ncc:10:operator-state"))
+}

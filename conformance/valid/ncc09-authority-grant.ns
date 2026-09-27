@@ -1,0 +1,45 @@
+// NCC-09: a service identity delegates explicitly scoped authority to an
+// operator pubkey through an addressable kind-30064 grant — current state,
+// not history, so a later grant under the same `d` replaces this one and
+// scopes are never inherited (§14). The principal stays the principal: the
+// operator acts under its own key and is never the service (§4), and the
+// convention defines the authority container, not what each scope means
+// (§9) — a reader recognises the spellings and the window, nothing more.
+//
+// Time: scripts hold no wall clock (spec/language.md §9), so validity is
+// judged against the delivered event's own `created_at`.
+use ncc09
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish AuthorityGrant to public
+    sign AuthorityGrant with account
+    read AuthorityGrant from public
+    relay public
+    log
+}
+
+publish AuthorityGrant {
+    d: "relay:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    service: "relay";
+    p: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    status: "active";
+    scope: ["ncc:10:publish"];
+    valid_from: 1790380000;
+    expiration: 1792972000;
+    note: "maintenance window coverage";
+    content: "";
+} to public with account
+
+on AuthorityGrant {
+    if not ncc09.grant_is_valid(event.tags, event.created_at) {
+        print("grant rejected: revoked, expired, not yet valid, or incomplete")
+    } else {
+        print("grant for service " + ncc09.service(event.tags) + " to " + ncc09.operator(event.tags) + " begins " + text(ncc09.grant_starts_at(event.tags, event.created_at)))
+        print("scopes: " + text(ncc09.scopes(event.tags)) + "; may publish NCC-10 state: " + text(ncc09.authorises(event.tags, "ncc:10:publish", event.created_at)))
+    }
+}

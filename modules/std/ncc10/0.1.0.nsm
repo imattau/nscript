@@ -1,0 +1,34 @@
+module ncc10 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nostr-community-conventions/blob/adad77869d2a3be2ce8c5f673b88711e02df0bfb/ncc-10/README.md"
+use ncc02 @ "^0.1"
+use ncc09 @ "^0.1"
+
+validator state_value(value: Text) {
+    require value == "operational" or value == "degraded" or value == "maintenance" or value == "unavailable" or value == "retiring"
+}
+
+function state(tags: List<Text>) -> Text
+function state_service(tags: List<Text>) -> Text
+function state_is_recognised(state: Text) -> Bool
+function is_direct(tags: List<Text>) -> Bool
+function principal(tags: List<Text>) -> Text
+function operator_service(tags: List<Text>) -> Text
+function operator_for_tag(service_pubkey: Text, service: Text) -> Text
+function operator_address(service_pubkey: Text, service: Text) -> Text
+
+event ServiceState {
+    kind: 30065
+    mode: addressable
+    content: Text as text
+    tags: List<ServiceStateTag> = []
+    field d: Text
+    field service: Text
+    field state: Text
+    field since: Int
+    field expected_until: Int
+    field incident: Text
+    field successor: Text
+    field operator_for: Text
+    require state_value(state)
+}

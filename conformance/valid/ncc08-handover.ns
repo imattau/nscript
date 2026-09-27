@@ -1,0 +1,61 @@
+// NCC-08: an identity rotation is a mutually acknowledged pair of regular
+// kind-1070 events — the predecessor's proposal and the successor's
+// acceptance — not a single record. The predecessor signs the intent, the
+// successor signs the acknowledgement, and only the pair moves continuity;
+// the convention deliberately transfers no authority or service state
+// (§19, §30), so nothing here adopts the successor's other records.
+//
+// Cross-event state: a handler sees one event at a time and keeps no
+// store, so this sidecar publishes its own proposal and judges each
+// delivered half on its own merits. The pair check, the effective-time
+// walk and the chain/conflict rules need values from both events, so the
+// example binds them as data where a script cannot hold two events —
+// NCC-PLAN records the gap.
+//
+// Time: scripts hold no wall clock (spec/language.md §9), so every check
+// takes `now` from the caller — here the delivered event's own
+// `created_at`.
+use ncc02
+use ncc08
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Handover to public
+    sign Handover with account
+    read Handover from public
+    relay public
+    log
+}
+
+publish Handover {
+    role: "predecessor";
+    handover: "8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f";
+    service: "relay";
+    p: "2222222222222222222222222222222222222222222222222222222222222222";
+    effective: 1790466400;
+    expires: 1790552800;
+    reason: "planned service key rotation";
+    content: "";
+} to public with account
+
+on Handover where tags.role contains "predecessor" {
+    if not ncc08.proposal_is_valid(event.tags, event.created_at) {
+        print("proposal rejected: incomplete or backdated")
+    } else {
+        print("proposal " + ncc08.handover_id(event.tags) + " moves service " + ncc08.service(event.tags) + " to " + ncc08.counterparty(event.tags))
+        print("a proposal alone is " + ncc08.state(false, 0, event.created_at) + ", never accepted")
+    }
+}
+
+on Handover where tags.role contains "successor" {
+    if not ncc08.acceptance_is_valid(event.tags) {
+        print("acceptance rejected: incomplete")
+    } else {
+        print("acceptance " + ncc08.handover_id(event.tags) + " acknowledges " + ncc08.counterparty(event.tags) + " for service " + ncc08.service(event.tags))
+        print("with no effective tag the pair is effective at " + text(ncc08.effective_time(false, 0, event.created_at)))
+    }
+}

@@ -1,0 +1,59 @@
+// An NCC-09 delegation bot: a principal (service identity) publishes a
+// scoped, time-bounded grant authorising an operator pubkey to act for one
+// service, and judges the grants it receives — active or revoked, inside
+// its window or not, and whether a given scope is actually delegated.
+//
+// Adoption note: this is the principal half of the delegated-authority
+// workflow. The operator signs its own actions under its own key and is
+// never the service (§4); the convention defines the authority container,
+// not what a scope means (§9), and an unknown scope simply grants nothing
+// a reader recognises (§13). Bounding the grant in time is §16's advice
+// for automation, CI keys and temporary operators.
+//
+// Time: scripts hold no wall clock (spec/language.md §9), so validity is
+// judged against the delivered grant's own `created_at`.
+//
+// Try it:
+//
+//   nscript run examples/ncc09-operator-grant-bot.ns
+//       (no --event: the grant is published, the reader idles)
+//
+//   nscript run examples/ncc09-operator-grant-bot.ns \
+//       --event '{"event_type": "AuthorityGrant", "kind": 30064, "created_at": 1791000000, "content": "", "tags": [["d", "relay:aaaa...64"], ["service", "relay"], ["p", "aaaa...64"], ["status", "active"], ["scope", "ncc:10:publish"], ["valid_from", "1790380000"], ["expiration", "1792972000"]]}'
+//       (a live grant: reported, and checked for the scope it delegates)
+use ncc09
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish AuthorityGrant to public
+    sign AuthorityGrant with account
+    read AuthorityGrant from public
+    relay public
+    log
+}
+
+publish AuthorityGrant {
+    d: "relay:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    service: "relay";
+    p: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    status: "active";
+    scope: ["ncc:10:publish"];
+    valid_from: 1790380000;
+    expiration: 1792972000;
+    note: "maintenance window coverage";
+    content: "";
+} to public with account
+
+on AuthorityGrant {
+    if not ncc09.grant_is_valid(event.tags, event.created_at) {
+        print("grant rejected: revoked, expired, not yet valid, or incomplete")
+    } else {
+        let scope = "ncc:10:publish"
+        print("grant " + ncc09.operator(event.tags) + " for " + ncc09.service(event.tags) + " is " + ncc09.scope_namespace(scope) + " scope " + scope + ", delegated: " + text(ncc09.authorises(event.tags, scope, event.created_at)))
+        print("all scopes: " + text(ncc09.scopes(event.tags)) + " (spelling valid: " + text(ncc09.scope_is_valid(scope)) + ")")
+    }
+}

@@ -1,6 +1,6 @@
 module ncc02 @ 0.1.0
 language ">=0.1.0 <0.2.0"
-reference "https://github.com/imattau/nostr-community-conventions/blob/fe5981fd83becb0de53386569ede5604ae2ca7ef/ncc-02/README.md"
+reference "https://github.com/imattau/nostr-community-conventions/blob/adad77869d2a3be2ce8c5f673b88711e02df0bfb/ncc-02/README.md"
 
 validator present(value: Text) {
     require length(value) > 0

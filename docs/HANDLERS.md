@@ -33,6 +33,12 @@ applies inside a handler exactly as it does outside one.
 | user `fn`s | recursion allowed; a function sees only its own parameters |
 | `module.operation(args)` and the Layer 3 forms that lower to it | arguments become typed `OperationValue`s (`PubKey`, `Text`, `Integer`, `StreamMessage`, records) |
 
+A tag with more than two wire columns iterates as `name=value` too, with the
+extra columns inside the value joined by U+001F (unit separator). Module
+builders produce that value (NCC-11's `rule(key, value)`), and module
+extractors split it back (NCC-11's `rule_value`), so a script never types the
+separator itself.
+
 ## Running handlers with `nscript run`
 
 `nscript run` is a simulator: every host is a fake, and nothing touches a network

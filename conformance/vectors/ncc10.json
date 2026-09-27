@@ -1,0 +1,18 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/adad77869d2a3be2ce8c5f673b88711e02df0bfb/ncc-10/README.md",
+  "vectors": [
+    {
+      "type": "service-state",
+      "kind": 30065,
+      "content": "Scheduled maintenance.",
+      "tags": [
+        ["d", "relay"],
+        ["service", "relay"],
+        ["state", "maintenance"],
+        ["since", "1790380000"],
+        ["expected_until", "1790387200"],
+        ["incident", "incident-2026-09-26-01"]
+      ]
+    }
+  ]
+}

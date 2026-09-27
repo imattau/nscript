@@ -1,0 +1,30 @@
+module ncc11 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nostr-community-conventions/blob/adad77869d2a3be2ce8c5f673b88711e02df0bfb/ncc-11/README.md"
+use ncc02 @ "^0.1"
+use ncc05 @ "^0.1"
+
+validator present(value: Text) {
+    require length(value) > 0
+}
+
+function policy_id(tags: List<Text>) -> Text
+function rule_keys(tags: List<Text>) -> List<Text>
+function rule_value(tags: List<Text>, key: Text) -> Text
+function rule_value_is(tags: List<Text>, key: Text, value: Text) -> Bool
+function certifiers(tags: List<Text>) -> List<Text>
+function rule_is_known(key: Text) -> Bool
+function rule_value_is_valid(key: Text, value: Text) -> Bool
+function rule(key: Text, value: Text) -> Text
+function certifier(pubkey: Text) -> Text
+
+event TrustPolicy {
+    kind: 30067
+    mode: addressable
+    content: Text as text
+    tags: List<TrustPolicyTag> = []
+    field d: Text
+    field rule: List<Text>
+    field trust: List<Text>
+    require present(d)
+}

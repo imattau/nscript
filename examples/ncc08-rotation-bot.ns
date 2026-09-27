@@ -1,0 +1,81 @@
+// An NCC-08 successor rotation bot: it watches for a predecessor's
+// rotation proposal addressed to the service it is taking over, checks
+// the proposal, and publishes the matching acceptance — the second half
+// of the mutual acknowledgement that makes a handover real. A proposal
+// alone is intent only (§12); continuity moves when the named successor
+// signs back.
+//
+// Adoption note: this is the successor side of the convention's own
+// workflow. The predecessor publishes the proposal (see
+// conformance/valid/ncc08-handover.ns); a deployed successor runs this
+// bot, and it deliberately adopts nothing else — NCC-08 preserves
+// continuity between two identities, it does not merge them, and no
+// authority, service record or locator transfers automatically (§19,
+// §30). Which services a bot takes over is script-visible policy: this
+// one accepts `relay` rotations only.
+//
+// Cross-event state: a handler sees one event at a time and keeps no
+// store, so the pair check that spans both halves cannot run here — this
+// bot validates the proposal it receives and signs the acceptance that
+// completes it. The pair's §10 check, and the chain/conflict rules, live
+// in the `ncc08` module's pure functions for a client that holds both
+// events (NCC-PLAN records the gap).
+//
+// Time: scripts hold no wall clock (spec/language.md §9), so proposal
+// validity is judged against the delivered event's own `created_at`.
+//
+// Try it:
+//
+//   nscript run examples/ncc08-rotation-bot.ns
+//       (no --event: the watcher idles, nothing published)
+//
+//   nscript run examples/ncc08-rotation-bot.ns \
+//       --event '{"event_type": "Handover", "kind": 1070, "created_at": 1790380000, "content": "", "tags": [["role", "predecessor"], ["handover", "8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f8a1f"], ["service", "relay"], ["p", "2222222222222222222222222222222222222222222222222222222222222222"], ["effective", "1790466400"], ["expires", "1790552800"]]}'
+//       (a predecessor proposal for `relay`: the matching acceptance is
+//        published back, signed by the successor)
+use ncc08
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Handover to public
+    sign Handover with account
+    read Handover from public
+    relay public
+    log
+}
+
+on Handover where tags.role contains "predecessor" {
+    if not ncc08.proposal_is_valid(event.tags, event.created_at) {
+        print("proposal rejected: incomplete or backdated")
+    } else if ncc08.service(event.tags) != "relay" {
+        print("proposal ignored: this bot takes over `relay` only, not " + ncc08.service(event.tags))
+    } else {
+        // The predecessor is the proposal's own author — a real
+        // pubkey — not the successor the `p` tag addresses, and not
+        // the reason text any proposer could write.
+        let predecessor: PubKey = event.author
+        let handover = ncc08.handover_id(event.tags)
+        let service = ncc08.service(event.tags)
+        let published = publish Handover {
+            role: "successor";
+            handover: handover;
+            service: service;
+            p: predecessor;
+            e: event.id;
+            content: "";
+        } to public with account
+        print("accepted " + handover + " for " + service + ": " + text(published.accepted) + "/1 relays")
+    }
+}
+
+on Handover where tags.role contains "successor" {
+    if not ncc08.acceptance_is_valid(event.tags) {
+        print("acceptance rejected: incomplete")
+    } else {
+        print("acceptance " + ncc08.handover_id(event.tags) + " acknowledges " + ncc08.counterparty(event.tags) + " for " + ncc08.service(event.tags))
+    }
+}

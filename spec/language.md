@@ -94,6 +94,15 @@ the program's own or an imported module's — falling back to `Note` as kind 1
 computed at run time lower by the same rules at the publication site; a
 computed value that is not a scalar or a list of scalars is an error there.
 
+A tag may need more than two columns (`operator_for` carries a pubkey and a
+service id, `rule` a policy key and value). A field value can carry those
+extra columns: a module's builder function returns them joined by U+001F
+(unit separator), the runtime keeps them inside the field's single text
+value for scripts, and `wire_tags` splits them back out when an event is
+signed, so the tag reaches relays with every column while an ordinary value
+is unchanged. A reader splits the same way — the `ncc10` and `ncc11`
+extractors do — and a `publish` of a plain value still emits two columns.
+
 Tags are algebraic values, not lists of strings. For example,
 `Person(alice)` and `ReplyTo(parent)` lower according to their module definition.
 Unknown tags are preserved as `RawTag` when reading but require the explicit

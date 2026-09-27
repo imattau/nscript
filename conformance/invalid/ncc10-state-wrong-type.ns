@@ -1,0 +1,17 @@
+// error: E1001 nominal-type-mismatch
+// NCC-10's state check takes the state value itself, a Text, so the
+// delivered event's `created_at` (an Int) cannot stand in for it. The
+// recognised states are the five the convention names (§4); time is not
+// one of them and is never read inside the check.
+use ncc10
+use nip01
+
+permissions {
+    log
+}
+
+on ServiceState {
+    if ncc10.state_is_recognised(event.created_at) {
+        print("state is recognised")
+    }
+}

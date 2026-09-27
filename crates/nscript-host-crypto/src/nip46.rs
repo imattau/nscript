@@ -349,14 +349,13 @@ impl Nip46Transport for RealNip46Transport {
                 tags.iter()
                     .filter_map(|tag| {
                         let values = tag.as_array()?;
-                        Some((
-                            values.first()?.as_str()?.to_owned(),
-                            values
-                                .get(1)
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .to_owned(),
-                        ))
+                        let name = values.first()?.as_str()?.to_owned();
+                        let columns = values
+                            .iter()
+                            .skip(1)
+                            .map(|column| column.as_str().unwrap_or(""))
+                            .collect::<Vec<_>>();
+                        Some((name, nscript_runtime::join_tag_columns(&columns)))
                     })
                     .collect()
             })

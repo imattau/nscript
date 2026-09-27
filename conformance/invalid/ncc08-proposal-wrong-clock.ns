@@ -1,0 +1,19 @@
+// error: E1001 nominal-type-mismatch
+// NCC-08's proposal check is judged against a clock the caller holds:
+// `proposal_is_valid`'s first parameter is the event's tags and its second
+// is an Int, so `event.content` (a Text) cannot stand in for the time. The
+// same caller-held-time rule every NCC validator follows applies here —
+// scripts hold no wall clock (spec/language.md §9), so a reader passes the
+// delivered proposal's `created_at`.
+use ncc08
+use nip01
+
+permissions {
+    log
+}
+
+on Handover where tags.role contains "predecessor" {
+    if ncc08.proposal_is_valid(event.tags, event.content) {
+        print("proposal is valid")
+    }
+}

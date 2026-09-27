@@ -8,7 +8,7 @@ existing protocols) and the workflow-first rule in `ROADMAP.md` (no protocol
 breadth without a concrete workflow and conformance need).
 
 The NCC repository is pinned at commit
-`fe5981fd83becb0de53386569ede5604ae2ca7ef`. A release MUST record a new pin
+`adad77869d2a3be2ce8c5f673b88711e02df0bfb`. A release MUST record a new pin
 when NCC lowering behaviour changes, mirroring the NIP review-commit rule in
 [`spec/README.md`](spec/README.md).
 
@@ -23,6 +23,17 @@ when NCC lowering behaviour changes, mirroring the NIP review-commit rule in
 | 06 | none (behaviour only) | 02 + 05 | Client/sidecar conflict, caching, and transport policy |
 | 07 | 30062 manifest | composes 02/05 | `d=capabilities` with repeatable `cap` tags |
 | 08 | 1070 proposal + acceptance | 02 (service scope) | Two-event identity handover with chains and conflict rules |
+| 09 | 30064 authority grant | 02 (service scope) | Scoped operator authority: `d=<service-id>:<operator>`, `service`, `p`, `status` (`active`/`revoked`), repeatable `scope` tags, optional `expiration`/`valid_from` |
+| 10 | 30065 state | 02 (service id); optionally 09 | Operational state (`operational`/`degraded`/`maintenance`/`unavailable`/`retiring`), direct `d=<service-id>` or operator `d=<pubkey>:<service-id>` + three-column `operator_for` |
+| 11 | 30067 policy | 02 + 05 (rules over both); 09/10 rule namespaces | Portable trust policy: named `d`, three-column `rule <key> <value>` and `trust certifier <pubkey>`, private rules NIP-44-encrypted in `content` |
+
+The table covers every convention the pin contains — all nine reviewed and
+all scheduled below. Upstream has added nothing beyond these; the only
+commits after `fe5981f` create `ncc-09`, `ncc-10` and `ncc-11` (and their
+reference implementations), so the pin was bumped to `adad778`, their merge
+commit, to record the text these stages lower. Upstream has never contained
+`ncc-01` or `ncc-04` — checked against the repository's full history — so
+those gaps are upstream's own numbering, not conventions this plan skipped.
 
 ## Upstream prerequisites
 
@@ -45,6 +56,27 @@ off `71238583`. They are kept for the record because each one gated a stage:
    now on surface size and its Concord-governance dependency rather than on
    an upstream defect.
 
+## Pin history
+
+The pin has moved twice, each move recorded here:
+
+- `71238583` → `fe5981f` before stage 3: upstream `3a45e72` added the `d`
+  tag NCC-02's addressable events were missing and made NCC-03's kinds
+  normative (Prerequisites above).
+- `fe5981f` → `adad778` before stages 8–10: upstream added NCC-09, NCC-10
+  and NCC-11. The drift is purely additive — 6904 insertions across 32
+  files with 0 deletions, every one inside the new `ncc-09`/`ncc-10`/
+  `ncc-11` folders or the repository index `README.md` — so no convention
+  lowered by stages 1–7 changed text, and every module and vector reference
+  moved to the new commit.
+
+Stages 8–10 also needed an infrastructure step the earlier stages did not:
+NCC-10's `operator_for` and NCC-11's `rule`/`trust certifier` are
+three-column wire tags, while the runtime event model carried only
+`(name, value)` pairs. A tag value now carries further columns joined by
+U+001F (unit separator); `wire_tags` splits them onto the wire and parsing
+rejoins them, so a three-column tag round-trips and a two-column tag is
+unchanged (`spec/language.md` §3, `docs/HANDLERS.md`).
 ## Phase 0 — groundwork
 
 **0a. Namespace and pinning.** Reserve the `ncc` module namespace
@@ -146,6 +178,9 @@ adoption (or an explicit non-adoption note).
 | 5 | NCC-06 | Behaviour composed from stages 3 and 4 | Identity-first endpoint resolution in deploy/monitor workflows |
 | 6 | NCC-08 | Multi-event state machine after the anchor exists | Documented bot identity rotation workflow |
 | 7 | NCC-03 | Largest surface; four event kinds and a Concord-governance dependency, so it lands last | Builds on `poll-tally-bot.ns` and Concord governance |
+| 8 | NCC-09 | Delegated authority the service cluster builds on; needs the pin bump | Principals publish scoped, time-bounded operator grants |
+| 9 | NCC-10 | Current state over the same service identity; composes stage 8 | Services and their authorised operators publish operational state |
+| 10 | NCC-11 | Policy data over the whole service stack | Clients and agents read one portable trust policy |
 
 ## Stage 1 — NCC-07 capability manifest *(Done)*
 
@@ -312,8 +347,8 @@ not something a script can do, so no function here claims to have done it.
 ## Stage 4 — NCC-05 encrypted locators *(Done)*
 
 The first encrypted payload, composing `nip44` rather than adding a host
-capability of its own. Shipped the full recipe against the same `fe5981f`
-pin:
+capability of its own. Shipped the full recipe against the pin of the day,
+`fe5981f`:
 
 - **Module** `modules/std/ncc05/0.1.0.nsm`, registered in `BUILTINS`, with
   `use nip44 @ "^0.1"` and a `reference` pinned to the convention README. It
@@ -387,6 +422,265 @@ stage ran into, none of them NCC-specific:
    written as a literal — `ncc05.payload` builds it as a value instead,
    which is what §5.3 wants anyway.
 
+## Stage 5 — NCC-06 service profile *(Done)*
+
+A profile convention: no event kinds, no new host capability — every rule
+it states is client policy over records stages 3 and 4 already ship. The
+rules live in both places policy can live (open decision 2, resolved:
+both), because the split is forced by the language: a script sees one
+event at a time and keeps no store, so the cross-record half cannot be a
+script at all.
+
+- **Module** `modules/std/ncc06/0.1.0.nsm`, registered in `BUILTINS`, with
+  `use ncc02`/`use ncc05`, the pinned `adad778` reference, no events and
+  eight pure functions: `identity_reference`/`identity_key` read §Scope's
+  identity reference (the hex pubkey a resolver searches records by; empty
+  text for a URL that names a host or whose `npub` checksum fails — the
+  reference itself is never dereferenced); `record_outranks` is §A's
+  deterministic selection (usable beats unusable, then the greater
+  freshness marker, then the lexicographically greatest event id) and
+  `locator_marker` computes §A.2's marker (the payload's `updated_at`,
+  else the record's `created_at`); `transport_rank` scores one URL into
+  §E.1's tiers (`0` secure with `k`, `1` secure without, `2` onion — the
+  family decides before the scheme — `3` insecure), `transport_order`
+  stably regroups a list into those tiers keeping the payload's order
+  within each, and `k_required` reports §E.2's verification obligation;
+  `freshness_mode` renders §D's verdict, `fresh`, `stale` (inside the
+  bounded window §D.3 requires to be surfaced) or `failed`.
+- **Resolver** in `nscript-runtime`: `identity_reference_key`, a public
+  `compute_event_id` (§A step 1 recomputes an id before its signature can
+  mean anything), and `resolve_identity_reference` — query every concrete
+  bootstrap relay for kinds 30059/30058 by the decoded pubkey (bounded by
+  `RECORD_QUERY_LIMIT` × `RECORD_QUERY_BATCHES`), discard under §A step 1
+  (author, kind, id recomputation, signature, duplicates), select under
+  §A, walk §E.1 from the chosen locator's payload — never an identity
+  reference — with the `u` fallback, and answer `IdentityResolution`
+  (endpoint, source, §E.1 rank, `k`, `k_verified: false`, candidate and
+  relay counts). Signature verification is injected as a callback, so the
+  resolver itself stays free of host crypto and is testable against a
+  scripted `SubscriptionHost`.
+- **`deploy` integration**: `--relay` accepts identity references, which
+  are partitioned out and never connected. The concrete relays stand in
+  for the publication relay set (§C.2 — with none, deploy refuses at
+  exit 2 before connecting anything), each identity is resolved before
+  anything publishes, and the report prints the candidate count, the
+  short ids of both selected records, the endpoint with its source and
+  §E.1 rank, and the pinned `k` **with `verified: no`** — §E.2's TLS key
+  pinning is not implemented, and a printed key must not imply one was
+  checked. The resolved endpoint joins the pool; a failed resolution
+  exits 1 with the reason, including the honest no-cache note that §D.3's
+  stale fallback has nothing to fall back on.
+- **Tests**: pure-function unit tests (§A's rule including unusable
+  incumbents and id tie-breaks, §E.1's tiering table, §E.2, §D's three
+  verdicts, §Scope decoding); resolver unit tests over a scripted relay
+  (selection, endpoint ordering, the `u` fallback, `RelayUnavailable`,
+  every error branch); and a `deploy_with_real_hosts` end-to-end test
+  that answers the §C.2 query with real signed records and asserts the
+  startup publish lands on the resolved endpoint, never the reference.
+- **Fixtures**: `conformance/valid/ncc06-service-profile.ns` (a sidecar
+  publishing its Service Record at startup and — on a relocate signal — a
+  NIP-44-encrypted Locator, with readers judging both under the profile)
+  and `conformance/invalid/ncc06-locator-marker-wrong-clock.ns`
+  (`locator_marker(event.created_at, ...)` → `E1001`, the same clock
+  inversion the NCC-02 and NCC-05 fixtures make).
+- **Wire vector** `conformance/vectors/ncc06.json`, two entries in
+  declaration order — the Service Record (kind 30059, `content: ""`) and
+  the Locator (kind 30058, `content: null`) the fixture lowers — asserted
+  against `inspect --json` by a CLI test.
+- **Worked example** `examples/ncc06-service-monitor.ns`: a reader that
+  rejects or tiers delivered Service Records (validity → §Scope guard →
+  §E.1/§E.2 report) and renders §D's fresh/stale/failed verdict with §E.1
+  ordering for Locators, run end to end by a CLI test.
+- **Infrastructure adoption**: identity-first endpoint resolution — a
+  deployed program is addressed (and `--relay`d) by identity reference,
+  `deploy` resolves it through the publication relay set before anything
+  publishes, and the monitor example is the reader half of the same
+  workflow, judging every record it receives under the profile.
+- **Docs**: spec subsection (Community conventions → NCC-06 service
+  profile), matrix row, and `docs/DEPLOY.md`'s identity-reference
+  section.
+
+Scope notes and follow-ups: §A selection across several candidates and
+§D.3's cached stale fallback cannot live in a script (one event per
+handler, no store) — they live in `deploy`'s resolver, which by contrast
+keeps no cache either, so no stale record is ever used there and the
+error says so; `k` verification (§E.2) is unimplemented and reported as
+`verified: no` everywhere the `k` is printed; and the checker reports
+scalar↔scalar argument mismatches only, so a `List<Text>` passed where
+`Text` expected is not flagged — the invalid fixture pins a scalar
+mismatch for that reason. The fixture's top-level flow passes literals
+to its operation calls because a top-level operation's arguments are
+lowered statically (identifiers there read as `PubKey` names), which is
+why the encrypted Locator publish sits in a handler like NCC-05's.
+
+## Stage 6 — NCC-08 service identity rotation and handover *(Done)*
+
+A multi-event state machine on top of the stage-3 anchor: continuity moves
+only when a predecessor's proposal and the named successor's acceptance
+both exist. The convention adds no authority transfer — it preserves
+continuity between two identities without merging them — and it uses
+regular, non-replaceable kind-1070 events because a completed handover is
+historical evidence, not latest state.
+
+- **Module** `modules/std/ncc08/0.1.0.nsm`, registered in `BUILTINS`, with
+  `use ncc02`, the pinned `adad778` reference, one validator
+  (`handover_role` accepts `predecessor` or `successor`) and one regular
+  event `Handover` (kind 1070, `role`/`handover`/`service`/`p`/`e`/
+  `effective`/`expires`/`reason`), plus twelve pure functions: `role`,
+  `handover_id`, `service` and `counterparty` extract a delivered event's
+  side, transition identifier, service and other identity;
+  `proposal_is_valid(tags, created_at)` requires §8.1's shape and refuses a
+  backdated `effective`; `acceptance_is_valid(tags)` requires §9.1's shape;
+  `pair_is_valid(...)` checks §10 across both events — authors, tags, the
+  exact proposal reference (`EventId`), shared identifiers, order and the
+  `expires` window — from values the caller supplies;
+  `effective_time(has_effective, effective, acceptance_created_at)` renders
+  §11's moment; `state(accepted, effective_at, now)` answers
+  proposed/accepted/effective; and `conflicts_with(...)`, `continues(...)`
+  and `chain_has_loop(chain)` are §15's ambiguity, §14's link and §14's
+  loop, all as pure data with no clock read inside a host.
+- **Runtime** dispatch in `nscript-runtime`'s shared pure-function registry
+  beside the other NCC modules, with a unit test covering extraction,
+  proposal/acceptance/pair validation (including wrong successor, wrong
+  predecessor, wrong reference, mismatched identifiers, ordering, expiry
+  and malformed timestamps), effective time, the three states, conflicts,
+  chain links, loop detection and wrong argument shapes.
+- **Fixtures**: `conformance/valid/ncc08-handover.ns` (a predecessor
+  publishing its proposal and readers judging delivered proposals and
+  acceptances, each half on its own) and
+  `conformance/invalid/ncc08-proposal-wrong-clock.ns`
+  (`proposal_is_valid(event.tags, event.content)` → `E1001`, the scalar
+  clock inversion the other NCC fixtures make).
+- **Wire vector** `conformance/vectors/ncc08.json`: the predecessor
+  proposal's kind 1070 and `role`/`handover`/`service`/`p`/`effective`/
+  `expires`/`reason` tags, asserted against `inspect --json`.
+- **Worked example** `examples/ncc08-rotation-bot.ns`: the successor side
+  of the workflow — it validates a predecessor's proposal for its service
+  and publishes the matching acceptance (real predecessor pubkey from the
+  event author, exact proposal id as `e`), and reports acceptances it
+  receives, run end to end by a CLI test.
+- **Docs**: spec subsection (Community conventions → NCC-08 service
+  identity rotation) and matrix row.
+
+Scope notes and follow-ups: §10's pair check and §14's chain walk span two
+or more events, and a handler sees one event at a time with no store, so
+they are pure functions over caller-supplied values rather than host
+state — the successor example completes a handover from one delivered
+event, and the pair/chain functions are unit-tested and documented for a
+client that holds both halves. Signatures stay the host's business (§10.2),
+not a module check. And publish-field types are not nominally checked: the
+successor example publishes `p: event.author` (a `PubKey`) into a field the
+event declares `Text`, and it lowers to the hex tag correctly because only
+module function-call arguments are type-checked — the same checker gap the
+NCC-06 invalid fixture worked around.
+
+## Stage 8 — NCC-09 scoped operator authority *(Done)*
+
+The first delegated-authority convention, and the first stage written
+against the bumped `adad778` pin. A principal grants an operator named
+scopes for one service; the operator stays its own identity and the
+convention defines the container, not what a scope means.
+
+- **Module** `modules/std/ncc09/0.1.0.nsm`, registered in `BUILTINS`, with
+  `use ncc02`, the `adad778` reference, a `grant_status` validator and the
+  addressable `AuthorityGrant` event (kind 30064: `d`, `service`, `p`,
+  `status`, `scope` list, `expiration`, `valid_from`, `note`), plus ten
+  pure functions: `operator`/`service`/`status`/`scopes` extract;
+  `address(service, operator)` builds the `<service>:<operator>` `d`;
+  `scope_namespace`/`scope_is_valid` classify §8's `ncc:`/`pubkey:` forms
+  and leave everything else opaque; `grant_starts_at(tags, created_at)`
+  renders §6.4's start; `grant_is_valid(tags, now)` is §13's validity
+  (active, one operator, a service, inside the window, malformed fails
+  closed); and `authorises(tags, scope, now)` is §12's authority check.
+- **Runtime** dispatch with a unit test covering extraction, the two scope
+  namespaces, §6.4's start, the window boundaries (past `expiration`,
+  before `valid_from`, revoked, two operators, malformed timestamps) and
+  the scope test.
+- **Fixtures**: `conformance/valid/ncc09-authority-grant.ns` (a principal
+  publishing a scoped, time-bounded grant and readers judging delivered
+  grants) and `conformance/invalid/ncc09-grant-wrong-clock.ns`
+  (`grant_is_valid(event.tags, event.content)` → `E1001`).
+- **Wire vector** `conformance/vectors/ncc09.json` (kind 30064 with `d`,
+  `service`, `p`, `status`, `scope`, `valid_from`, `expiration`, `note`).
+- **Worked example** `examples/ncc09-operator-grant-bot.ns`: the principal
+  publishes the grant and reports a received grant's side, start, scopes
+  and whether `ncc:10:publish` is delegated, run end to end by a CLI test.
+- **Docs**: spec subsection and matrix row.
+
+## Stage 9 — NCC-10 service operational state *(Done)*
+
+Current operational state over the service identity, published by the
+service directly or by an NCC-09 operator. This is the stage that needed
+the multi-column tag infrastructure: an operator state names its principal
+in a three-column `operator_for`.
+
+- **Module** `modules/std/ncc10/0.1.0.nsm`, registered in `BUILTINS`, with
+  `use ncc02`/`use ncc09`, a `state_value` validator and the addressable
+  `ServiceState` event (kind 30065: `d`, `service`, `state`, `since`,
+  `expected_until`, `incident`, `successor`, `operator_for`), plus eight
+  pure functions: `state`/`state_service` extract,
+  `state_is_recognised` checks §4's five values, `is_direct` separates a
+  service state from an operator's, `principal`/`operator_service` read
+  the two columns of `operator_for` (its name avoids colliding with the
+  `ncc09.service` export scripts load together), and
+  `operator_for_tag`/`operator_address` build the three-column tag value
+  and the `<pubkey>:<service>` `d`.
+- **Runtime** dispatch with a unit test covering extraction, recognition,
+  direct-versus-operator, the builder's two columns and the address.
+- **Fixtures**: `conformance/valid/ncc10-service-state.ns` (a direct
+  `maintenance` state with `since`/`expected_until`/`incident`, and
+  readers that report direct and operator states) and
+  `conformance/invalid/ncc10-state-wrong-type.ns`
+  (`state_is_recognised(event.created_at)` → `E1001`).
+- **Wire vector** `conformance/vectors/ncc10.json` (kind 30065 direct
+  state).
+- **Worked example** `examples/ncc10-status-bot.ns`: an authorised
+  operator publishes a three-column `operator_for` state under a principal
+  it does not impersonate and reports the states it sees, run end to end
+  by a CLI test.
+- **Docs**: spec subsection and matrix row.
+
+## Stage 10 — NCC-11 portable trust policy *(Done)*
+
+Policy data over the whole stack: a named, addressable document of
+namespaced rules and trusted certifiers that a client or agent applies to
+its own decisions. Its `rule` and `trust certifier` tags are three-column,
+so it stands on the same infrastructure as stage 9.
+
+- **Module** `modules/std/ncc11/0.1.0.nsm`, registered in `BUILTINS`, with
+  `use ncc02`/`use ncc05`, a `present` validator and the addressable
+  `TrustPolicy` event (kind 30067: `d`, `rule` list, `trust` list, free
+  `content`), plus nine pure functions: `policy_id`; `rule_keys`,
+  `rule_value` (contradictory duplicates answer empty, §23),
+  `rule_value_is` and `certifiers` read the three-column tags;
+  `rule_is_known` and `rule_value_is_valid` encode §9's rules and their
+  allowed values while leaving unknown keys opaque (§24); and `rule` and
+  `certifier` build the two three-column tag values.
+- **Runtime** dispatch with a unit test covering the builders' columns,
+  rule extraction, conflict handling, certifiers, recognition and value
+  validation (including the structured `max-stale-age` and
+  `transport:<scheme>` shapes).
+- **Fixtures**: `conformance/valid/ncc11-trust-policy.ns` (a client that
+  publishes a policy from a handler — a `.ns` literal cannot carry the tag
+  column separator, so the rules are built by the module — and reads a
+  delivered policy's rules and certifiers) and
+  `conformance/invalid/ncc11-rule-value-wrong-type.ns`
+  (`rule_value(event.tags, event.created_at)` → `E1001`).
+- **Wire vector** `conformance/vectors/ncc11.json` (kind 30067; the
+  checked snapshot carries the literal `d`, since the rules are computed).
+- **Worked example** `examples/ncc11-policy-client.ns`: a client
+  publishing a policy and evaluating a received one, run end to end by a
+  CLI test.
+- **Deploy end to end**: `deploy_publishes_three_column_policy_tags` runs
+  the real relay path — through a real NIP-46 signer — and asserts the
+  exact three-column `rule` and `trust certifier` wire tags, the coverage
+  the checked vector cannot give.
+- **Docs**: spec subsection and matrix row. This is also where Stage 5's
+  two printed-but-unimplemented gaps (NCC-06 §E.2 key pinning and §D.3
+  stale fallback) gain a data home: `ncc:02:key-pinning` and
+  `ncc:05:stale-fallback` are the policy keys a client would enforce, while
+  the host still performs neither.
+
 ## Guardrails
 
 - No NCC-specific syntax: conventions arrive as typed modules with records,
@@ -402,5 +696,15 @@ stage ran into, none of them NCC-specific:
 ## Open decision points
 
 1. NCC-03: fix the upstream kind model, or stay deferred (blocks stage 7 only).
-2. Stage 5: identity-reference resolution inside `deploy`, or script-level
-   resolution only (decide at stage 5).
+2. ~~Stage 5: identity-reference resolution inside `deploy`, or script-level
+   resolution only~~ *(resolved at stage 5: both — §A selection, the §E.1
+   walk and §C.2 querying live in `deploy`'s resolver, because a script
+   sees one event at a time and keeps no store; §Scope, §E.1/E.2 tiering
+   and §D verdicts stay script-visible as `ncc06` pure functions.)*
+3. ~~NCC-09/10/11 (added upstream after the pin): review and schedule as
+   post-Draft-0.1 stages with a pin bump, or defer until a workflow needs
+   them — none of their text exists at `fe5981f`, so lowering any of them
+   changes the pin the release records.~~ *(resolved at stages 8–10: all
+   three implemented against the bumped `adad778` pin, with the
+   multi-column tag infrastructure they required in place. The release now
+   records `adad778`.)*

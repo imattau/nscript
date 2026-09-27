@@ -1304,8 +1304,12 @@ pub fn event_from_json(value: &serde_json::Value) -> Result<crate::SignedEvent, 
                 .filter_map(|tag| {
                     let tag = tag.as_array()?;
                     let name = tag.first()?.as_str()?;
-                    let value = tag.get(1).and_then(Json::as_str).unwrap_or("");
-                    Some((name.to_owned(), value.to_owned()))
+                    let columns = tag
+                        .iter()
+                        .skip(1)
+                        .map(|column| column.as_str().unwrap_or(""))
+                        .collect::<Vec<_>>();
+                    Some((name.to_owned(), crate::join_tag_columns(&columns)))
                 })
                 .collect()
         })

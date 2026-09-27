@@ -1,0 +1,50 @@
+// NCC-11: a portable trust policy is an addressable kind-30067 event
+// carrying namespaced rules — three-column `rule` tags and `trust
+// certifier` entries — that a client applies to its own trust decisions.
+// The policy states preference, never authority: it cannot weaken a
+// mandatory protocol requirement (§22), an unknown rule is ignored (§24),
+// and a missing rule means "no preference", not allow or deny (§21).
+//
+// The rules are built by the module's pure functions rather than typed as
+// literal tag columns, because a `.ns` string literal cannot carry the
+// column separator; the runtime splits the builder's value back into the
+// three wire columns when it signs.
+//
+// Time: none of this reads a clock; the client decides when policy is
+// applied. Private rules (§16) belong in NIP-44-encrypted `content`; a
+// delivered `content` arrives as text, so a reader decrypts it with the
+// key it holds for the policy owner before combining it with these public
+// rules (§17).
+use ncc11
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish TrustPolicy to public
+    sign TrustPolicy with account
+    read TrustPolicy from public
+    relay public
+    log
+}
+
+on Note where tags.t contains "publish-policy" {
+    let pinning = ncc11.rule("ncc:02:key-pinning", "require")
+    let stale = ncc11.rule("ncc:05:stale-fallback", "allow")
+    let max_age = ncc11.rule("ncc:05:max-stale-age", "3600")
+    let certifier = ncc11.certifier("abababababababababababababababababababababababababababababababab")
+    let published = publish TrustPolicy {
+        d: "default";
+        rule: [pinning, stale, max_age];
+        trust: [certifier];
+        content: "";
+    } to public with account
+    print("policy published: " + text(published.accepted) + "/1 relays")
+}
+
+on TrustPolicy {
+    print("policy " + ncc11.policy_id(event.tags) + ": rules " + text(ncc11.rule_keys(event.tags)) + ", certifiers " + text(ncc11.certifiers(event.tags)))
+    print("key pinning " + ncc11.rule_value(event.tags, "ncc:02:key-pinning") + " (won't weaken NCC-02), stale fallback " + ncc11.rule_value(event.tags, "ncc:05:stale-fallback") + " for at most " + ncc11.rule_value(event.tags, "ncc:05:max-stale-age") + "s")
+}

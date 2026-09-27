@@ -1,0 +1,20 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/adad77869d2a3be2ce8c5f673b88711e02df0bfb/ncc-09/README.md",
+  "vectors": [
+    {
+      "type": "authority-grant",
+      "kind": 30064,
+      "content": "",
+      "tags": [
+        ["d", "relay:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        ["service", "relay"],
+        ["p", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        ["status", "active"],
+        ["scope", "ncc:10:publish"],
+        ["valid_from", "1790380000"],
+        ["expiration", "1792972000"],
+        ["note", "maintenance window coverage"]
+      ]
+    }
+  ]
+}

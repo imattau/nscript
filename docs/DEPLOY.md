@@ -17,6 +17,9 @@ nscript deploy [-M <directory>]... <file> \
     [--as <key>] [--poll-interval <seconds>] [--cycles <n>]
 ```
 
+Each `--relay` is either a concrete websocket URL or an identity reference
+(`wss://npub…`) that resolves to one — see “Identity references” below.
+
 ## What is real
 
 - **Relays.** Every `--relay` is a genuine websocket connection
@@ -35,6 +38,46 @@ nscript deploy [-M <directory>]... <file> \
   default), and repeats — until `--cycles` is reached or the process is
   interrupted. `run`'s `--event`/`--events` are one-shot by design; this is
   the genuine "keep watching" loop those were never meant to be.
+
+## Identity references (`wss://npub…`)
+
+`--relay` also accepts an identity reference — a URL whose authority is an
+`npub`, NCC-06 §Scope — which is never connected to directly: such a URL
+names a key, not a socket. Before anything publishes, `deploy` resolves it
+under the profile:
+
+1. **Bootstrap.** At least one *concrete* `--relay` must stand in for the
+   identity's publication relay set (§C.2). With none, deploy refuses
+   (exit 2) rather than guessing an endpoint.
+2. **Query (§C.2).** Each concrete relay is asked for the identity's NCC-02
+   Service Records and NCC-05 Locators — kinds 30059 and 30058, filtered by
+   the decoded pubkey — through one bounded subscription: §A is owed only
+   the newest candidates, not a flood.
+3. **Discard (§A step 1).** Candidates are rejected in order of cheapest
+   check: wrong author, wrong kind, an event id that does not recompute over
+   this body, a signature that does not verify, then duplicates.
+4. **Select (§A).** Usable beats unusable, the greater freshness marker
+   wins (`created_at` for service records; the locator's `updated_at`, else
+   its `created_at`), and an exact tie falls to the lexicographically
+   greatest event id — two relays holding the same candidates settle on the
+   same record.
+5. **Walk (§E.1).** The endpoint comes from the selected locator's payload,
+   regrouped into §E.1's tiers (secure with `k`, secure without, onion,
+   insecure), never from an endpoint that is itself an identity reference —
+   §Scope does not recurse — falling back to the service record's `u` when
+   no usable locator offers one.
+6. **Report.** What was selected is printed: candidate count, the short ids
+   of both records, the endpoint with its source and §E.1 rank, and the `k`
+   the record pinned **with `verified: no`** — TLS key pinning (§E.2) is not
+   implemented, and a printed key must not imply one was checked. The
+   endpoint then joins the pool and the deploy continues through it.
+
+A resolution that finds no usable endpoint fails the deploy (exit 1) with
+the reason — no records answered, none usable at this clock, or no concrete
+endpoint anywhere — instead of connecting to something. §D.3's stale
+fallback is absent for the same reason `run`'s fakes keep no state:
+`deploy` caches nothing, so there is no previously valid record to fall
+back on, and the error says exactly that.
 
 ## What is still simulated, on purpose
 
@@ -96,4 +139,7 @@ both real websockets, both using the same real NIP-44/Schnorr code the
 client does. It proves the whole chain: connect, provision a real signer,
 publish a real signed startup note, receive a real live event over a real
 subscription, dispatch the handler, and publish a real signed reply — not
-just that each piece works in isolation.
+just that each piece works in isolation. A third test drives the identity
+path end to end: a bootstrap relay answers the §C.2 record query with real
+signed NCC-02/NCC-05 events, the resolver selects under §A, and the
+startup publish reaches the resolved endpoint — never the reference.

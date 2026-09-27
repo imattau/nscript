@@ -1,0 +1,15 @@
+// error: E1001 nominal-type-mismatch
+// NCC-11's `rule_value` takes the policy's tags and a policy key, both
+// Text; the delivered event's `created_at` is an Int and cannot name a
+// rule. Policy keys are opaque strings compared by spelling, never by
+// position or time.
+use ncc11
+use nip01
+
+permissions {
+    log
+}
+
+on TrustPolicy {
+    print(ncc11.rule_value(event.tags, event.created_at))
+}

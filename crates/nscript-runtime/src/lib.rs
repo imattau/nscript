@@ -293,13 +293,54 @@ pub struct UnsignedEvent {
 
 impl UnsignedEvent {
     /// Serialize typed two-column tags into ordinary Nostr tag arrays.
+    ///
+    /// A tag value may itself carry further columns joined by
+    /// [`TAG_COLUMN_SEPARATOR`] (see [`join_tag_columns`]); here they are
+    /// split back out, so a three-column tag like NCC-10's
+    /// `["operator_for", pubkey, service]` or NCC-11's
+    /// `["rule", key, value]` reaches the wire with every column, and an
+    /// ordinary two-column tag is unchanged.
     #[must_use]
     pub fn wire_tags(&self) -> Vec<Vec<String>> {
         self.tags
             .iter()
-            .map(|(name, value)| vec![name.clone(), value.clone()])
+            .map(|(name, value)| {
+                let mut columns = Vec::with_capacity(2);
+                columns.push(name.clone());
+                columns.extend(value.split(TAG_COLUMN_SEPARATOR).map(str::to_owned));
+                columns
+            })
             .collect()
     }
+}
+
+/// The separator the runtime uses to keep a tag's extra wire columns inside
+/// its single `(name, value)` pair: Nostr tags are arrays of strings, but the
+/// runtime's event model carries the common two-column shape directly, so a
+/// tag with more columns — `["rule", key, value]`, `["operator_for", pubkey,
+/// service]` — stores every column after the first in `value`, joined by
+/// U+001F (unit separator). [`UnsignedEvent::wire_tags`] splits them back onto
+/// the wire, parsing rejoins them, and a pure function reads them with
+/// [`tag_value_columns`]. The character cannot appear in the printed tag
+/// values these conventions use.
+pub const TAG_COLUMN_SEPARATOR: char = '\u{1f}';
+
+/// The columns of a tag value: one for an ordinary two-column tag, more when
+/// the value carries [`TAG_COLUMN_SEPARATOR`]-joined columns. The tag's name
+/// is not part of the value passed here.
+#[must_use]
+pub fn tag_value_columns(value: &str) -> Vec<&str> {
+    value.split(TAG_COLUMN_SEPARATOR).collect()
+}
+
+/// Join a tag's columns after its name into one runtime value, the inverse of
+/// [`tag_value_columns`] and what a module's builder function returns for a
+/// multi-column tag: `join_tag_columns(&[key, value])` is how a script writes
+/// the `value` of a `rule` tag.
+#[must_use]
+pub fn join_tag_columns(columns: &[&str]) -> String {
+    let separator = TAG_COLUMN_SEPARATOR.to_string();
+    columns.join(&separator)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3514,10 +3555,57 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("ncc05", "payload_caps") => Some(ncc05_payload_caps as PureFunction),
         ("ncc05", "payload_is_fresh") => Some(ncc05_payload_is_fresh as PureFunction),
         ("ncc05", "record_is_fresh") => Some(ncc05_record_is_fresh as PureFunction),
+        ("ncc06", "identity_reference") => Some(ncc06_identity_reference as PureFunction),
+        ("ncc06", "identity_key") => Some(ncc06_identity_key as PureFunction),
+        ("ncc06", "record_outranks") => Some(ncc06_record_outranks as PureFunction),
+        ("ncc06", "locator_marker") => Some(ncc06_locator_marker as PureFunction),
+        ("ncc06", "transport_rank") => Some(ncc06_transport_rank as PureFunction),
+        ("ncc06", "transport_order") => Some(ncc06_transport_order as PureFunction),
+        ("ncc06", "k_required") => Some(ncc06_k_required as PureFunction),
+        ("ncc06", "freshness_mode") => Some(ncc06_freshness_mode as PureFunction),
         ("ncc07", "capabilities") => Some(ncc07_capabilities as PureFunction),
         ("ncc07", "supports") => Some(ncc07_supports as PureFunction),
         ("ncc07", "capability_namespace") => Some(ncc07_capability_namespace as PureFunction),
         ("ncc07", "capability_is_valid") => Some(ncc07_capability_is_valid as PureFunction),
+        ("ncc08", "role") => Some(ncc08_role as PureFunction),
+        ("ncc08", "handover_id") => Some(ncc08_handover_id as PureFunction),
+        ("ncc08", "service") => Some(ncc08_service as PureFunction),
+        ("ncc08", "counterparty") => Some(ncc08_counterparty as PureFunction),
+        ("ncc08", "proposal_is_valid") => Some(ncc08_proposal_is_valid as PureFunction),
+        ("ncc08", "acceptance_is_valid") => Some(ncc08_acceptance_is_valid as PureFunction),
+        ("ncc08", "pair_is_valid") => Some(ncc08_pair_is_valid as PureFunction),
+        ("ncc08", "effective_time") => Some(ncc08_effective_time as PureFunction),
+        ("ncc08", "state") => Some(ncc08_state as PureFunction),
+        ("ncc08", "conflicts_with") => Some(ncc08_conflicts_with as PureFunction),
+        ("ncc08", "continues") => Some(ncc08_continues as PureFunction),
+        ("ncc08", "chain_has_loop") => Some(ncc08_chain_has_loop as PureFunction),
+        ("ncc09", "operator") => Some(ncc09_operator as PureFunction),
+        ("ncc09", "service") => Some(ncc09_service as PureFunction),
+        ("ncc09", "status") => Some(ncc09_status as PureFunction),
+        ("ncc09", "scopes") => Some(ncc09_scopes as PureFunction),
+        ("ncc09", "address") => Some(ncc09_address as PureFunction),
+        ("ncc09", "scope_namespace") => Some(ncc09_scope_namespace as PureFunction),
+        ("ncc09", "scope_is_valid") => Some(ncc09_scope_is_valid as PureFunction),
+        ("ncc09", "grant_starts_at") => Some(ncc09_grant_starts_at as PureFunction),
+        ("ncc09", "grant_is_valid") => Some(ncc09_grant_is_valid as PureFunction),
+        ("ncc09", "authorises") => Some(ncc09_authorises as PureFunction),
+        ("ncc10", "state") => Some(ncc10_state as PureFunction),
+        ("ncc10", "state_service") => Some(ncc10_state_service as PureFunction),
+        ("ncc10", "state_is_recognised") => Some(ncc10_state_is_recognised as PureFunction),
+        ("ncc10", "is_direct") => Some(ncc10_is_direct as PureFunction),
+        ("ncc10", "principal") => Some(ncc10_principal as PureFunction),
+        ("ncc10", "operator_service") => Some(ncc10_operator_service as PureFunction),
+        ("ncc10", "operator_for_tag") => Some(ncc10_operator_for_tag as PureFunction),
+        ("ncc10", "operator_address") => Some(ncc10_operator_address as PureFunction),
+        ("ncc11", "policy_id") => Some(ncc11_policy_id as PureFunction),
+        ("ncc11", "rule_keys") => Some(ncc11_rule_keys as PureFunction),
+        ("ncc11", "rule_value") => Some(ncc11_rule_value as PureFunction),
+        ("ncc11", "rule_value_is") => Some(ncc11_rule_value_is as PureFunction),
+        ("ncc11", "certifiers") => Some(ncc11_certifiers as PureFunction),
+        ("ncc11", "rule_is_known") => Some(ncc11_rule_is_known as PureFunction),
+        ("ncc11", "rule_value_is_valid") => Some(ncc11_rule_value_is_valid as PureFunction),
+        ("ncc11", "rule") => Some(ncc11_rule as PureFunction),
+        ("ncc11", "certifier") => Some(ncc11_certifier as PureFunction),
         _ => None,
     }
 }
@@ -4172,6 +4260,679 @@ fn ncc05_record_is_fresh(arguments: &[OperationValue]) -> Result<OperationValue,
     Ok(OperationValue::Bool(addressed && fresh && unexpired))
 }
 
+// ---------------------------------------------------------------------------
+// NCC-06: the profile a service adopts over NCC-02 and NCC-05. It adds no
+// event kinds; every decision here is the client's, deterministic and local
+// — how an identity reference reads (§Scope), which of several candidate
+// records wins (§A), and which endpoint to prefer when they disagree (§E).
+// ---------------------------------------------------------------------------
+
+/// NCC-06 §Scope: the 64-hex pubkey a URI names when its authority is an
+/// `npub` — `wss://npub1...`, `https://npub1...`, in whatever scheme,
+/// userinfo, port and path surround it. Such a URI is an *identity
+/// reference*: §Scope forbids dereferencing it directly, so a resolver
+/// searches NCC-02 Service Records and NCC-05 Locators by this key first.
+/// A URL that names a hostname, an unbracketed IPv6 address, a bracketed
+/// literal, or an `npub` with a bad checksum answers `None`.
+#[must_use]
+pub fn identity_reference_key(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    if scheme.is_empty() {
+        return None;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if host.starts_with('[') {
+        return None;
+    }
+    let host = host.split(':').next().unwrap_or(host);
+    decode_npub(host).ok()
+}
+
+/// NCC-06 §Scope: whether a URL is an identity reference and therefore
+/// MUST NOT be dereferenced — clients resolve it through NCC-02 and
+/// NCC-05 first, and a service refuses it outright.
+fn ncc06_identity_reference(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(url)] = arguments else {
+        return Err(invalid("ncc06.identity_reference"));
+    };
+    Ok(OperationValue::Bool(identity_reference_key(url).is_some()))
+}
+
+/// The key an identity reference decodes to — the pubkey a resolver
+/// searches records by (§Scope). A URL that is not an identity reference
+/// answers empty text, the same "this tells me nothing" convention
+/// `ncc02`'s extractors use, so a script can branch on the answer
+/// without holding the error path.
+fn ncc06_identity_key(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(url)] = arguments else {
+        return Err(invalid("ncc06.identity_key"));
+    };
+    Ok(OperationValue::Text(
+        identity_reference_key(url).unwrap_or_default(),
+    ))
+}
+
+/// NCC-06 §A's deterministic selection rule, shared by both record types:
+/// whether a candidate displaces the incumbent. Records unusable at the
+/// caller's `now` — invalid, expired or stale, having been discarded by
+/// §A steps 1–2 before selection — never displace anything, so the first
+/// candidate of an unusable set stays put. Among usable records the
+/// greater freshness marker wins (`created_at` for §A.1 Service Records,
+/// the NCC-05 `updated_at` else `created_at` for §A.2 Locators — the
+/// caller computes the marker, this rule only compares), and an exact tie
+/// falls to the lexicographically greatest event id (§A step 4), so two
+/// relays holding the same candidates always settle on the same record.
+fn ncc06_record_outranks(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Bool(a_usable),
+        OperationValue::Integer(a_marker),
+        OperationValue::Text(a_id),
+        OperationValue::Bool(b_usable),
+        OperationValue::Integer(b_marker),
+        OperationValue::Text(b_id),
+    ] = arguments
+    else {
+        return Err(invalid("ncc06.record_outranks"));
+    };
+    let beats = if !a_usable {
+        false
+    } else if !b_usable {
+        true
+    } else if a_marker != b_marker {
+        a_marker > b_marker
+    } else {
+        a_id > b_id
+    };
+    Ok(OperationValue::Bool(beats))
+}
+
+/// NCC-06 §A.2 step 3: the freshness marker a candidate Locator carries —
+/// the payload's `updated_at` when it has one, else the record's own
+/// `created_at`, which §A.2 names as the fallback. A payload this reader
+/// cannot parse stamps nothing and falls back rather than dropping out of
+/// selection: whether the record is usable at all is
+/// `ncc05.record_is_fresh`'s answer (§A applies to candidates already
+/// matching `(pubkey, d)`), not this marker's.
+fn ncc06_locator_marker(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(payload),
+        OperationValue::Integer(created_at),
+    ] = arguments
+    else {
+        return Err(invalid("ncc06.locator_marker"));
+    };
+    let marker = serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|payload| {
+            payload
+                .get("updated_at")
+                .and_then(serde_json::Value::as_i64)
+        })
+        .unwrap_or(*created_at);
+    Ok(OperationValue::Integer(marker))
+}
+
+/// How §E.1 tiers one URL, given the `k` a service publishes alongside
+/// its endpoints: `0` a secure clearnet endpoint (`wss`, `https`, `tls`)
+/// with `k` in hand (tier 1), `1` the same without `k`, which §E.1 marks
+/// as lower trust (tier 2), `2` an onion endpoint in whatever scheme —
+/// the family decides before the scheme does, because §E.1 tiers onion
+/// endpoints of their own (tier 3) and §E.2 exempts them from `k`
+/// verification — and `3` the insecure or unrecognised endpoint §E.1
+/// tier 4 says to avoid unless explicitly configured.
+fn ncc06_transport_tier(url: &str, k: &str) -> i64 {
+    match ncc06_transport_class(url) {
+        TransportClass::Secure => i64::from(k.is_empty()),
+        TransportClass::Onion => 2,
+        TransportClass::Insecure => 3,
+    }
+}
+
+/// The transport family §E.1 sorts by, read off the URL the way `ncc05`
+/// reads it: an `onion:` scheme or a `.onion` host is onion whatever the
+/// scheme around it, a `wss`/`https`/`tls` scheme is secure clearnet, and
+/// everything else — `ws`, `http`, `tcp`, a literal address, no scheme at
+/// all — is insecure.
+enum TransportClass {
+    Secure,
+    Onion,
+    Insecure,
+}
+
+fn ncc06_transport_class(url: &str) -> TransportClass {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((scheme, rest)) => (scheme.to_ascii_lowercase(), rest),
+        None => (String::new(), url),
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = if let Some(literal) = host.strip_prefix('[') {
+        literal.split(']').next().unwrap_or(literal)
+    } else {
+        host.split(':').next().unwrap_or(host)
+    };
+    if scheme == "onion" || host.to_ascii_lowercase().ends_with(".onion") {
+        return TransportClass::Onion;
+    }
+    if matches!(scheme.as_str(), "wss" | "https" | "tls") {
+        TransportClass::Secure
+    } else {
+        TransportClass::Insecure
+    }
+}
+
+/// NCC-06 §E.1's transport preference for one endpoint, as a rank a
+/// script can sort or print: lower is preferred, and `k` decides only
+/// among secure endpoints (with `k` ranks above without).
+fn ncc06_transport_rank(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(url), OperationValue::Text(k)] = arguments else {
+        return Err(invalid("ncc06.transport_rank"));
+    };
+    Ok(OperationValue::Integer(ncc06_transport_tier(url, k)))
+}
+
+/// NCC-06 §E.1's ordered candidate set: the endpoints a Locator offers,
+/// stably regrouped into §E.1's four tiers — secure with `k`, secure
+/// without, onion, insecure — so the order *within* each tier stays the
+/// order the payload listed (§A.2's "ordered candidate set"), and §B's
+/// first-successful-connection walk starts from the most trusted tier
+/// first. Non-text entries are the wrong argument shape, since this is
+/// the caller's own list, not one read off a peer's payload.
+fn ncc06_transport_order(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(endpoints), OperationValue::Text(k)] = arguments else {
+        return Err(invalid("ncc06.transport_order"));
+    };
+    let mut ranked = Vec::with_capacity(endpoints.len());
+    for (index, endpoint) in endpoints.iter().enumerate() {
+        let OperationValue::Text(url) = endpoint else {
+            return Err(invalid("ncc06.transport_order"));
+        };
+        ranked.push((ncc06_transport_tier(url, k), index, url.clone()));
+    }
+    ranked.sort_by_key(|(tier, index, _)| (*tier, *index));
+    Ok(OperationValue::List(
+        ranked
+            .into_iter()
+            .map(|(_, _, url)| OperationValue::Text(url))
+            .collect(),
+    ))
+}
+
+/// NCC-06 §E.2: whether `k` verification is expected for this transport —
+/// a secure clearnet endpoint yes, since it presents the key material the
+/// NCC-02 `k` pins; an onion endpoint no, because §E.2 leaves its
+/// verification to Tor's own security context; and an insecure endpoint
+/// has no key to pin, which §E.1 keeps out of the way rather than
+/// verified.
+fn ncc06_k_required(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(url)] = arguments else {
+        return Err(invalid("ncc06.k_required"));
+    };
+    Ok(OperationValue::Bool(matches!(
+        ncc06_transport_class(url),
+        TransportClass::Secure
+    )))
+}
+
+/// NCC-06 §D's verdict on what a resolver may use right now: `"fresh"`
+/// when a record is inside its window — NCC-02 `exp` or the NCC-05 TTL —
+/// `"stale"` when only an over-aged record remains and its age still fits
+/// §D.2's bounded staleness window, and `"failed"` when nothing is fresh
+/// and the bound (or the record's own age) runs out, or was never
+/// granted because `max_staleness` is not positive. §D.3 requires a stale
+/// use to be surfaced; handing this label back to a script *is* that
+/// surface, and the caller still owns whether to accept `"stale"` at all.
+fn ncc06_freshness_mode(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Bool(has_fresh),
+        OperationValue::Integer(record_age),
+        OperationValue::Integer(max_staleness),
+    ] = arguments
+    else {
+        return Err(invalid("ncc06.freshness_mode"));
+    };
+    let mode = if *has_fresh {
+        "fresh"
+    } else if *max_staleness > 0 && *record_age >= 0 && *record_age <= *max_staleness {
+        "stale"
+    } else {
+        "failed"
+    };
+    Ok(OperationValue::Text(mode.to_owned()))
+}
+
+/// NIP-01's event id: sha256 over the canonical `[0, pubkey, created_at,
+/// kind, tags, content]`, recomputed from what the host holds so a
+/// record's id and its body have to agree before its signature means
+/// anything — a signature over an id that does not describe the event
+/// vouches for nothing (NCC-06 §A step 1 discards invalid signatures;
+/// §A's tie-break reads the id only after this check passes). Tags are
+/// rebuilt in the host's two-column rendering, the shape NCC-02 and
+/// NCC-05 tags take, so an event carrying anything else recomputes to a
+/// different id and is discarded rather than trusted.
+#[must_use]
+pub fn compute_event_id(signer: &str, event: &UnsignedEvent) -> String {
+    let tags = serde_json::Value::Array(
+        event
+            .wire_tags()
+            .iter()
+            .map(|tag| serde_json::json!(tag))
+            .collect(),
+    );
+    let preimage =
+        serde_json::json!([0, signer, event.created_at, event.kind, tags, event.content])
+            .to_string();
+    let mut id = String::with_capacity(64);
+    for byte in Sha256::digest(preimage.as_bytes()) {
+        let _ = write!(id, "{byte:02x}");
+    }
+    id
+}
+
+/// Decodes exactly `N` bytes of hex, `None` for any other length or a
+/// digit that is not one.
+fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
+    if text.len() != N * 2 {
+        return None;
+    }
+    let mut out = [0_u8; N];
+    for (slot, pair) in out.iter_mut().zip(text.as_bytes().chunks(2)) {
+        *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// How many record events one bootstrap relay is asked for, and how many
+/// batches are drained to reach them — a bounded history query, since §A
+/// only ever selects the newest usable record and a relay that answers
+/// with a flood is not owed more of the caller's time.
+const RECORD_QUERY_LIMIT: u32 = 200;
+const RECORD_QUERY_BATCHES: usize = 8;
+
+/// One identity reference resolved to a concrete endpoint: the endpoint
+/// itself, plus every record and transport fact the selection went
+/// through — what a caller must print rather than infer (NCC-06 §D.3
+/// requires a fallback use to be surfaced; §E.2 requires the `k` answer
+/// to be honest).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IdentityResolution {
+    /// The npub-hex identity that was resolved.
+    pub pubkey: String,
+    /// The concrete endpoint to connect to — never the reference itself
+    /// (§Scope: identity URIs are not dereferenced).
+    pub endpoint: String,
+    /// §E.1's tier for the endpoint given `k`; lower is preferred.
+    pub transport_rank: i64,
+    /// The NCC-02 `k` the selected service record published, empty when
+    /// no usable record carried one.
+    pub k: String,
+    /// Whether §E.2 expects `k` verification on this transport.
+    pub k_required: bool,
+    /// Whether `k` was actually checked against the endpoint's key
+    /// material. Always false: nothing here reads the peer certificate,
+    /// so §E.2's pinning is not implemented — the field reports that
+    /// rather than letting a printed `k` imply a check that never ran.
+    pub k_verified: bool,
+    /// Where the endpoint came from: `"ncc05 locator"` (the payload's
+    /// endpoints, ordered by §E.1) or `"ncc02 service record"` (the
+    /// record's `u`, used when no usable locator offers one).
+    pub endpoint_source: String,
+    /// The selected usable records, absent when no candidate survived
+    /// §A's discard steps.
+    pub service_record: Option<SignedEvent>,
+    pub locator: Option<SignedEvent>,
+    /// Candidates that passed §A step 1 (right author, right kind, id
+    /// matches the body, signature verifies), before selection.
+    pub candidates: usize,
+    /// How many of the bootstrap relays answered the query at all (§C.2:
+    /// publication relay redundancy is what this count reports on).
+    pub relays_queried: usize,
+}
+
+/// One candidate record with §A's two comparison facts already computed:
+/// whether it is usable at the caller's `now`, and the marker §A ranks
+/// it by (`created_at` for §A.1, `updated_at` else `created_at` for
+/// §A.2).
+struct Ranked<'a> {
+    event: &'a SignedEvent,
+    usable: bool,
+    marker: i64,
+}
+
+/// §A's selection rule as [`ncc06_record_outranks`] computes it: whether
+/// the candidate displaces the incumbent.
+fn ranked_beats(candidate: &Ranked<'_>, incumbent: &Ranked<'_>) -> bool {
+    matches!(
+        ncc06_record_outranks(&[
+            OperationValue::Bool(candidate.usable),
+            OperationValue::Integer(candidate.marker),
+            OperationValue::Text(candidate.event.id.clone()),
+            OperationValue::Bool(incumbent.usable),
+            OperationValue::Integer(incumbent.marker),
+            OperationValue::Text(incumbent.event.id.clone()),
+        ]),
+        Ok(OperationValue::Bool(true))
+    )
+}
+
+/// A delivered event's tags in the handler-side `name=value` rendering
+/// (docs/HANDLERS.md) that the `ncc02`/`ncc05` readers take.
+fn record_tag_list(event: &SignedEvent) -> Vec<OperationValue> {
+    event
+        .unsigned
+        .tags
+        .iter()
+        .map(|(name, value)| OperationValue::Text(format!("{name}={value}")))
+        .collect()
+}
+
+/// One tag's value, empty when the record carries no such tag.
+fn record_tag_text(event: &SignedEvent, name: &str) -> String {
+    event
+        .unsigned
+        .tags
+        .iter()
+        .find(|(tag, _)| tag == name)
+        .map(|(_, value)| value.clone())
+        .unwrap_or_default()
+}
+
+/// One candidate ranked for §A: usable (§A step 2's discard already
+/// applied by `ncc02.record_is_valid` / `ncc05.record_is_fresh`) plus its
+/// freshness marker.
+fn rank_candidate(event: &SignedEvent, now: i64) -> Ranked<'_> {
+    let created_at = i64::try_from(event.unsigned.created_at).unwrap_or(i64::MAX);
+    let (usable, marker) = match event.unsigned.kind {
+        30059 => (
+            matches!(
+                ncc02_record_is_valid(&[
+                    OperationValue::List(record_tag_list(event)),
+                    OperationValue::Integer(now),
+                ]),
+                Ok(OperationValue::Bool(true))
+            ),
+            created_at,
+        ),
+        _ => (
+            matches!(
+                ncc05_record_is_fresh(&[
+                    OperationValue::List(record_tag_list(event)),
+                    OperationValue::Text(event.unsigned.content.clone()),
+                    OperationValue::Integer(now),
+                ]),
+                Ok(OperationValue::Bool(true))
+            ),
+            match ncc06_locator_marker(&[
+                OperationValue::Text(event.unsigned.content.clone()),
+                OperationValue::Integer(created_at),
+            ]) {
+                Ok(OperationValue::Integer(marker)) => marker,
+                _ => created_at,
+            },
+        ),
+    };
+    Ranked {
+        event,
+        usable,
+        marker,
+    }
+}
+
+/// §C.2's retrieval half: query every bootstrap relay for `pubkey`'s
+/// Service Records and Locators and return the candidates that pass §A
+/// step 1 — right author, right kind, an id that recomputes over this
+/// body, and a signature `verify_signature` accepts — plus how many
+/// relays answered. The query is bounded (`RECORD_QUERY_*`): §A only
+/// ever selects among the newest records, and a flood is not owed more
+/// of the caller's time.
+///
+/// # Errors
+///
+/// Returns [`RuntimeError::RelayUnavailable`] when not one bootstrap
+/// relay could be subscribed — the publication relay set, §C.2, is the
+/// redundancy this answers for.
+fn gather_record_candidates<H, V>(
+    host: &mut H,
+    bootstrap: &[String],
+    pubkey: &str,
+    verify_signature: V,
+) -> Result<(Vec<SignedEvent>, usize), RuntimeError>
+where
+    H: SubscriptionHost,
+    V: Fn(&[u8; 32], &[u8; 32], &[u8; 64]) -> bool,
+{
+    let mut candidates = Vec::new();
+    let mut relays_queried = 0_usize;
+    for relay in bootstrap {
+        let request = SubscriptionRequest {
+            event_type: "Event".to_owned(),
+            relayset: Some(relay.clone()),
+            kinds: vec![30059, 30058],
+            tag_equals: Vec::new(),
+            cursor: None,
+            author: Some(pubkey.to_owned()),
+            since: None,
+            limit: Some(RECORD_QUERY_LIMIT),
+        };
+        let Ok(handle) = host.subscribe(0, &request) else {
+            continue;
+        };
+        relays_queried += 1;
+        let mut delivered = Vec::new();
+        for _ in 0..RECORD_QUERY_BATCHES {
+            match host.poll(0, &handle) {
+                Ok(batch) => {
+                    delivered.extend(batch.events);
+                    if batch.complete
+                        || delivered.len()
+                            >= usize::try_from(RECORD_QUERY_LIMIT).unwrap_or(usize::MAX)
+                    {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = host.unsubscribe(0, &handle);
+
+        for event in delivered {
+            // §A step 1, in order of cheapest rejection: the wrong author,
+            // the wrong kind, an id that does not describe this body, and
+            // only then a signature that does not hold.
+            if event.signer != pubkey || !matches!(event.unsigned.kind, 30059 | 30058) {
+                continue;
+            }
+            if compute_event_id(&event.signer, &event.unsigned) != event.id {
+                continue;
+            }
+            let (Some(id), Some(key), Some(signature)) = (
+                unhex::<32>(&event.id),
+                unhex::<32>(&event.signer),
+                unhex::<64>(&event.signature),
+            ) else {
+                continue;
+            };
+            if !verify_signature(&key, &id, &signature) {
+                continue;
+            }
+            if candidates
+                .iter()
+                .any(|seen: &SignedEvent| seen.id == event.id)
+            {
+                continue;
+            }
+            candidates.push(event);
+        }
+    }
+    if relays_queried == 0 {
+        return Err(RuntimeError::RelayUnavailable {
+            relayset: bootstrap.join(", "),
+        });
+    }
+    Ok((candidates, relays_queried))
+}
+
+/// The endpoint §E.1 walks to: the chosen locator's payload endpoints
+/// ordered by tier, first non-empty one that is not itself an identity
+/// reference (§Scope forbids dereferencing one, and resolution does not
+/// recurse), falling back to the chosen service record's `u` — a private
+/// service publishes no `u`, and one pointing at another identity
+/// reference points nowhere. Returns `(endpoint, source)`.
+fn endpoint_from_records(
+    locator: Option<&Ranked<'_>>,
+    service: Option<&Ranked<'_>>,
+    k: &str,
+) -> Option<(String, String)> {
+    if let Some(locator) = locator
+        && let Ok(OperationValue::List(endpoints)) =
+            ncc05_payload_endpoints(&[OperationValue::Text(locator.event.unsigned.content.clone())])
+        && let Ok(OperationValue::List(ordered)) = ncc06_transport_order(&[
+            OperationValue::List(endpoints),
+            OperationValue::Text(k.to_owned()),
+        ])
+    {
+        let endpoint = ordered.into_iter().find_map(|entry| match entry {
+            OperationValue::Text(url)
+                if !url.is_empty() && identity_reference_key(&url).is_none() =>
+            {
+                Some(url)
+            }
+            _ => None,
+        });
+        if endpoint.is_some() {
+            return endpoint.map(|endpoint| (endpoint, "ncc05 locator".to_owned()));
+        }
+    }
+    let service = service?;
+    if let Ok(OperationValue::Text(u)) =
+        ncc02_endpoint(&[OperationValue::List(record_tag_list(service.event))])
+        && !u.is_empty()
+        && identity_reference_key(&u).is_none()
+    {
+        return Some((u, "ncc02 service record".to_owned()));
+    }
+    None
+}
+
+/// Resolves an identity reference (`wss://npub1...`) to a concrete
+/// endpoint through NCC-02 Service Records and NCC-05 Locators, exactly
+/// as §A, §C.2 and §E.1 require: query every bootstrap relay — the
+/// caller's concrete relays standing in for a publication relay set —
+/// for the identity's records, discard anything that is not this
+/// identity's (§A step 1, including an id that does not recompute or a
+/// signature that does not verify), select the best of each kind with
+/// `ncc06.record_outranks`, and take the endpoint §E.1 prefers from the
+/// locator's payload — or the service record's `u` when no usable
+/// locator offers one. Identity-reference endpoints inside those records
+/// are never taken: dereferencing one is what §Scope forbids, and this
+/// resolver does not recurse.
+///
+/// `verify_signature` receives (pubkey, event id, signature) and decides
+/// §A step 1's signature check — the caller supplies real verification
+/// because this crate does not depend on the crypto crate that provides
+/// it, and a caller that answers `false` for everything simply resolves
+/// nothing.
+///
+/// # Errors
+///
+/// Returns [`RuntimeError::InvalidOperationArguments`] when `identity`
+/// is not an identity reference, [`RuntimeError::RelayUnavailable`] when
+/// no bootstrap relay could be queried at all, and
+/// [`RuntimeError::EvaluationError`] — each message naming what a
+/// resolver would need next — when the replies hold no usable endpoint:
+/// no records at all, records that are all unusable at `now` (deploy
+/// holds no cache, so §D.3's stale fallback has nothing to fall back
+/// on), or usable records that publish no concrete endpoint.
+pub fn resolve_identity_reference<H, V>(
+    host: &mut H,
+    bootstrap: &[String],
+    identity: &str,
+    now: u64,
+    verify_signature: V,
+) -> Result<IdentityResolution, RuntimeError>
+where
+    H: SubscriptionHost,
+    V: Fn(&[u8; 32], &[u8; 32], &[u8; 64]) -> bool,
+{
+    let pubkey = identity_reference_key(identity).ok_or_else(|| {
+        RuntimeError::InvalidOperationArguments {
+            operation: format!("identity reference {identity}"),
+        }
+    })?;
+    let now = i64::try_from(now).unwrap_or(i64::MAX);
+    let (candidates, relays_queried) =
+        gather_record_candidates(host, bootstrap, &pubkey, verify_signature)?;
+
+    // §A's per-kind selection: usable beats unusable, then the marker,
+    // then the id — the same rule the `ncc06` module exposes.
+    let ranked = candidates
+        .iter()
+        .map(|event| rank_candidate(event, now))
+        .collect::<Vec<_>>();
+    let select = |kind: u16| {
+        ranked
+            .iter()
+            .filter(|candidate| candidate.event.unsigned.kind == kind)
+            .reduce(|best, candidate| {
+                if ranked_beats(candidate, best) {
+                    candidate
+                } else {
+                    best
+                }
+            })
+    };
+    let service = select(30059).filter(|candidate| candidate.usable);
+    let locator = select(30058).filter(|candidate| candidate.usable);
+    let k = service.map_or_else(String::new, |candidate| {
+        record_tag_text(candidate.event, "k")
+    });
+
+    // §E.1's walk, then NCC-02's `u` — never an identity reference (§Scope).
+    let Some((endpoint, endpoint_source)) = endpoint_from_records(locator, service, &k) else {
+        let found = if candidates.is_empty() {
+            format!(
+                "no NCC-02 or NCC-05 records for {identity} on {relays_queried} bootstrap \
+                 relay(s); a publication relay set answers these queries (NCC-06 \u{a7}C.2)"
+            )
+        } else if service.is_none() && locator.is_none() {
+            format!(
+                "{} candidate record(s) for {identity} replied, but none is usable at now={now} \
+                 (NCC-06 \u{a7}A discards invalid, expired and stale records; deploy keeps no \
+                 cache, so \u{a7}D.3's stale fallback has nothing to fall back on)",
+                candidates.len()
+            )
+        } else {
+            format!(
+                "usable records for {identity} publish no concrete endpoint: no \u{a7}5.4 \
+                 locator endpoint and no NCC-02 `u`, or only endpoints that are themselves \
+                 identity references, which \u{a7}Scope forbids dereferencing"
+            )
+        };
+        return Err(RuntimeError::EvaluationError { message: found });
+    };
+
+    let transport_rank = ncc06_transport_tier(&endpoint, &k);
+    let k_required = matches!(ncc06_transport_class(&endpoint), TransportClass::Secure);
+    Ok(IdentityResolution {
+        pubkey,
+        endpoint,
+        transport_rank,
+        k_required,
+        k,
+        k_verified: false,
+        endpoint_source,
+        service_record: service.map(|candidate| candidate.event.clone()),
+        locator: locator.map(|candidate| candidate.event.clone()),
+        candidates: candidates.len(),
+        relays_queried,
+    })
+}
+
 /// NCC-07 §9 step 5: the capability identifiers a delivered manifest
 /// advertises, read from the handler-side `name=value` rendering of its
 /// tags (docs/HANDLERS.md). Entries that are not `cap` tags, and `cap`
@@ -4282,6 +5043,753 @@ fn capability_is_valid(id: &str) -> bool {
         }
         _ => true,
     }
+}
+
+// ---------------------------------------------------------------------------
+// NCC-08: service identity rotation and handover. A completed handover is a
+// mutually acknowledged pair of regular kind-1070 events — a predecessor
+// proposal and a successor acceptance — and nothing here transfers authority
+// or state: the convention preserves continuity between two identities, it
+// does not make them the same identity (§19, §30). Every check is a pure
+// function over values the caller already holds, because a script sees one
+// event at a time and a chain spans many.
+// ---------------------------------------------------------------------------
+
+/// Every value of a `name=` tag, in order. §8.1 and §9.1 require *exactly
+/// one* `p` (and, for an acceptance, one `e`), so the set is what decides
+/// validity, not the first match alone.
+fn tag_values<'a>(
+    tags: &'a [OperationValue],
+    name: &str,
+    function: &'static str,
+) -> Result<Vec<&'a str>, RuntimeError> {
+    let mut values = Vec::new();
+    for tag in tags {
+        let OperationValue::Text(tag) = tag else {
+            return Err(invalid(function));
+        };
+        if let Some((tag_name, value)) = tag.split_once('=')
+            && tag_name == name
+        {
+            values.push(value);
+        }
+    }
+    Ok(values)
+}
+
+/// NCC-08 §6: which side of the handover an event plays, read from its
+/// `role` tag — `predecessor` for a proposal, `successor` for an
+/// acceptance. The publish-side validator requires one of the two; a
+/// received event with neither extracts empty text, which the validity
+/// checks below reject.
+fn ncc08_role(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "role", "ncc08.role")
+}
+
+/// NCC-08 §7: the identifier binding a proposal to its acceptance. It
+/// names the transition, not the service identity.
+fn ncc08_handover_id(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "handover", "ncc08.handover_id")
+}
+
+/// NCC-08 §5: the service a handover transfers, the same identifier an
+/// NCC-02 Service Record is addressed by when the two are used together.
+fn ncc08_service(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "service", "ncc08.service")
+}
+
+/// NCC-08 §8.1/§9.1: the other side of the handover named by the `p`
+/// tag — the successor a proposal commits to, the predecessor an
+/// acceptance acknowledges. The role decides which reading applies.
+fn ncc08_counterparty(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "p", "ncc08.counterparty")
+}
+
+/// The shape §8.1 requires of a proposal: the predecessor role, a
+/// non-empty handover identifier and service, and exactly one non-empty
+/// successor `p`.
+fn proposal_shape_ok(
+    tags: &[OperationValue],
+    function: &'static str,
+) -> Result<bool, RuntimeError> {
+    let role = tag_lookup(tags, "role", function)?;
+    let handover = tag_lookup(tags, "handover", function)?;
+    let service = tag_lookup(tags, "service", function)?;
+    let successors = tag_values(tags, "p", function)?;
+    Ok(role == Some("predecessor")
+        && handover.is_some_and(|id| !id.is_empty())
+        && service.is_some_and(|service| !service.is_empty())
+        && successors.len() == 1
+        && !successors[0].is_empty())
+}
+
+/// The shape §9.1 requires of an acceptance: the successor role, a
+/// non-empty handover identifier and service, exactly one non-empty
+/// predecessor `p`, and exactly one non-empty proposal `e`.
+fn acceptance_shape_ok(
+    tags: &[OperationValue],
+    function: &'static str,
+) -> Result<bool, RuntimeError> {
+    let role = tag_lookup(tags, "role", function)?;
+    let handover = tag_lookup(tags, "handover", function)?;
+    let service = tag_lookup(tags, "service", function)?;
+    let predecessors = tag_values(tags, "p", function)?;
+    let references = tag_values(tags, "e", function)?;
+    Ok(role == Some("successor")
+        && handover.is_some_and(|id| !id.is_empty())
+        && service.is_some_and(|service| !service.is_empty())
+        && predecessors.len() == 1
+        && !predecessors[0].is_empty()
+        && references.len() == 1
+        && !references[0].is_empty())
+}
+
+/// NCC-08 §11.2: a proposal's `effective`, when it has one, must not
+/// predate the proposal itself. A malformed timestamp is not earlier and
+/// not later — it cannot be honoured, so it fails closed; a proposal
+/// without the tag is effective on acceptance (§11.1).
+fn effective_floor_ok(
+    tags: &[OperationValue],
+    created_at: i64,
+    function: &'static str,
+) -> Result<bool, RuntimeError> {
+    Ok(match tag_lookup(tags, "effective", function)? {
+        None => true,
+        Some(effective) => effective
+            .parse::<i64>()
+            .is_ok_and(|effective| effective >= created_at),
+    })
+}
+
+/// NCC-08 §8, §11.2: whether a proposal is complete and its effective
+/// time is not backdated. Signatures are not checked here; they are the
+/// host's business, and a delivered event already carries its author.
+fn ncc08_proposal_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(tags),
+        OperationValue::Integer(created_at),
+    ] = arguments
+    else {
+        return Err(invalid("ncc08.proposal_is_valid"));
+    };
+    let valid = proposal_shape_ok(tags, "ncc08.proposal_is_valid")?
+        && effective_floor_ok(tags, *created_at, "ncc08.proposal_is_valid")?;
+    Ok(OperationValue::Bool(valid))
+}
+
+/// NCC-08 §9: whether an acceptance has the shape the convention
+/// requires. The temporal half of §10 — that it was created after the
+/// proposal and inside the proposal's expiry — needs the proposal's own
+/// values, so it lives in [`ncc08_pair_is_valid`].
+fn ncc08_acceptance_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc08.acceptance_is_valid"));
+    };
+    Ok(OperationValue::Bool(acceptance_shape_ok(
+        tags,
+        "ncc08.acceptance_is_valid",
+    )?))
+}
+
+/// NCC-08 §10: whether two delivered events form a completed handover.
+/// The caller passes both sides — a handler holds one event at a time —
+/// including each author, so the mutual acknowledgement is checked
+/// against real authorship: the proposal must name the acceptance's
+/// author as successor and the acceptance must name the proposal's author
+/// as predecessor, reference the exact proposal, share the handover and
+/// service identifiers, not predate the proposal, and fall inside the
+/// proposal's `expires` when one was set. Signatures are the host's
+/// business (§10.2).
+fn ncc08_pair_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::PubKey(proposal_author),
+        OperationValue::List(proposal_tags),
+        OperationValue::Text(proposal_id),
+        OperationValue::Integer(proposal_created_at),
+        OperationValue::PubKey(acceptance_author),
+        OperationValue::List(acceptance_tags),
+        OperationValue::Integer(acceptance_created_at),
+    ] = arguments
+    else {
+        return Err(invalid("ncc08.pair_is_valid"));
+    };
+    let function = "ncc08.pair_is_valid";
+    let proposal_ok = proposal_shape_ok(proposal_tags, function)?
+        && effective_floor_ok(proposal_tags, *proposal_created_at, function)?;
+    if !proposal_ok || !acceptance_shape_ok(acceptance_tags, function)? {
+        return Ok(OperationValue::Bool(false));
+    }
+    let successor = tag_lookup(proposal_tags, "p", function)?;
+    let predecessor = tag_lookup(acceptance_tags, "p", function)?;
+    let reference = tag_lookup(acceptance_tags, "e", function)?;
+    let same_transition = tag_lookup(proposal_tags, "handover", function)?
+        == tag_lookup(acceptance_tags, "handover", function)?;
+    let same_service = tag_lookup(proposal_tags, "service", function)?
+        == tag_lookup(acceptance_tags, "service", function)?;
+    let within_expiry = match tag_lookup(proposal_tags, "expires", function)? {
+        None => true,
+        Some(expires) => expires
+            .parse::<i64>()
+            .is_ok_and(|expires| *acceptance_created_at <= expires),
+    };
+    let valid = same_transition
+        && same_service
+        && successor == Some(acceptance_author.as_str())
+        && predecessor == Some(proposal_author.as_str())
+        && reference == Some(proposal_id.as_str())
+        && *acceptance_created_at >= *proposal_created_at
+        && within_expiry;
+    Ok(OperationValue::Bool(valid))
+}
+
+/// NCC-08 §11: when a completed handover takes effect — the proposal's
+/// `effective` timestamp when it carried one, otherwise the moment the
+/// acceptance was created. The caller says whether the proposal had the
+/// tag and passes both values; the convention reads no clock.
+fn ncc08_effective_time(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Bool(has_effective),
+        OperationValue::Integer(effective),
+        OperationValue::Integer(acceptance_created_at),
+    ] = arguments
+    else {
+        return Err(invalid("ncc08.effective_time"));
+    };
+    Ok(OperationValue::Integer(if *has_effective {
+        *effective
+    } else {
+        *acceptance_created_at
+    }))
+}
+
+/// NCC-08 §12: where a handover sits in its three states. `accepted` is
+/// the caller's verdict that a valid pair exists (and not a proposal
+/// alone); an accepted transition becomes `effective` once `now` reaches
+/// its effective time, and until then the predecessor is still current.
+fn ncc08_state(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Bool(accepted),
+        OperationValue::Integer(effective_at),
+        OperationValue::Integer(now),
+    ] = arguments
+    else {
+        return Err(invalid("ncc08.state"));
+    };
+    let state = if !accepted {
+        "proposed"
+    } else if now < effective_at {
+        "accepted"
+    } else {
+        "effective"
+    };
+    Ok(OperationValue::Text(state.to_owned()))
+}
+
+/// NCC-08 §15: whether two completed handovers from the same predecessor
+/// and service name different successors — an ambiguous continuity claim
+/// the convention refuses to resolve by timestamp. Unaccepted proposals
+/// do not conflict; the caller only passes pairs it has validated.
+fn ncc08_conflicts_with(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(service),
+        OperationValue::Text(predecessor),
+        OperationValue::Text(successor),
+        OperationValue::Text(other_service),
+        OperationValue::Text(other_predecessor),
+        OperationValue::Text(other_successor),
+    ] = arguments
+    else {
+        return Err(invalid("ncc08.conflicts_with"));
+    };
+    Ok(OperationValue::Bool(
+        service == other_service
+            && predecessor == other_predecessor
+            && successor != other_successor,
+    ))
+}
+
+/// NCC-08 §14: whether one handover link follows another — the next
+/// transition's predecessor is the current transition's successor for the
+/// same service. Walking these links, not assuming a global winner, is
+/// how a client reaches the current identity.
+fn ncc08_continues(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(service),
+        OperationValue::Text(successor),
+        OperationValue::Text(next_service),
+        OperationValue::Text(next_predecessor),
+    ] = arguments
+    else {
+        return Err(invalid("ncc08.continues"));
+    };
+    Ok(OperationValue::Bool(
+        service == next_service && successor == next_predecessor,
+    ))
+}
+
+/// NCC-08 §14: whether a chain of identities revisits one — `A -> B -> A`
+/// MUST NOT be followed forever, and a loop makes the continuity claim
+/// invalid or conflicted rather than merely long. The caller hands over
+/// the identities it has walked so far, in order.
+fn ncc08_chain_has_loop(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(chain)] = arguments else {
+        return Err(invalid("ncc08.chain_has_loop"));
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let mut looped = false;
+    for identity in chain {
+        let OperationValue::Text(identity) = identity else {
+            return Err(invalid("ncc08.chain_has_loop"));
+        };
+        if !seen.insert(identity.as_str()) {
+            looped = true;
+            break;
+        }
+    }
+    Ok(OperationValue::Bool(looped))
+}
+
+// ---------------------------------------------------------------------------
+// NCC-09: scoped operator authority. A principal (the service identity)
+// grants an operator pubkey named scopes for one service, as addressable
+// kind-30064 state. Authority is a claim the principal makes; it transfers
+// no identity, a scope a reader does not understand grants nothing (§9,
+// §13), and current state replaces by address so scopes are never inherited
+// from an older grant (§14).
+// ---------------------------------------------------------------------------
+
+/// The operator a grant names — the single `p` tag. Empty text when absent,
+/// which `grant_is_valid` rejects.
+fn ncc09_operator(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "p", "ncc09.operator")
+}
+
+/// NCC-09 §5: the service a grant applies to. Authority for one service
+/// never implies another the same principal controls.
+fn ncc09_service(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "service", "ncc09.service")
+}
+
+/// NCC-09 §6.3: a grant's status, `active` or `revoked`.
+fn ncc09_status(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "status", "ncc09.status")
+}
+
+/// NCC-09 §6.3: every scope the grant lists, in order, skipping empty ones.
+/// Whether a scope is understood is the reader's business (§9); the grant's
+/// own completeness is `grant_is_valid`'s.
+fn ncc09_scopes(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc09.scopes"));
+    };
+    Ok(OperationValue::List(
+        tag_values(tags, "scope", "ncc09.scopes")?
+            .into_iter()
+            .filter(|scope| !scope.is_empty())
+            .map(|scope| OperationValue::Text(scope.to_owned()))
+            .collect(),
+    ))
+}
+
+/// NCC-09 §6.2's recommended `d` value: the service and operator bound into
+/// one address, so a principal keeps independent authority state for each
+/// service/operator pair.
+fn ncc09_address(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(service),
+        OperationValue::Text(operator),
+    ] = arguments
+    else {
+        return Err(invalid("ncc09.address"));
+    };
+    Ok(OperationValue::Text(format!("{service}:{operator}")))
+}
+
+/// NCC-09 §8: the namespace a scope identifier is written in — `ncc` for
+/// `ncc:<number>:<action>`, `pubkey` for `pubkey:<hex>:<name>`, `opaque`
+/// for everything else. Only the defining specification gives a scope its
+/// meaning (§9); this reports the spelling, not the semantics.
+fn ncc09_scope_namespace(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(scope)] = arguments else {
+        return Err(invalid("ncc09.scope_namespace"));
+    };
+    Ok(OperationValue::Text(
+        ncc09_scope_namespace_of(scope).to_owned(),
+    ))
+}
+
+fn ncc09_scope_namespace_of(scope: &str) -> &'static str {
+    if let Some(rest) = scope.strip_prefix("ncc:") {
+        if let Some((number, action)) = rest.split_once(':')
+            && !number.is_empty()
+            && number.bytes().all(|byte| byte.is_ascii_digit())
+            && !action.is_empty()
+        {
+            return "ncc";
+        }
+    } else if let Some(rest) = scope.strip_prefix("pubkey:")
+        && let Some((hex, name)) = rest.split_once(':')
+        && is_lowercase_pubkey_hex(hex)
+        && !name.is_empty()
+    {
+        return "pubkey";
+    }
+    "opaque"
+}
+
+/// NCC-09 §8: whether a scope identifier is well formed. Opaque scopes just
+/// need to be non-empty lowercase text without whitespace; an identifier
+/// that uses a known namespace prefix must complete it, or the claim is
+/// broken rather than opaque — the rule `ncc07` applies to capabilities too.
+fn ncc09_scope_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(scope)] = arguments else {
+        return Err(invalid("ncc09.scope_is_valid"));
+    };
+    let valid = !scope.is_empty()
+        && !scope.chars().any(|c| c.is_uppercase() || c.is_whitespace())
+        && match ncc09_scope_namespace_of(scope) {
+            "opaque" => !scope.starts_with("ncc:") && !scope.starts_with("pubkey:"),
+            _ => true,
+        };
+    Ok(OperationValue::Bool(valid))
+}
+
+/// NCC-09 §6.4: when authority begins — a grant's `valid_from` when it has a
+/// usable one, otherwise the event's own `created_at`. A malformed
+/// `valid_from` is not a start time; `grant_is_valid` fails it closed.
+fn ncc09_grant_starts_at(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(tags),
+        OperationValue::Integer(created_at),
+    ] = arguments
+    else {
+        return Err(invalid("ncc09.grant_starts_at"));
+    };
+    let starts = match tag_lookup(tags, "valid_from", "ncc09.grant_starts_at")? {
+        Some(valid_from) => valid_from.parse::<i64>().unwrap_or(i64::MIN),
+        None => *created_at,
+    };
+    Ok(OperationValue::Integer(starts))
+}
+
+/// NCC-09 §13: whether a grant currently grants anything — exactly one
+/// non-empty operator, a service, `status=active`, and `now` inside the
+/// `valid_from`/`expiration` window when either is present. Signature and
+/// addressable-replacement checks are the host's business (§12 steps 1–7).
+fn ncc09_grant_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags), OperationValue::Integer(now)] = arguments else {
+        return Err(invalid("ncc09.grant_is_valid"));
+    };
+    let function = "ncc09.grant_is_valid";
+    let status = tag_lookup(tags, "status", function)?;
+    let operators = tag_values(tags, "p", function)?;
+    let service = tag_lookup(tags, "service", function)?;
+    let started = match tag_lookup(tags, "valid_from", function)? {
+        None => true,
+        Some(valid_from) => valid_from.parse::<i64>().is_ok_and(|start| *now >= start),
+    };
+    let unexpired = match tag_lookup(tags, "expiration", function)? {
+        None => true,
+        Some(expiration) => expiration.parse::<i64>().is_ok_and(|end| *now <= end),
+    };
+    let valid = status == Some("active")
+        && operators.len() == 1
+        && !operators[0].is_empty()
+        && service.is_some_and(|service| !service.is_empty())
+        && started
+        && unexpired;
+    Ok(OperationValue::Bool(valid))
+}
+
+/// NCC-09 §12/§13: whether a grant authorises `scope` at `now`. A valid
+/// grant that does not list the scope grants nothing; unknown scopes never
+/// invalidate the grant, they simply confer no authority this function
+/// recognises (§13).
+fn ncc09_authorises(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(tags),
+        OperationValue::Text(scope),
+        OperationValue::Integer(now),
+    ] = arguments
+    else {
+        return Err(invalid("ncc09.authorises"));
+    };
+    let valid = ncc09_grant_is_valid(&[
+        OperationValue::List(tags.clone()),
+        OperationValue::Integer(*now),
+    ])? == OperationValue::Bool(true);
+    let listed = valid && tag_values(tags, "scope", "ncc09.authorises")?.contains(&scope.as_str());
+    Ok(OperationValue::Bool(listed))
+}
+
+// ---------------------------------------------------------------------------
+// NCC-10: service operational state. A service — or, through NCC-09, an
+// authorised operator — declares one current state as addressable kind-30065
+// state. A state is self-reported, never an observation (§22), and the
+// absence of a state means unknown, never `operational` (§21).
+// ---------------------------------------------------------------------------
+
+/// NCC-10 §5.3: the single declared state value.
+fn ncc10_state(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "state", "ncc10.state")
+}
+
+/// NCC-10 §5.3: the service the state describes.
+fn ncc10_state_service(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "service", "ncc10.state_service")
+}
+
+/// NCC-10 §4: whether a value is one of the five states the convention
+/// defines. §21's unknown is not one of them.
+fn ncc10_state_is_recognised(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(state)] = arguments else {
+        return Err(invalid("ncc10.state_is_recognised"));
+    };
+    Ok(OperationValue::Bool(matches!(
+        state.as_str(),
+        "operational" | "degraded" | "maintenance" | "unavailable" | "retiring"
+    )))
+}
+
+/// NCC-10 §19: whether the event is the service's own (direct) state rather
+/// than an operator's. The `operator_for` tag is what distinguishes them.
+fn ncc10_is_direct(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc10.is_direct"));
+    };
+    Ok(OperationValue::Bool(
+        tag_lookup(tags, "operator_for", "ncc10.is_direct")?.is_none(),
+    ))
+}
+
+/// NCC-10 §12: the principal service pubkey an operator state claims under,
+/// the first column of its `operator_for` tag. The claim grants nothing —
+/// §13 resolves the NCC-09 grant before it means anything.
+fn ncc10_principal(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    Ok(OperationValue::Text(
+        ncc10_operator_for_columns(arguments, "ncc10.principal")?.0,
+    ))
+}
+
+/// NCC-10 §12: the service identifier an operator state claims, the second
+/// column of `operator_for`. §13 step 4 requires it to match `service`.
+fn ncc10_operator_service(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    Ok(OperationValue::Text(
+        ncc10_operator_for_columns(arguments, "ncc10.operator_service")?.1,
+    ))
+}
+
+fn ncc10_operator_for_columns(
+    arguments: &[OperationValue],
+    function: &'static str,
+) -> Result<(String, String), RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid(function));
+    };
+    let value = tag_lookup(tags, "operator_for", function)?.unwrap_or_default();
+    let columns = tag_value_columns(value);
+    Ok((
+        columns.first().copied().unwrap_or_default().to_owned(),
+        columns.get(1).copied().unwrap_or_default().to_owned(),
+    ))
+}
+
+/// NCC-10 §12: build the three-column `operator_for` tag's value — service
+/// pubkey and service identifier keep their own columns on the wire, which
+/// the runtime joins with its column separator.
+fn ncc10_operator_for_tag(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(service_pubkey),
+        OperationValue::Text(service),
+    ] = arguments
+    else {
+        return Err(invalid("ncc10.operator_for_tag"));
+    };
+    Ok(OperationValue::Text(join_tag_columns(&[
+        service_pubkey,
+        service,
+    ])))
+}
+
+/// NCC-10 §12: the `d` an operator-published state is addressed by,
+/// `<service-pubkey>:<service-id>`, kept apart from a direct state's plain
+/// service id so the two addresses do not collide.
+fn ncc10_operator_address(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Text(service_pubkey),
+        OperationValue::Text(service),
+    ] = arguments
+    else {
+        return Err(invalid("ncc10.operator_address"));
+    };
+    Ok(OperationValue::Text(format!("{service_pubkey}:{service}")))
+}
+
+// ---------------------------------------------------------------------------
+// NCC-11: portable trust policy. A kind-30067 addressable policy carries
+// namespaced rules (and trusted-certifier entries) as data a client applies
+// to its own decisions. A policy never weakens a mandatory protocol
+// requirement (§22), unknown rules are ignored (§24), and a missing rule
+// expresses no preference rather than allow or deny (§21).
+// ---------------------------------------------------------------------------
+
+/// NCC-11 §5.2: the named policy profile a policy event declares.
+fn ncc11_policy_id(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "d", "ncc11.policy_id")
+}
+
+/// NCC-11 §6: every policy key the public rules name, in order. Private
+/// rules decrypted from `content` join these at the caller (§17).
+fn ncc11_rule_keys(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc11.rule_keys"));
+    };
+    let mut keys = Vec::new();
+    for value in tag_values(tags, "rule", "ncc11.rule_keys")? {
+        if let Some((key, _)) = value.split_once(TAG_COLUMN_SEPARATOR) {
+            keys.push(OperationValue::Text(key.to_owned()));
+        }
+    }
+    Ok(OperationValue::List(keys))
+}
+
+/// NCC-11 §6/§23: the value a public rule gives `key`, or empty text when
+/// the key is absent. Contradictory duplicates leave the key unresolved
+/// rather than letting tag order pick a winner, so a conflict answers empty.
+fn ncc11_rule_value(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags), OperationValue::Text(key)] = arguments else {
+        return Err(invalid("ncc11.rule_value"));
+    };
+    Ok(OperationValue::Text(
+        ncc11_rule_value_of(tags, key)?.unwrap_or_default(),
+    ))
+}
+
+fn ncc11_rule_value_of(tags: &[OperationValue], key: &str) -> Result<Option<String>, RuntimeError> {
+    let mut found: Option<String> = None;
+    let mut conflicted = false;
+    for value in tag_values(tags, "rule", "ncc11.rule_value")? {
+        let mut columns = value.split(TAG_COLUMN_SEPARATOR);
+        let Some(rule_key) = columns.next() else {
+            continue;
+        };
+        if rule_key != key {
+            continue;
+        }
+        let rule_value = columns.next().unwrap_or_default().to_owned();
+        match &found {
+            None => found = Some(rule_value),
+            Some(previous) if previous != &rule_value => conflicted = true,
+            Some(_) => {}
+        }
+    }
+    Ok(if conflicted { None } else { found })
+}
+
+/// NCC-11 §6: whether a public rule gives `key` exactly `value`.
+fn ncc11_rule_value_is(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(tags),
+        OperationValue::Text(key),
+        OperationValue::Text(value),
+    ] = arguments
+    else {
+        return Err(invalid("ncc11.rule_value_is"));
+    };
+    Ok(OperationValue::Bool(
+        ncc11_rule_value_of(tags, key)?.as_deref() == Some(value.as_str()),
+    ))
+}
+
+/// NCC-11 §10: the pubkeys public `trust certifier` tags name, in order.
+/// The entry permits a certifier to be considered; it neither requires its
+/// attestations nor makes it globally trusted.
+fn ncc11_certifiers(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc11.certifiers"));
+    };
+    let mut certifiers = Vec::new();
+    for value in tag_values(tags, "trust", "ncc11.certifiers")? {
+        let mut columns = value.split(TAG_COLUMN_SEPARATOR);
+        if columns.next() == Some("certifier")
+            && let Some(pubkey) = columns.next()
+            && !pubkey.is_empty()
+        {
+            certifiers.push(OperationValue::Text(pubkey.to_owned()));
+        }
+    }
+    Ok(OperationValue::List(certifiers))
+}
+
+/// NCC-11 §9: whether a policy key is one of the rules this convention
+/// defines. Unknown keys are opaque and ignorable (§24), so this reports
+/// recognition, never validity.
+fn ncc11_rule_is_known(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(key)] = arguments else {
+        return Err(invalid("ncc11.rule_is_known"));
+    };
+    Ok(OperationValue::Bool(ncc11_rule_key_is_known(key)))
+}
+
+fn ncc11_rule_key_is_known(key: &str) -> bool {
+    if key
+        .strip_prefix("ncc:05:transport:")
+        .is_some_and(|scheme| !scheme.is_empty() && !scheme.contains(char::is_whitespace))
+    {
+        return true;
+    }
+    matches!(
+        key,
+        "ncc:02:key-pinning"
+            | "ncc:02:attestation"
+            | "ncc:05:stale-fallback"
+            | "ncc:05:max-stale-age"
+            | "ncc:09:operator-actions"
+            | "ncc:10:operator-state"
+    )
+}
+
+/// NCC-11 §8/§9: whether a value is one the rule defines. Unknown keys
+/// accept any value (they are opaque, §24) and an unknown value against a
+/// known key is rejected rather than guessed at (§8) — the `max-stale-age`
+/// integer and the `ncc:05:transport:<scheme>` pair are the two structured
+/// shapes.
+fn ncc11_rule_value_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(key), OperationValue::Text(value)] = arguments else {
+        return Err(invalid("ncc11.rule_value_is_valid"));
+    };
+    let valid = match key.as_str() {
+        "ncc:02:key-pinning" => matches!(value.as_str(), "require" | "prefer"),
+        "ncc:02:attestation" => matches!(value.as_str(), "require" | "optional"),
+        "ncc:05:stale-fallback" => matches!(value.as_str(), "allow" | "deny"),
+        "ncc:05:max-stale-age" => value.parse::<i64>().is_ok_and(|seconds| seconds >= 0),
+        "ncc:09:operator-actions" | "ncc:10:operator-state" => {
+            matches!(value.as_str(), "allow" | "deny")
+        }
+        _ if key.starts_with("ncc:05:transport:") => matches!(value.as_str(), "allow" | "deny"),
+        _ => true,
+    };
+    Ok(OperationValue::Bool(valid))
+}
+
+/// NCC-11 §6: build a three-column `rule` tag's value — policy key and value
+/// keep their own columns on the wire.
+fn ncc11_rule(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(key), OperationValue::Text(value)] = arguments else {
+        return Err(invalid("ncc11.rule"));
+    };
+    Ok(OperationValue::Text(join_tag_columns(&[key, value])))
+}
+
+/// NCC-11 §10: build a three-column `trust certifier` tag's value.
+fn ncc11_certifier(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(pubkey)] = arguments else {
+        return Err(invalid("ncc11.certifier"));
+    };
+    Ok(OperationValue::Text(join_tag_columns(&[
+        "certifier",
+        pubkey,
+    ])))
 }
 
 fn checked_to_operation(argument: &CheckedArgument) -> OperationValue {
@@ -4481,10 +5989,13 @@ impl RealRelayHost {
             .iter()
             .filter_map(|tag| {
                 let values = tag.as_array()?;
-                Some((
-                    values.first()?.as_str()?.to_owned(),
-                    values.get(1)?.as_str()?.to_owned(),
-                ))
+                let name = values.first()?.as_str()?.to_owned();
+                let columns = values
+                    .iter()
+                    .skip(1)
+                    .map(|column| column.as_str())
+                    .collect::<Option<Vec<_>>>()?;
+                Some((name, join_tag_columns(&columns)))
             })
             .collect();
         Some(SignedEvent {
@@ -9036,6 +10547,844 @@ mod tests {
 
     #[allow(clippy::too_many_lines)]
     #[test]
+    fn ncc08_handover_functions_validate_pairs_states_chains_and_conflicts() {
+        let mut host = FakeOperationHost::default();
+        let predecessor = "1".repeat(64);
+        let successor = "2".repeat(64);
+        let other = "3".repeat(64);
+        let handover = "8a1f".repeat(16);
+        let proposal_id = "c".repeat(64);
+        let text = |value: &str| OperationValue::Text(value.to_owned());
+        let proposal = || {
+            OperationValue::List(vec![
+                text("role=predecessor"),
+                text(&format!("handover={handover}")),
+                text("service=relay"),
+                text(&format!("p={successor}")),
+                text("effective=1790466400"),
+                text("expires=1790552800"),
+                text("reason=planned service key rotation"),
+            ])
+        };
+        let acceptance = || {
+            OperationValue::List(vec![
+                text("role=successor"),
+                text(&format!("handover={handover}")),
+                text("service=relay"),
+                text(&format!("p={predecessor}")),
+                text(&format!("e={proposal_id}")),
+            ])
+        };
+
+        // §7/§8/§9: extraction reads the side, the transition identifier,
+        // the service, and the counterparty the role names.
+        assert_eq!(
+            host.call_pure_function("ncc08", "role", &[proposal()])
+                .unwrap(),
+            text("predecessor")
+        );
+        assert_eq!(
+            host.call_pure_function("ncc08", "role", &[acceptance()])
+                .unwrap(),
+            text("successor")
+        );
+        assert_eq!(
+            host.call_pure_function("ncc08", "handover_id", &[proposal()])
+                .unwrap(),
+            text(&handover)
+        );
+        assert_eq!(
+            host.call_pure_function("ncc08", "service", &[proposal()])
+                .unwrap(),
+            text("relay")
+        );
+        assert_eq!(
+            host.call_pure_function("ncc08", "counterparty", &[proposal()])
+                .unwrap(),
+            text(&successor)
+        );
+        assert_eq!(
+            host.call_pure_function("ncc08", "counterparty", &[acceptance()])
+                .unwrap(),
+            text(&predecessor)
+        );
+
+        // §8: a proposal needs the predecessor role, a transition and
+        // service, exactly one successor, and no backdated effective time.
+        let created_at = OperationValue::Integer(1_790_380_000);
+        let mut valid = |tags: OperationValue, at: i64| {
+            host.call_pure_function(
+                "ncc08",
+                "proposal_is_valid",
+                &[tags, OperationValue::Integer(at)],
+            )
+            .unwrap()
+        };
+        assert_eq!(valid(proposal(), 1_790_380_000), OperationValue::Bool(true));
+        assert_eq!(
+            valid(acceptance(), 1_790_380_000),
+            OperationValue::Bool(false)
+        );
+        let no_successor = OperationValue::List(vec![
+            text("role=predecessor"),
+            text(&format!("handover={handover}")),
+            text("service=relay"),
+        ]);
+        assert_eq!(
+            valid(no_successor, 1_790_380_000),
+            OperationValue::Bool(false)
+        );
+        let two_successors = OperationValue::List(vec![
+            text("role=predecessor"),
+            text(&format!("handover={handover}")),
+            text("service=relay"),
+            text(&format!("p={successor}")),
+            text(&format!("p={other}")),
+        ]);
+        assert_eq!(
+            valid(two_successors, 1_790_380_000),
+            OperationValue::Bool(false)
+        );
+        let backdated = OperationValue::List(vec![
+            text("role=predecessor"),
+            text(&format!("handover={handover}")),
+            text("service=relay"),
+            text(&format!("p={successor}")),
+            text("effective=1700000000"),
+        ]);
+        assert_eq!(valid(backdated, 1_790_380_000), OperationValue::Bool(false));
+        let malformed_effective = OperationValue::List(vec![
+            text("role=predecessor"),
+            text(&format!("handover={handover}")),
+            text("service=relay"),
+            text(&format!("p={successor}")),
+            text("effective=soon"),
+        ]);
+        assert_eq!(
+            valid(malformed_effective, 1_790_380_000),
+            OperationValue::Bool(false)
+        );
+        let no_effective = OperationValue::List(vec![
+            text("role=predecessor"),
+            text(&format!("handover={handover}")),
+            text("service=relay"),
+            text(&format!("p={successor}")),
+        ]);
+        assert_eq!(
+            valid(no_effective, 1_790_380_000),
+            OperationValue::Bool(true)
+        );
+
+        // §9: an acceptance needs the successor role, exactly one
+        // predecessor, and exactly one proposal reference.
+        let mut acceptance_valid = |tags: OperationValue| {
+            host.call_pure_function("ncc08", "acceptance_is_valid", &[tags])
+                .unwrap()
+        };
+        assert_eq!(acceptance_valid(acceptance()), OperationValue::Bool(true));
+        let no_reference = OperationValue::List(vec![
+            text("role=successor"),
+            text(&format!("handover={handover}")),
+            text("service=relay"),
+            text(&format!("p={predecessor}")),
+        ]);
+        assert_eq!(acceptance_valid(no_reference), OperationValue::Bool(false));
+        let two_predecessors = OperationValue::List(vec![
+            text("role=successor"),
+            text(&format!("handover={handover}")),
+            text("service=relay"),
+            text(&format!("p={predecessor}")),
+            text(&format!("p={predecessor}")),
+            text(&format!("e={proposal_id}")),
+        ]);
+        assert_eq!(
+            acceptance_valid(two_predecessors),
+            OperationValue::Bool(false)
+        );
+
+        // §10: the mutual acknowledgement is checked against real
+        // authorship, the exact proposal, and the proposal's windows.
+        let pair = |proposal_tags: OperationValue,
+                    reference: &str,
+                    proposal_at: i64,
+                    acceptance_tags: OperationValue,
+                    acceptance_author: &str,
+                    acceptance_at: i64| {
+            vec![
+                OperationValue::PubKey(predecessor.clone()),
+                proposal_tags,
+                text(reference),
+                OperationValue::Integer(proposal_at),
+                OperationValue::PubKey(acceptance_author.to_owned()),
+                acceptance_tags,
+                OperationValue::Integer(acceptance_at),
+            ]
+        };
+        let mut pair_valid = |arguments: Vec<OperationValue>| {
+            host.call_pure_function("ncc08", "pair_is_valid", &arguments)
+                .unwrap()
+        };
+        assert_eq!(
+            pair_valid(pair(
+                proposal(),
+                &proposal_id,
+                1_790_380_000,
+                acceptance(),
+                &successor,
+                1_790_383_600
+            )),
+            OperationValue::Bool(true)
+        );
+        // The acceptance must be authored by the named successor.
+        assert_eq!(
+            pair_valid(pair(
+                proposal(),
+                &proposal_id,
+                1_790_380_000,
+                acceptance(),
+                &other,
+                1_790_383_600
+            )),
+            OperationValue::Bool(false)
+        );
+        // The acceptance must name the proposal's author as predecessor.
+        let wrong_predecessor = OperationValue::List(vec![
+            text("role=successor"),
+            text(&format!("handover={handover}")),
+            text("service=relay"),
+            text(&format!("p={other}")),
+            text(&format!("e={proposal_id}")),
+        ]);
+        assert_eq!(
+            pair_valid(pair(
+                proposal(),
+                &proposal_id,
+                1_790_380_000,
+                wrong_predecessor,
+                &successor,
+                1_790_383_600
+            )),
+            OperationValue::Bool(false)
+        );
+        // The reference must be the exact proposal event.
+        assert_eq!(
+            pair_valid(pair(
+                proposal(),
+                &"d".repeat(64),
+                1_790_380_000,
+                acceptance(),
+                &successor,
+                1_790_383_600
+            )),
+            OperationValue::Bool(false)
+        );
+        // Both sides must share the transition identifier and service.
+        let different_transition = OperationValue::List(vec![
+            text("role=successor"),
+            text(&format!("handover={}", "0".repeat(64))),
+            text("service=relay"),
+            text(&format!("p={predecessor}")),
+            text(&format!("e={proposal_id}")),
+        ]);
+        assert_eq!(
+            pair_valid(pair(
+                proposal(),
+                &proposal_id,
+                1_790_380_000,
+                different_transition,
+                &successor,
+                1_790_383_600
+            )),
+            OperationValue::Bool(false)
+        );
+        let different_service = OperationValue::List(vec![
+            text("role=successor"),
+            text(&format!("handover={handover}")),
+            text("service=media"),
+            text(&format!("p={predecessor}")),
+            text(&format!("e={proposal_id}")),
+        ]);
+        assert_eq!(
+            pair_valid(pair(
+                proposal(),
+                &proposal_id,
+                1_790_380_000,
+                different_service,
+                &successor,
+                1_790_383_600
+            )),
+            OperationValue::Bool(false)
+        );
+        // The acceptance must not predate the proposal, and must fall
+        // inside `expires` when the proposal set one.
+        assert_eq!(
+            pair_valid(pair(
+                proposal(),
+                &proposal_id,
+                1_790_383_600,
+                acceptance(),
+                &successor,
+                1_790_380_000
+            )),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            pair_valid(pair(
+                proposal(),
+                &proposal_id,
+                1_790_380_000,
+                acceptance(),
+                &successor,
+                1_790_552_801
+            )),
+            OperationValue::Bool(false)
+        );
+        let malformed_expiry = OperationValue::List(vec![
+            text("role=predecessor"),
+            text(&format!("handover={handover}")),
+            text("service=relay"),
+            text(&format!("p={successor}")),
+            text("expires=whenever"),
+        ]);
+        assert_eq!(
+            pair_valid(pair(
+                malformed_expiry,
+                &proposal_id,
+                1_790_380_000,
+                acceptance(),
+                &successor,
+                1_790_383_600
+            )),
+            OperationValue::Bool(false)
+        );
+
+        // §11: effective time is the proposal's tag, else the acceptance.
+        assert_eq!(
+            host.call_pure_function(
+                "ncc08",
+                "effective_time",
+                &[
+                    OperationValue::Bool(true),
+                    OperationValue::Integer(1_790_466_400),
+                    OperationValue::Integer(1_790_383_600),
+                ]
+            )
+            .unwrap(),
+            OperationValue::Integer(1_790_466_400)
+        );
+        assert_eq!(
+            host.call_pure_function(
+                "ncc08",
+                "effective_time",
+                &[
+                    OperationValue::Bool(false),
+                    OperationValue::Integer(0),
+                    OperationValue::Integer(1_790_383_600),
+                ]
+            )
+            .unwrap(),
+            OperationValue::Integer(1_790_383_600)
+        );
+
+        // §12: proposed without a valid pair, accepted before the
+        // effective time, effective once it is reached.
+        let mut state = |accepted: bool, effective_at: i64, now: i64| {
+            host.call_pure_function(
+                "ncc08",
+                "state",
+                &[
+                    OperationValue::Bool(accepted),
+                    OperationValue::Integer(effective_at),
+                    OperationValue::Integer(now),
+                ],
+            )
+            .unwrap()
+        };
+        assert_eq!(state(false, 1_790_466_400, 1_790_400_000), text("proposed"));
+        assert_eq!(state(true, 1_790_466_400, 1_790_400_000), text("accepted"));
+        assert_eq!(state(true, 1_790_466_400, 1_790_466_400), text("effective"));
+
+        // §15: only the same predecessor and service with different
+        // successors is an ambiguous claim.
+        let mut conflicts = |successor: &str, other_predecessor: &str, other: &str| {
+            host.call_pure_function(
+                "ncc08",
+                "conflicts_with",
+                &[
+                    text("relay"),
+                    text(&predecessor),
+                    text(successor),
+                    text("relay"),
+                    text(other_predecessor),
+                    text(other),
+                ],
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            conflicts(&successor, &predecessor, &other),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            conflicts(&successor, &predecessor, &successor),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            conflicts(&successor, &other, &successor),
+            OperationValue::Bool(false)
+        );
+
+        // §14: a link continues when the next predecessor is the current
+        // successor for the same service, and a revisited identity is a loop.
+        let mut continues = |service: &str, successor: &str, next_service: &str, next: &str| {
+            host.call_pure_function(
+                "ncc08",
+                "continues",
+                &[
+                    text(service),
+                    text(successor),
+                    text(next_service),
+                    text(next),
+                ],
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            continues("relay", &successor, "relay", &successor),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            continues("relay", &successor, "media", &successor),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            continues("relay", &successor, "relay", &other),
+            OperationValue::Bool(false)
+        );
+        let mut chain = |identities: &[&str]| {
+            host.call_pure_function(
+                "ncc08",
+                "chain_has_loop",
+                &[OperationValue::List(
+                    identities.iter().map(|id| text(id)).collect(),
+                )],
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            chain(&[&predecessor, &successor, &other]),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            chain(&[&predecessor, &successor, &predecessor]),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(chain(&[]), OperationValue::Bool(false));
+
+        // Wrong argument shapes are errors, not silent answers.
+        assert!(matches!(
+            host.call_pure_function(
+                "ncc08",
+                "proposal_is_valid",
+                &[OperationValue::Integer(1), created_at.clone()]
+            ),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function(
+                "ncc08",
+                "pair_is_valid",
+                &[
+                    text("not-a-pubkey"),
+                    proposal(),
+                    text(&proposal_id),
+                    created_at
+                ]
+            ),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+        assert!(matches!(
+            host.call_pure_function("ncc08", "chain_has_loop", &[OperationValue::Integer(1)]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn ncc09_grant_functions_validate_scopes_and_time_windows() {
+        let mut host = FakeOperationHost::default();
+        let operator = "a".repeat(64);
+        let other = "b".repeat(64);
+        let text = |value: &str| OperationValue::Text(value.to_owned());
+        let grant = || {
+            OperationValue::List(vec![
+                text(&format!("d=relay:{operator}")),
+                text("service=relay"),
+                text(&format!("p={operator}")),
+                text("status=active"),
+                text("scope=ncc:10:publish"),
+                text(
+                    "scope=pubkey:0000000000000000000000000000000000000000000000000000000000000001:maintenance-report",
+                ),
+                text("valid_from=1790380000"),
+                text("expiration=1792972000"),
+            ])
+        };
+        let mut extract = |function: &str| {
+            host.call_pure_function("ncc09", function, &[grant()])
+                .unwrap()
+        };
+        assert_eq!(extract("operator"), text(&operator));
+        assert_eq!(extract("service"), text("relay"));
+        assert_eq!(extract("status"), text("active"));
+        assert_eq!(
+            extract("scopes"),
+            OperationValue::List(vec![
+                text("ncc:10:publish"),
+                text(
+                    "pubkey:0000000000000000000000000000000000000000000000000000000000000001:maintenance-report"
+                ),
+            ])
+        );
+        assert_eq!(
+            host.call_pure_function("ncc09", "address", &[text("relay"), text(&operator)],)
+                .unwrap(),
+            text(&format!("relay:{operator}"))
+        );
+
+        // §8: the namespace is a spelling, not a judgement of meaning.
+        let mut namespace = |scope: &str| {
+            host.call_pure_function("ncc09", "scope_namespace", &[text(scope)])
+                .unwrap()
+        };
+        assert_eq!(namespace("ncc:10:publish"), text("ncc"));
+        assert_eq!(
+            namespace(
+                "pubkey:0000000000000000000000000000000000000000000000000000000000000001:maintenance-report"
+            ),
+            text("pubkey")
+        );
+        assert_eq!(namespace("custom-scope"), text("opaque"));
+        assert_eq!(namespace("ncc:abc:publish"), text("opaque"));
+        let mut scope_valid = |scope: &str| {
+            host.call_pure_function("ncc09", "scope_is_valid", &[text(scope)])
+                .unwrap()
+        };
+        assert_eq!(scope_valid("ncc:10:publish"), OperationValue::Bool(true));
+        assert_eq!(scope_valid("custom-scope"), OperationValue::Bool(true));
+        assert_eq!(scope_valid("NCC:10:Publish"), OperationValue::Bool(false));
+        assert_eq!(scope_valid("ncc:bad"), OperationValue::Bool(false));
+        assert_eq!(scope_valid(""), OperationValue::Bool(false));
+
+        // §6.4: authority starts at `valid_from`, or the event's own time.
+        let mut starts_at = |tags: OperationValue, created_at: i64| {
+            host.call_pure_function(
+                "ncc09",
+                "grant_starts_at",
+                &[tags, OperationValue::Integer(created_at)],
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            starts_at(grant(), 1_790_370_000),
+            OperationValue::Integer(1_790_380_000)
+        );
+        let no_start = OperationValue::List(vec![
+            text(&format!("d=relay:{operator}")),
+            text("service=relay"),
+            text(&format!("p={operator}")),
+            text("status=active"),
+            text("scope=ncc:10:publish"),
+        ]);
+        assert_eq!(
+            starts_at(no_start, 1_790_370_000),
+            OperationValue::Integer(1_790_370_000)
+        );
+
+        // §13: a grant is usable only while active and inside its window.
+        let mut valid_at = |tags: OperationValue, now: i64| {
+            host.call_pure_function(
+                "ncc09",
+                "grant_is_valid",
+                &[tags, OperationValue::Integer(now)],
+            )
+            .unwrap()
+        };
+        assert_eq!(valid_at(grant(), 1_791_000_000), OperationValue::Bool(true));
+        assert_eq!(
+            valid_at(grant(), 1_793_000_000),
+            OperationValue::Bool(false),
+            "past expiration"
+        );
+        assert_eq!(
+            valid_at(grant(), 1_790_000_000),
+            OperationValue::Bool(false),
+            "before valid_from"
+        );
+        let revoked = OperationValue::List(vec![
+            text(&format!("d=relay:{operator}")),
+            text("service=relay"),
+            text(&format!("p={operator}")),
+            text("status=revoked"),
+        ]);
+        assert_eq!(
+            valid_at(revoked.clone(), 1_791_000_000),
+            OperationValue::Bool(false)
+        );
+        let two_operators = OperationValue::List(vec![
+            text(&format!("d=relay:{operator}")),
+            text("service=relay"),
+            text(&format!("p={operator}")),
+            text(&format!("p={other}")),
+            text("status=active"),
+        ]);
+        assert_eq!(
+            valid_at(two_operators, 1_791_000_000),
+            OperationValue::Bool(false)
+        );
+        let malformed = OperationValue::List(vec![
+            text(&format!("d=relay:{operator}")),
+            text("service=relay"),
+            text(&format!("p={operator}")),
+            text("status=active"),
+            text("scope=ncc:10:publish"),
+            text("expiration=later"),
+        ]);
+        assert_eq!(
+            valid_at(malformed, 1_791_000_000),
+            OperationValue::Bool(false)
+        );
+
+        // §12: authority is the grant's validity plus the scope it lists.
+        let mut authorises = |tags: OperationValue, scope: &str, now: i64| {
+            host.call_pure_function(
+                "ncc09",
+                "authorises",
+                &[tags, text(scope), OperationValue::Integer(now)],
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            authorises(grant(), "ncc:10:publish", 1_791_000_000),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            authorises(grant(), "ncc:05:publish", 1_791_000_000),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            authorises(revoked, "ncc:10:publish", 1_791_000_000),
+            OperationValue::Bool(false)
+        );
+
+        assert!(matches!(
+            host.call_pure_function("ncc09", "authorises", &[grant(), text("ncc:10:publish")]),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+    }
+
+    #[test]
+    fn ncc10_state_functions_read_direct_and_operator_events() {
+        let mut host = FakeOperationHost::default();
+        let service_pubkey = "c".repeat(64);
+        let text = |value: &str| OperationValue::Text(value.to_owned());
+        let mut operator_tag = || {
+            host.call_pure_function(
+                "ncc10",
+                "operator_for_tag",
+                &[text(&service_pubkey), text("relay")],
+            )
+            .unwrap()
+        };
+        let OperationValue::Text(operator_for) = operator_tag() else {
+            panic!("builder returns text");
+        };
+        // §12: the builder keeps the pubkey and service in their own columns.
+        assert_eq!(
+            tag_value_columns(&operator_for),
+            vec![service_pubkey.as_str(), "relay"]
+        );
+        let operator_state = || {
+            OperationValue::List(vec![
+                text(&format!("d={service_pubkey}:relay")),
+                text("service=relay"),
+                text("state=maintenance"),
+                text(&format!("operator_for={operator_for}")),
+                text("expected_until=1790387200"),
+            ])
+        };
+        let direct_state = || {
+            OperationValue::List(vec![
+                text("d=relay"),
+                text("service=relay"),
+                text("state=operational"),
+            ])
+        };
+        assert_eq!(
+            host.call_pure_function("ncc10", "state", &[operator_state()])
+                .unwrap(),
+            text("maintenance")
+        );
+        assert_eq!(
+            host.call_pure_function("ncc10", "state_service", &[direct_state()])
+                .unwrap(),
+            text("relay")
+        );
+        let mut recognised = |value: &str| {
+            host.call_pure_function("ncc10", "state_is_recognised", &[text(value)])
+                .unwrap()
+        };
+        assert_eq!(recognised("operational"), OperationValue::Bool(true));
+        assert_eq!(recognised("retiring"), OperationValue::Bool(true));
+        assert_eq!(recognised("unknown"), OperationValue::Bool(false));
+        let mut direct = |tags: OperationValue| {
+            host.call_pure_function("ncc10", "is_direct", &[tags])
+                .unwrap()
+        };
+        assert_eq!(direct(direct_state()), OperationValue::Bool(true));
+        assert_eq!(direct(operator_state()), OperationValue::Bool(false));
+        assert_eq!(
+            host.call_pure_function("ncc10", "principal", &[operator_state()])
+                .unwrap(),
+            text(&service_pubkey)
+        );
+        assert_eq!(
+            host.call_pure_function("ncc10", "operator_service", &[operator_state()])
+                .unwrap(),
+            text("relay")
+        );
+        assert_eq!(
+            host.call_pure_function(
+                "ncc10",
+                "operator_address",
+                &[text(&service_pubkey), text("relay")],
+            )
+            .unwrap(),
+            text(&format!("{service_pubkey}:relay"))
+        );
+        // A direct event has no principal claim to read.
+        assert_eq!(
+            host.call_pure_function("ncc10", "principal", &[direct_state()])
+                .unwrap(),
+            text("")
+        );
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn ncc11_policy_functions_read_rules_certifiers_and_values() {
+        let mut host = FakeOperationHost::default();
+        let certifier_pubkey = "d".repeat(64);
+        let text = |value: &str| OperationValue::Text(value.to_owned());
+        let mut build = |function: &str, arguments: &[OperationValue]| {
+            host.call_pure_function("ncc11", function, arguments)
+                .expect("pure function succeeds")
+        };
+        // §6/§10: the builders keep key/value and role/pubkey in their own
+        // columns, so the wire tag carries three.
+        let OperationValue::Text(pinning) =
+            build("rule", &[text("ncc:02:key-pinning"), text("require")])
+        else {
+            panic!("rule builder returns text");
+        };
+        assert_eq!(
+            tag_value_columns(&pinning),
+            vec!["ncc:02:key-pinning", "require"]
+        );
+        let OperationValue::Text(certifier) = build("certifier", &[text(&certifier_pubkey)]) else {
+            panic!("certifier builder returns text");
+        };
+        assert_eq!(
+            tag_value_columns(&certifier),
+            vec!["certifier", certifier_pubkey.as_str()]
+        );
+        let tags = OperationValue::List(vec![
+            text("d=default"),
+            text(&format!("rule={pinning}")),
+            text(&format!(
+                "rule={}",
+                join_tag_columns(&["ncc:05:max-stale-age", "3600"])
+            )),
+            text(&format!("trust={certifier}")),
+        ]);
+        assert_eq!(
+            build("policy_id", std::slice::from_ref(&tags)),
+            text("default")
+        );
+        assert_eq!(
+            build("rule_keys", std::slice::from_ref(&tags)),
+            OperationValue::List(vec![
+                text("ncc:02:key-pinning"),
+                text("ncc:05:max-stale-age")
+            ])
+        );
+        assert_eq!(
+            build("rule_value", &[tags.clone(), text("ncc:02:key-pinning")]),
+            text("require")
+        );
+        assert_eq!(
+            build("rule_value", &[tags.clone(), text("ncc:99:absent")]),
+            text("")
+        );
+        assert_eq!(
+            build(
+                "rule_value_is",
+                &[tags.clone(), text("ncc:05:max-stale-age"), text("3600")]
+            ),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            build("certifiers", std::slice::from_ref(&tags)),
+            OperationValue::List(vec![text(&certifier_pubkey)])
+        );
+
+        // §23: contradictory duplicates leave the key unresolved.
+        let conflicted = OperationValue::List(vec![
+            text("d=default"),
+            text(&join_tag_columns(&["ncc:05:stale-fallback", "allow"])),
+            text(&join_tag_columns(&["ncc:05:stale-fallback", "deny"])),
+        ]);
+        assert_eq!(
+            build("rule_value", &[conflicted, text("ncc:05:stale-fallback")]),
+            text("")
+        );
+
+        // §8/§9/§24: recognition and value checking, unknown keys opaque.
+        let mut known = |key: &str| build("rule_is_known", &[text(key)]);
+        assert_eq!(known("ncc:02:key-pinning"), OperationValue::Bool(true));
+        assert_eq!(known("ncc:05:transport:wss"), OperationValue::Bool(true));
+        assert_eq!(known("ncc:99:future"), OperationValue::Bool(false));
+        let mut value_valid =
+            |key: &str, value: &str| build("rule_value_is_valid", &[text(key), text(value)]);
+        assert_eq!(
+            value_valid("ncc:02:key-pinning", "require"),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            value_valid("ncc:02:key-pinning", "maybe"),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            value_valid("ncc:05:max-stale-age", "3600"),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            value_valid("ncc:05:max-stale-age", "-1"),
+            OperationValue::Bool(false)
+        );
+        assert_eq!(
+            value_valid("ncc:05:transport:wss", "deny"),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            value_valid("ncc:99:future", "whatever"),
+            OperationValue::Bool(true),
+            "unknown keys are opaque, never invalid"
+        );
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
     fn ncc00_lifecycle_functions_extract_validate_and_judge_effectiveness() {
         let mut host = FakeOperationHost::default();
         let tags = vec![
@@ -9768,6 +12117,666 @@ mod tests {
         ));
     }
 
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn ncc06_identity_selection_and_transport_follow_the_profile() {
+        fn call(
+            host: &mut FakeOperationHost,
+            function: &str,
+            arguments: &[OperationValue],
+        ) -> OperationValue {
+            host.call_pure_function("ncc06", function, arguments)
+                .expect("ncc06 call succeeds")
+        }
+        let mut host = FakeOperationHost::default();
+        let key = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+        let npub = encode_npub(key).expect("key encodes");
+
+        // §Scope: any scheme, userinfo, port and path around the npub
+        // authority still name the identity — only the host part decodes.
+        for url in [
+            format!("wss://{npub}"),
+            format!("https://{npub}/path?x=1"),
+            format!("wss://{npub}:443"),
+            format!("wss://relay@{npub}"),
+        ] {
+            assert_eq!(
+                call(
+                    &mut host,
+                    "identity_reference",
+                    &[OperationValue::Text(url.clone())]
+                ),
+                OperationValue::Bool(true),
+                "identity reference {url}"
+            );
+            assert_eq!(
+                call(&mut host, "identity_key", &[OperationValue::Text(url)]),
+                OperationValue::Text(key.to_owned())
+            );
+        }
+        // A hostname, a literal address, a bare npub, a damaged checksum
+        // and no authority at all name something else: none resolves as an
+        // identity, so none is dereferenced as one either.
+        let last = npub.chars().last().expect("npub is not empty");
+        let substitute = if last == 'q' { 'p' } else { 'q' };
+        let corrupted = format!("{}{substitute}", &npub[..npub.len() - 1]);
+        for url in [
+            "wss://relay.example.com".to_owned(),
+            "wss://[2001:db8::1]:443".to_owned(),
+            npub.clone(),
+            corrupted,
+            npub.to_uppercase(),
+            String::new(),
+        ] {
+            assert_eq!(
+                call(
+                    &mut host,
+                    "identity_reference",
+                    &[OperationValue::Text(url.clone())]
+                ),
+                OperationValue::Bool(false),
+                "not an identity reference {url}"
+            );
+            assert_eq!(
+                call(&mut host, "identity_key", &[OperationValue::Text(url)]),
+                OperationValue::Text(String::new())
+            );
+        }
+
+        // §A: usable displaces unusable, the greater marker wins, and an
+        // exact tie falls to the greatest event id — never the reverse.
+        for (a, b, expected) in [
+            ((true, 1, "a"), (false, 9, "z"), true),
+            ((false, 9, "z"), (true, 1, "a"), false),
+            ((false, 1, "a"), (false, 9, "z"), false),
+            ((true, 2, "a"), (true, 1, "z"), true),
+            ((true, 1, "z"), (true, 2, "a"), false),
+            ((true, 7, "a"), (true, 7, "b"), false),
+            ((true, 7, "b"), (true, 7, "a"), true),
+            ((true, 7, "a"), (true, 7, "a"), false),
+        ] {
+            assert_eq!(
+                call(
+                    &mut host,
+                    "record_outranks",
+                    &[
+                        OperationValue::Bool(a.0),
+                        OperationValue::Integer(a.1),
+                        OperationValue::Text(a.2.to_owned()),
+                        OperationValue::Bool(b.0),
+                        OperationValue::Integer(b.1),
+                        OperationValue::Text(b.2.to_owned()),
+                    ]
+                ),
+                OperationValue::Bool(expected),
+                "a={a:?} b={b:?}"
+            );
+        }
+
+        // §A.2 step 3: the payload's freshness stamp, else the record's
+        // own creation time — including when the payload reads as nothing.
+        for (payload, marker) in [
+            ("{\"updated_at\":1700000300,\"ttl\":600}", 1_700_000_300),
+            ("{\"ttl\":600}", 1_700_000_000),
+            ("{\"updated_at\":\"soon\"}", 1_700_000_000),
+            ("not json", 1_700_000_000),
+            ("", 1_700_000_000),
+        ] {
+            assert_eq!(
+                call(
+                    &mut host,
+                    "locator_marker",
+                    &[
+                        OperationValue::Text(payload.to_owned()),
+                        OperationValue::Integer(1_700_000_000),
+                    ]
+                ),
+                OperationValue::Integer(marker),
+                "marker of {payload:?}"
+            );
+        }
+
+        // §E.1 / §E.2: the four tiers, with `k` deciding only between the
+        // two secure ones, and the onion family deciding before scheme.
+        for (url, k, rank, required) in [
+            ("wss://relay.example.com", key, 0, true),
+            ("https://api.example.com", key, 0, true),
+            ("tls://broker.example.com", key, 0, true),
+            ("wss://relay.example.com", "", 1, true),
+            ("wss://vww6ybal4bd7st.onion", key, 2, false),
+            ("ws://vww6ybal4bd7st.onion", key, 2, false),
+            ("onion://vww6ybal4bd7st", key, 2, false),
+            ("ws://relay.example.com", key, 3, false),
+            ("http://api.example.com", "", 3, false),
+            ("tcp://198.51.100.7:7777", key, 3, false),
+            ("203.0.113.42:9735", key, 3, false),
+            ("", key, 3, false),
+        ] {
+            assert_eq!(
+                call(
+                    &mut host,
+                    "transport_rank",
+                    &[
+                        OperationValue::Text(url.to_owned()),
+                        OperationValue::Text(k.to_owned()),
+                    ]
+                ),
+                OperationValue::Integer(rank),
+                "rank of {url} with k {k:?}"
+            );
+            assert_eq!(
+                call(
+                    &mut host,
+                    "k_required",
+                    &[OperationValue::Text(url.to_owned())]
+                ),
+                OperationValue::Bool(required),
+                "k requirement of {url}"
+            );
+        }
+
+        // §E.1's walk: tiers regroup the listed candidates, and the order
+        // inside each tier stays the order the payload listed (§A.2).
+        let listed = |url: &str| OperationValue::Text(url.to_owned());
+        assert_eq!(
+            call(
+                &mut host,
+                "transport_order",
+                &[
+                    OperationValue::List(vec![
+                        listed("ws://c.example.com"),
+                        listed("wss://b.example.com"),
+                        listed("onion://a.onion"),
+                        listed("wss://d.example.com"),
+                        listed("203.0.113.42:9735"),
+                    ]),
+                    OperationValue::Text(key.to_owned()),
+                ]
+            ),
+            OperationValue::List(vec![
+                listed("wss://b.example.com"),
+                listed("wss://d.example.com"),
+                listed("onion://a.onion"),
+                listed("ws://c.example.com"),
+                listed("203.0.113.42:9735"),
+            ])
+        );
+        assert_eq!(
+            call(
+                &mut host,
+                "transport_order",
+                &[
+                    OperationValue::List(Vec::new()),
+                    OperationValue::Text(String::new()),
+                ]
+            ),
+            OperationValue::List(Vec::new())
+        );
+
+        // §D: a fresh record wins outright, a stale one only within the
+        // bounded window §D.2 grants, and no window means no fallback.
+        for (has_fresh, age, max_staleness, mode) in [
+            (true, 999_999, 600, "fresh"),
+            (true, 0, 0, "fresh"),
+            (false, 600, 600, "stale"),
+            (false, 601, 600, "failed"),
+            (false, -1, 600, "failed"),
+            (false, 600, 0, "failed"),
+        ] {
+            assert_eq!(
+                call(
+                    &mut host,
+                    "freshness_mode",
+                    &[
+                        OperationValue::Bool(has_fresh),
+                        OperationValue::Integer(age),
+                        OperationValue::Integer(max_staleness),
+                    ]
+                ),
+                OperationValue::Text(mode.to_owned()),
+                "fresh={has_fresh} age={age} max={max_staleness}"
+            );
+        }
+
+        // Every reader answers a wrong argument shape with the same
+        // invalid-input error rather than guessing at the caller's intent.
+        for (function, arguments) in [
+            ("identity_reference", vec![OperationValue::Integer(1)]),
+            ("identity_key", vec![OperationValue::Integer(1)]),
+            ("record_outranks", vec![OperationValue::Bool(true)]),
+            (
+                "locator_marker",
+                vec![OperationValue::Integer(1), OperationValue::Integer(1)],
+            ),
+            (
+                "transport_rank",
+                vec![
+                    OperationValue::Text(String::new()),
+                    OperationValue::Integer(1),
+                ],
+            ),
+            (
+                "transport_order",
+                vec![OperationValue::List(vec![OperationValue::Integer(1)])],
+            ),
+            ("k_required", vec![OperationValue::Integer(1)]),
+            ("freshness_mode", vec![OperationValue::Bool(true)]),
+        ] {
+            assert!(matches!(
+                host.call_pure_function("ncc06", function, &arguments),
+                Err(RuntimeError::InvalidOperationArguments { .. })
+            ));
+        }
+    }
+
+    /// A record event whose id recomputes over its own body — the shape
+    /// §A step 1 accepts — signed with placeholder bytes the test's
+    /// verifier accepts or rejects as it chooses.
+    fn identity_record(
+        signer: &str,
+        kind: u16,
+        created_at: u64,
+        tags: &[(&str, &str)],
+        content: &str,
+    ) -> SignedEvent {
+        let unsigned = UnsignedEvent {
+            event_type: "Event".to_owned(),
+            kind,
+            content: content.to_owned(),
+            tags: tags
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                .collect(),
+            created_at,
+        };
+        let id = compute_event_id(signer, &unsigned);
+        SignedEvent {
+            unsigned,
+            signer: signer.to_owned(),
+            id,
+            signature: "ab".repeat(64),
+        }
+    }
+
+    /// A bootstrap relay that answers a record query with a scripted
+    /// reply — or refuses to answer at all — so §C.2's per-relay
+    /// behaviour runs without a socket.
+    struct ScriptedRecords {
+        replies: BTreeMap<String, Vec<SignedEvent>>,
+        unreachable: BTreeSet<String>,
+        requests: Vec<SubscriptionRequest>,
+        handles: BTreeMap<u64, String>,
+        next_subscription: u64,
+    }
+
+    impl ScriptedRecords {
+        fn serving(relay: &str, events: Vec<SignedEvent>) -> Self {
+            Self {
+                replies: BTreeMap::from([(relay.to_owned(), events)]),
+                unreachable: BTreeSet::new(),
+                requests: Vec::new(),
+                handles: BTreeMap::new(),
+                next_subscription: 0,
+            }
+        }
+    }
+
+    impl SubscriptionHost for ScriptedRecords {
+        fn subscribe(
+            &mut self,
+            _invocation: InvocationId,
+            request: &SubscriptionRequest,
+        ) -> Result<SubscriptionHandle, RuntimeError> {
+            let relay = request.relayset.clone().unwrap_or_default();
+            if self.unreachable.contains(&relay) || !self.replies.contains_key(&relay) {
+                return Err(RuntimeError::RelayUnavailable { relayset: relay });
+            }
+            self.next_subscription += 1;
+            self.handles.insert(self.next_subscription, relay);
+            self.requests.push(request.clone());
+            Ok(SubscriptionHandle {
+                id: self.next_subscription,
+            })
+        }
+
+        fn unsubscribe(
+            &mut self,
+            _invocation: InvocationId,
+            handle: &SubscriptionHandle,
+        ) -> Result<(), RuntimeError> {
+            self.handles.remove(&handle.id);
+            Ok(())
+        }
+
+        fn poll(
+            &mut self,
+            _invocation: InvocationId,
+            handle: &SubscriptionHandle,
+        ) -> Result<SubscriptionBatch, RuntimeError> {
+            let relay = self
+                .handles
+                .get(&handle.id)
+                .ok_or(RuntimeError::Cancelled)?
+                .clone();
+            Ok(SubscriptionBatch {
+                events: self.replies.get(&relay).cloned().unwrap_or_default(),
+                complete: true,
+                cursor: None,
+            })
+        }
+    }
+
+    const RESOLVE_NOW: u64 = 1_700_000_000;
+    const RESOLVE_KEY: &str = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+    /// Every signature the resolver is offered verifies — until the test
+    /// singles one out.
+    fn accept_all(_: &[u8; 32], _: &[u8; 32], _: &[u8; 64]) -> bool {
+        true
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn identity_resolution_selects_records_and_orders_endpoints_per_the_profile() {
+        let npub = encode_npub(RESOLVE_KEY).expect("key encodes");
+        let identity = format!("wss://{npub}");
+        let bootstrap = vec![
+            "ws://bootstrap.example.com".to_owned(),
+            "ws://silent.example.com".to_owned(),
+        ];
+        let key = RESOLVE_KEY;
+
+        // §A.1: the newer of two usable service records wins, whatever
+        // the older one offers.
+        let service_old = identity_record(
+            key,
+            30059,
+            RESOLVE_NOW - 100,
+            &[
+                ("d", "relay"),
+                ("u", "wss://old.example.com"),
+                ("k", key),
+                ("exp", "1800000000"),
+            ],
+            "",
+        );
+        let service_new = identity_record(
+            key,
+            30059,
+            RESOLVE_NOW - 50,
+            &[
+                ("d", "relay"),
+                ("u", "wss://new.example.com"),
+                ("k", key),
+                ("exp", "1800000000"),
+            ],
+            "",
+        );
+        // §A.2: the locator with the later `updated_at` wins, and its
+        // payload lists one endpoint per §E.1 tier with a publisher
+        // preference in `priority`.
+        let payload = json!({
+            "v": 1,
+            "ttl": 600,
+            "updated_at": RESOLVE_NOW - 10,
+            "endpoints": [
+                {"url": "ws://insecure.example.com", "priority": 100},
+                {"url": "wss://secure.example.com", "priority": 10},
+                {"url": "onion://vww6ybal4bd7st.onion", "priority": 20},
+                {"url": "wss://other.example.com", "priority": 30},
+            ],
+        })
+        .to_string();
+        let locator = identity_record(key, 30058, RESOLVE_NOW - 10, &[("d", "addr")], &payload);
+        let older_payload = json!({
+            "v": 1,
+            "ttl": 600,
+            "updated_at": RESOLVE_NOW - 500,
+            "endpoints": [{"url": "wss://stale-marker.example.com", "priority": 1}],
+        })
+        .to_string();
+        let older_locator = identity_record(
+            key,
+            30058,
+            RESOLVE_NOW - 500,
+            &[("d", "addr")],
+            &older_payload,
+        );
+
+        // §A step 1 rejects: another identity's record, a body its id no
+        // longer describes, a signature this verifier refuses — and the
+        // same record twice counts once.
+        let intruder = identity_record(
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            30059,
+            RESOLVE_NOW,
+            &[("d", "relay"), ("k", key), ("exp", "1800000000")],
+            "",
+        );
+        let mut tampered = service_new.clone();
+        tampered.unsigned.content = "rewritten".to_owned();
+        let refused = identity_record(
+            key,
+            30059,
+            RESOLVE_NOW - 60,
+            &[("d", "relay"), ("k", key), ("exp", "1800000000")],
+            "",
+        );
+        let refused_id = unhex::<32>(&refused.id).expect("id is hex");
+        let mut host = ScriptedRecords::serving(
+            "ws://bootstrap.example.com",
+            vec![
+                service_old.clone(),
+                service_new.clone(),
+                service_new.clone(),
+                locator.clone(),
+                older_locator.clone(),
+                intruder,
+                tampered,
+                refused.clone(),
+            ],
+        );
+        host.unreachable
+            .insert("ws://silent.example.com".to_owned());
+
+        let resolution = resolve_identity_reference(
+            &mut host,
+            &bootstrap,
+            &identity,
+            RESOLVE_NOW,
+            |_, id, _| id != &refused_id,
+        )
+        .expect("the record set resolves");
+
+        // §E.1 tier 0 first: the secure endpoint the publisher ranked
+        // first within its tier, before onion and insecure.
+        assert_eq!(resolution.endpoint, "wss://secure.example.com");
+        assert_eq!(resolution.endpoint_source, "ncc05 locator");
+        assert_eq!(resolution.transport_rank, 0);
+        assert!(resolution.k_required);
+        assert_eq!(resolution.k, key);
+        // §E.2 honestly: the key is quoted, not checked.
+        assert!(!resolution.k_verified);
+        // §A selected the newest service record and the freshest locator.
+        assert_eq!(
+            resolution
+                .service_record
+                .as_ref()
+                .map(|record| record.id.as_str()),
+            Some(service_new.id.as_str())
+        );
+        assert_eq!(
+            resolution.locator.as_ref().map(|record| record.id.as_str()),
+            Some(locator.id.as_str())
+        );
+        // Four records passed §A step 1; §C.2's silent relay cost one
+        // query, not the resolution.
+        assert_eq!(resolution.candidates, 4);
+        assert_eq!(resolution.relays_queried, 1);
+        // The query asked for both record kinds under this identity.
+        let request = host.requests.first().expect("one query per relay");
+        assert_eq!(request.kinds, vec![30059, 30058]);
+        assert_eq!(request.author.as_deref(), Some(key));
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn identity_resolution_falls_back_to_the_service_record_and_reports_what_it_lacks() {
+        let npub = encode_npub(RESOLVE_KEY).expect("key encodes");
+        let identity = format!("wss://{npub}");
+        let bootstrap = vec!["ws://bootstrap.example.com".to_owned()];
+        let key = RESOLVE_KEY;
+        let resolvable = |events: Vec<SignedEvent>| {
+            ScriptedRecords::serving("ws://bootstrap.example.com", events)
+        };
+
+        // NCC-02 `u` is the fallback when no locator endpoint stands —
+        // a private locator here, not an expired one.
+        let private_payload = json!({
+            "v": 1,
+            "ttl": 600,
+            "updated_at": RESOLVE_NOW - 10,
+            "endpoints": [],
+        })
+        .to_string();
+        let fallback = resolve_identity_reference(
+            &mut resolvable(vec![
+                identity_record(
+                    key,
+                    30059,
+                    RESOLVE_NOW - 50,
+                    &[
+                        ("d", "relay"),
+                        ("u", "wss://fallback.example.com"),
+                        ("k", key),
+                        ("exp", "1800000000"),
+                    ],
+                    "",
+                ),
+                identity_record(
+                    key,
+                    30058,
+                    RESOLVE_NOW - 10,
+                    &[("d", "addr")],
+                    &private_payload,
+                ),
+            ]),
+            &bootstrap,
+            &identity,
+            RESOLVE_NOW,
+            accept_all,
+        )
+        .expect("the service record's `u` is reachable");
+        assert_eq!(fallback.endpoint, "wss://fallback.example.com");
+        assert_eq!(fallback.endpoint_source, "ncc02 service record");
+
+        // §C.2: a set not one relay of which answers is a relay error.
+        let mut silent = resolvable(Vec::new());
+        silent
+            .unreachable
+            .insert("ws://bootstrap.example.com".to_owned());
+        assert!(matches!(
+            resolve_identity_reference(&mut silent, &bootstrap, &identity, RESOLVE_NOW, accept_all),
+            Err(RuntimeError::RelayUnavailable { .. })
+        ));
+
+        // An answered query with nothing on it.
+        assert!(matches!(
+            resolve_identity_reference(
+                &mut resolvable(Vec::new()),
+                &bootstrap,
+                &identity,
+                RESOLVE_NOW,
+                accept_all
+            ),
+            Err(RuntimeError::EvaluationError { message })
+                if message.contains("no NCC-02 or NCC-05 records")
+        ));
+
+        // §A discards the expired and the stale; §D.3's fallback has
+        // no cache to draw on, and the message says so.
+        assert!(matches!(
+            resolve_identity_reference(
+                &mut resolvable(vec![
+                    identity_record(
+                        key,
+                        30059,
+                        RESOLVE_NOW - 100,
+                        &[("d", "relay"), ("k", key), ("exp", "1699999999")],
+                        "",
+                    ),
+                    identity_record(
+                        key,
+                        30058,
+                        RESOLVE_NOW - 10_000,
+                        &[("d", "addr")],
+                        &json!({
+                            "v": 1,
+                            "ttl": 600,
+                            "updated_at": RESOLVE_NOW - 10_000,
+                            "endpoints": [{"url": "wss://gone.example.com"}],
+                        })
+                        .to_string(),
+                    ),
+                ]),
+                &bootstrap,
+                &identity,
+                RESOLVE_NOW,
+                accept_all
+            ),
+            Err(RuntimeError::EvaluationError { message })
+                if message.contains("none is usable at now=")
+                && message.contains("stale fallback")
+        ));
+
+        // Usable records that pin no endpoint: no `u`, no §5.4 entry.
+        assert!(matches!(
+            resolve_identity_reference(
+                &mut resolvable(vec![
+                    identity_record(
+                        key,
+                        30059,
+                        RESOLVE_NOW - 50,
+                        &[("d", "relay"), ("k", key), ("exp", "1800000000")],
+                        "",
+                    ),
+                    identity_record(
+                        key,
+                        30058,
+                        RESOLVE_NOW - 10,
+                        &[("d", "addr")],
+                        &json!({
+                            "v": 1,
+                            "ttl": 600,
+                            "updated_at": RESOLVE_NOW - 10,
+                            "endpoints": [],
+                        })
+                        .to_string(),
+                    ),
+                ]),
+                &bootstrap,
+                &identity,
+                RESOLVE_NOW,
+                accept_all
+            ),
+            Err(RuntimeError::EvaluationError { message })
+                if message.contains("publish no concrete endpoint")
+        ));
+
+        // §Scope: something that is not an identity reference never
+        // reaches a relay at all.
+        assert!(matches!(
+            resolve_identity_reference(
+                &mut resolvable(Vec::new()),
+                &bootstrap,
+                "wss://relay.example.com",
+                RESOLVE_NOW,
+                accept_all
+            ),
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
+    }
+
     #[test]
     fn concord_protocol_bytes_are_non_empty_and_debug_redacted() {
         assert!(SharedSecret::new(Vec::new()).is_err());
@@ -10325,6 +13334,58 @@ mod tests {
             "the parameterised identifier lowers to `d` and the other fields keep \
              their names"
         );
+    }
+
+    #[test]
+    fn multi_column_tags_round_trip_through_the_value_separator() {
+        // A two-column tag is unchanged; a tag with further columns keeps
+        // them inside its value, split back out only for the wire.
+        let event = UnsignedEvent {
+            event_type: "TrustPolicy".to_owned(),
+            kind: 30_067,
+            content: String::new(),
+            tags: vec![
+                ("d".to_owned(), "default".to_owned()),
+                (
+                    "rule".to_owned(),
+                    join_tag_columns(&["ncc:02:key-pinning", "require"]),
+                ),
+                (
+                    "trust".to_owned(),
+                    join_tag_columns(&["certifier", &"ab".repeat(32)]),
+                ),
+            ],
+            created_at: 1_790_380_000,
+        };
+        assert_eq!(
+            event.wire_tags(),
+            vec![
+                vec!["d".to_owned(), "default".to_owned()],
+                vec![
+                    "rule".to_owned(),
+                    "ncc:02:key-pinning".to_owned(),
+                    "require".to_owned(),
+                ],
+                vec!["trust".to_owned(), "certifier".to_owned(), "ab".repeat(32)],
+            ]
+        );
+        assert_eq!(
+            tag_value_columns("ncc:02:key-pinning\u{1f}require"),
+            vec!["ncc:02:key-pinning", "require"]
+        );
+        assert_eq!(tag_value_columns("default"), vec!["default"]);
+        // Parsing a wire event rejoins the columns, so a delivered
+        // three-column tag reads back the same value a builder produced.
+        let parsed = crate::eval::event_from_json(&serde_json::json!({
+            "kind": 30_067, "content": "",
+            "tags": [
+                ["d", "default"],
+                ["rule", "ncc:02:key-pinning", "require"],
+                ["trust", "certifier", "ab".repeat(32)],
+            ],
+        }))
+        .expect("parses");
+        assert_eq!(parsed.unsigned.tags, event.tags);
     }
 
     #[test]
