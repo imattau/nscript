@@ -15,12 +15,12 @@ nominal Epoch from Integer {
     require value >= 0
 }
 
-record Channel {
+record ConcordChannel {
     field id: ChannelId
     field name: Text
     field private: Bool
 }
 
-error CommunityError {
+error ConcordCommunityError {
     field message: Text
 }

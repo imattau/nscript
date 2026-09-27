@@ -161,6 +161,26 @@ validators are script-invoked pure functions, not implicit dispatch gating).
   empty tag list.
 - Route `send <record>` through the lowering once NIP-17 encrypt-and-gift-wrap
   lands; it stays deliberately `OperationUnavailable` until then.
+- **Top-level and schedule bodies don't execute in source order.** `nscript
+  run` with no `--event` handles startup two ways, independently:
+  `top_level_publications` collects every literal-field `publish` outside a
+  handler/`fn` body and runs it; `top_level_operation_calls` separately
+  collects every other module operation call outside a handler/`fn` body
+  and runs *those* through the simulator, reporting each as a flat
+  `operation N: <value>` line. Neither honours a `let` binding threading a
+  value from one into the other — a schedule body computing something
+  (for example encrypting a payload with `nip44.encrypt_text`) and then
+  publishing the result is silently split into two disconnected pieces,
+  and the `print` statements around them never run at all. Every existing
+  schedule-body example avoided this by only ever publishing literal
+  fields; `examples/service-operator-bot.ns` hit it building the encrypted
+  Locator refresh and moved that one sequence into a handler instead
+  (exactly where NCC-05's own worked example already puts the same
+  encrypt-then-publish pattern), which is the correct workaround today but
+  not a fix. A real fix means giving startup execution the same sequential,
+  data-flow-aware interpretation a handler body gets — an evaluator
+  change, not a diagnostic — and is deferred rather than attempted
+  alongside this stage's audit.
 
 ## Stages
 
@@ -530,16 +550,22 @@ historical evidence, not latest state.
   (`handover_role` accepts `predecessor` or `successor`) and one regular
   event `Handover` (kind 1070, `role`/`handover`/`service`/`p`/`e`/
   `effective`/`expires`/`reason`), plus twelve pure functions: `role`,
-  `handover_id`, `service` and `counterparty` extract a delivered event's
-  side, transition identifier, service and other identity;
+  `handover_id`, `handover_service` and `counterparty` extract a delivered
+  event's side, transition identifier, service and other identity
+  (`handover_service`, not `service`, since NCC-09 already exports
+  `service` and importing both modules in one program requires every
+  declared name across them to be unique — one of four collisions the
+  whole-library export-uniqueness guard test found on the standard library
+  built up to this point, see the follow-up below);
   `proposal_is_valid(tags, created_at)` requires §8.1's shape and refuses a
   backdated `effective`; `acceptance_is_valid(tags)` requires §9.1's shape;
   `pair_is_valid(...)` checks §10 across both events — authors, tags, the
   exact proposal reference (`EventId`), shared identifiers, order and the
   `expires` window — from values the caller supplies;
   `effective_time(has_effective, effective, acceptance_created_at)` renders
-  §11's moment; `state(accepted, effective_at, now)` answers
-  proposed/accepted/effective; and `conflicts_with(...)`, `continues(...)`
+  §11's moment; `handover_state(accepted, effective_at, now)` answers
+  proposed/accepted/effective (named distinctly from NCC-10's `state` for
+  the same reason); and `conflicts_with(...)`, `continues(...)`
   and `chain_has_loop(chain)` are §15's ambiguity, §14's link and §14's
   loop, all as pure data with no clock read inside a host.
 - **Runtime** dispatch in `nscript-runtime`'s shared pure-function registry
@@ -588,7 +614,12 @@ convention defines the container, not what a scope means.
   `use ncc02`, the `adad778` reference, a `grant_status` validator and the
   addressable `AuthorityGrant` event (kind 30064: `d`, `service`, `p`,
   `status`, `scope` list, `expiration`, `valid_from`, `note`), plus ten
-  pure functions: `operator`/`service`/`status`/`scopes` extract;
+  pure functions: `operator`/`service`/`authority_status`/`scopes` extract
+  (`authority_status`, not `status`, since NCC-00 already exports `status`
+  and importing both modules in one program requires every declared name
+  across them to be unique — the collision found composing NCC-00 and
+  NCC-09 while auditing the whole standard library for this class of bug
+  (see the follow-up below), fixed the same way);
   `address(service, operator)` builds the `<service>:<operator>` `d`;
   `scope_namespace`/`scope_is_valid` classify §8's `ncc:`/`pubkey:` forms
   and leave everything else opaque; `grant_starts_at(tags, created_at)`
@@ -764,6 +795,49 @@ boolean dependency expressions (§13); `version_satisfies` matches that
 scope rather than a general SemVer range library. Dependency resolution
 (§14) and installation itself are explicitly out of NCC-13's scope and
 are not implemented here.
+
+## Cross-module export audit (after stage 11)
+
+Every stage so far reviewed one convention against the pin and, where its
+own author noticed, against the modules it explicitly composes with (stage
+9's `operator_service` naming note is one such case). Nothing checked a
+new module's declared names against the *entire* standard library, because
+`nscript-semantics`'s `E4003` ambiguous-export check only ever runs per
+program, over whichever modules that program's own `use` graph pulls in —
+two modules can each check and test cleanly on their own and still collide
+the moment a script imports both.
+
+Building `examples/service-operator-bot.ns` (composing NCC-02/05/06/07/09/
+10/11/13 in one program) hit exactly this: NCC-13 had reused NCC-10's
+`operator_for_tag`/`operator_project`/`operator_application` verbatim.
+Fixing it and then auditing the whole standard library (a new
+`nscript-modules` test, `built_in_modules_export_no_ambiguous_names_
+across_the_standard_library`, replicating `E4003`'s name-collection logic
+over every `BUILTINS` entry at once rather than one program's import
+graph) found three more, none previously exercised by any program that
+imports both sides:
+
+- `service`: NCC-08 (a handover's service) and NCC-09 (a grant's service).
+  NCC-08's renamed to `handover_service`.
+- `status`: NCC-00 (a document's lifecycle status) and NCC-09 (a grant's
+  status). NCC-09's renamed to `authority_status`.
+- `state`: NCC-08 (a handover's proposed/accepted/effective judgment,
+  `state(accepted, effective_at, now)`) and NCC-10 (a service's tag,
+  `state(tags)`) — coincidentally same name, unrelated signatures and
+  purposes. NCC-08's renamed to `handover_state`.
+
+Each rename picked whichever side had fewer existing call sites to update,
+matching the precedent NCC-13's own fix set (nothing outside the renamed
+module's own fixtures depended on the old name). The audit also found two
+long-standing collisions outside the NCC family — `concord02` and `nip72`
+both declared `CommunityError`, and `concord02` and `nip28` both declared
+`Channel` — renamed to `ConcordCommunityError`/`ConcordChannel` (concord02
+had zero external call sites for either, so the rename touched only its
+own module file).
+
+The guard test now runs on every `cargo test`, so a future module reusing
+an already-shipped name fails the build immediately rather than waiting
+for some later script to compose the two and discover it by hand.
 
 ## Guardrails
 

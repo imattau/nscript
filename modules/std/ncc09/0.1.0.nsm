@@ -9,7 +9,7 @@ validator grant_status(value: Text) {
 
 function operator(tags: List<Text>) -> Text
 function service(tags: List<Text>) -> Text
-function status(tags: List<Text>) -> Text
+function authority_status(tags: List<Text>) -> Text
 function scopes(tags: List<Text>) -> List<Text>
 function address(service: Text, operator: Text) -> Text
 function scope_namespace(scope: Text) -> Text

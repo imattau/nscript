@@ -51,15 +51,15 @@ permissions {
 on Handover where tags.role contains "predecessor" {
     if not ncc08.proposal_is_valid(event.tags, event.created_at) {
         print("proposal rejected: incomplete or backdated")
-    } else if ncc08.service(event.tags) != "relay" {
-        print("proposal ignored: this bot takes over `relay` only, not " + ncc08.service(event.tags))
+    } else if ncc08.handover_service(event.tags) != "relay" {
+        print("proposal ignored: this bot takes over `relay` only, not " + ncc08.handover_service(event.tags))
     } else {
         // The predecessor is the proposal's own author — a real
         // pubkey — not the successor the `p` tag addresses, and not
         // the reason text any proposer could write.
         let predecessor: PubKey = event.author
         let handover = ncc08.handover_id(event.tags)
-        let service = ncc08.service(event.tags)
+        let service = ncc08.handover_service(event.tags)
         let published = publish Handover {
             role: "successor";
             handover: handover;
@@ -76,6 +76,6 @@ on Handover where tags.role contains "successor" {
     if not ncc08.acceptance_is_valid(event.tags) {
         print("acceptance rejected: incomplete")
     } else {
-        print("acceptance " + ncc08.handover_id(event.tags) + " acknowledges " + ncc08.counterparty(event.tags) + " for " + ncc08.service(event.tags))
+        print("acceptance " + ncc08.handover_id(event.tags) + " acknowledges " + ncc08.counterparty(event.tags) + " for " + ncc08.handover_service(event.tags))
     }
 }

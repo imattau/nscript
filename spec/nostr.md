@@ -353,7 +353,7 @@ addressable ones, both stay historical evidence instead of being replaced
 by the author's next revision.
 
 Validation is exposed as pure functions. `ncc08.role(event.tags)`,
-`ncc08.handover_id(event.tags)`, `ncc08.service(event.tags)` and
+`ncc08.handover_id(event.tags)`, `ncc08.handover_service(event.tags)` and
 `ncc08.counterparty(event.tags)` extract the side, the transition
 identifier, the service, and the other identity the `role` addresses;
 `ncc08.proposal_is_valid(event.tags, created_at)` requires §8.1's shape and
@@ -368,7 +368,7 @@ Signatures remain the host's business, never the module's.
 Time and state are pure too. `ncc08.effective_time(has_effective,
 effective, acceptance_created_at)` renders §11's effective moment — the
 proposal's `effective` when it carried one, else the acceptance's own
-time — and `ncc08.state(accepted, effective_at, now)` answers `proposed`,
+time — and `ncc08.handover_state(accepted, effective_at, now)` answers `proposed`,
 `accepted` or `effective`: a proposal alone is never accepted, and an
 accepted pair becomes effective only once `now` reaches that moment, with
 the predecessor still current until then. Chain and conflict rules are
@@ -404,8 +404,11 @@ its scopes are never inherited (§14), while a grant revoked with
 
 The operator never becomes the service (§4) and the convention defines the
 authority container, not what a scope means (§9). Extraction stays pure:
-`ncc09.operator`, `ncc09.service`, `ncc09.status` and `ncc09.scopes` read
-the grant, and `ncc09.scope_namespace`/`ncc09.scope_is_valid` report the
+`ncc09.operator`, `ncc09.service`, `ncc09.authority_status` and
+`ncc09.scopes` read the grant (`authority_status`, not `status`, because
+NCC-00 already exports `status` and importing both modules in one program
+requires every declared name across them to be unique), and
+`ncc09.scope_namespace`/`ncc09.scope_is_valid` report the
 `ncc:<number>:<action>` and `pubkey:<hex>:<name>` spellings (everything
 else is opaque). `ncc09.grant_starts_at(tags, created_at)` renders §6.4's
 start — `valid_from` when present, else the event's own time — and

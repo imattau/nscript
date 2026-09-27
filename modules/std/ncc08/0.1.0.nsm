@@ -9,13 +9,13 @@ validator handover_role(value: Text) {
 
 function role(tags: List<Text>) -> Text
 function handover_id(tags: List<Text>) -> Text
-function service(tags: List<Text>) -> Text
+function handover_service(tags: List<Text>) -> Text
 function counterparty(tags: List<Text>) -> Text
 function proposal_is_valid(tags: List<Text>, created_at: Int) -> Bool
 function acceptance_is_valid(tags: List<Text>) -> Bool
 function pair_is_valid(proposal_author: PubKey, proposal_tags: List<Text>, proposal_id: EventId, proposal_created_at: Int, acceptance_author: PubKey, acceptance_tags: List<Text>, acceptance_created_at: Int) -> Bool
 function effective_time(has_effective: Bool, effective: Int, acceptance_created_at: Int) -> Int
-function state(accepted: Bool, effective_at: Int, now: Int) -> Text
+function handover_state(accepted: Bool, effective_at: Int, now: Int) -> Text
 function conflicts_with(service: Text, predecessor: Text, successor: Text, other_service: Text, other_predecessor: Text, other_successor: Text) -> Bool
 function continues(service: Text, successor: Text, next_service: Text, next_predecessor: Text) -> Bool
 function chain_has_loop(chain: List<Text>) -> Bool
