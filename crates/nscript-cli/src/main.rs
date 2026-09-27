@@ -667,17 +667,132 @@ fn declared_returns(
         .collect()
 }
 
-/// Runs the program's top-level module operation calls against the simulator.
-/// `run` simulates: what no host implements is answered from the operation's
-/// declared return type and recorded, never sent anywhere. Handler and function
-/// bodies are excluded, because they run when an event arrives or the function is
-/// called, not at startup.
-fn run_startup_operations<R, S, C, A>(
+/// An [`nscript_runtime::eval::EvalHost`] wrapper that traces every module
+/// operation call and publish it forwards to `inner`, printing the same
+/// `operation N: <value>` / `publication N: <accepted>/<total> relays
+/// accepted` lines `nscript run`'s startup phase has always printed — now as
+/// a real-time trace of a sequential run rather than a report assembled
+/// after two static passes. Each trace has its own counter, starting at 0,
+/// independent of source order between the two kinds.
+struct StartupTrace<'a, H: nscript_runtime::eval::EvalHost> {
+    inner: &'a mut H,
+    operation_index: usize,
+    publication_index: usize,
+}
+
+impl<H: nscript_runtime::eval::EvalHost> nscript_runtime::eval::EvalHost for StartupTrace<'_, H> {
+    fn print(&mut self, message: &str) -> Result<(), nscript_runtime::RuntimeError> {
+        self.inner.print(message)
+    }
+
+    fn principal(&self) -> Option<String> {
+        self.inner.principal()
+    }
+
+    fn call_operation(
+        &mut self,
+        module: &str,
+        operation: &str,
+        arguments: &[nscript_runtime::OperationValue],
+    ) -> Result<nscript_runtime::OperationValue, nscript_runtime::RuntimeError> {
+        let value = self.inner.call_operation(module, operation, arguments)?;
+        println!("operation {}: {value:?}", self.operation_index);
+        self.operation_index += 1;
+        Ok(value)
+    }
+
+    fn declared_return(&self, module: &str, operation: &str) -> Option<String> {
+        self.inner.declared_return(module, operation)
+    }
+
+    fn host_key(
+        &mut self,
+        label: &str,
+    ) -> Result<nscript_runtime::OperationValue, nscript_runtime::RuntimeError> {
+        self.inner.host_key(label)
+    }
+
+    fn claim_once(&mut self, key: &str) -> Result<bool, nscript_runtime::RuntimeError> {
+        self.inner.claim_once(key)
+    }
+
+    fn publish(
+        &mut self,
+        event_type: &str,
+        content: Option<String>,
+        tags: &[(String, String)],
+        relayset: &str,
+        signer: &str,
+    ) -> Result<nscript_runtime::OperationValue, nscript_runtime::RuntimeError> {
+        let value = self
+            .inner
+            .publish(event_type, content, tags, relayset, signer)?;
+        if let nscript_runtime::OperationValue::PublishReport(report) = &value {
+            let accepted = report
+                .outcomes
+                .iter()
+                .filter(|outcome| outcome.accepted)
+                .count();
+            println!(
+                "publication {}: {accepted}/{} relays accepted",
+                self.publication_index,
+                report.outcomes.len()
+            );
+            self.publication_index += 1;
+        }
+        Ok(value)
+    }
+
+    fn is_pure_function(&self, module: &str, function: &str) -> bool {
+        self.inner.is_pure_function(module, function)
+    }
+
+    fn call_pure_function(
+        &mut self,
+        module: &str,
+        function: &str,
+        arguments: &[nscript_runtime::OperationValue],
+    ) -> Result<nscript_runtime::OperationValue, nscript_runtime::RuntimeError> {
+        self.inner.call_pure_function(module, function, arguments)
+    }
+}
+
+/// Runs the program's startup phase: first the two static passes over
+/// everything outside a schedule body — every top-level module operation
+/// call ([`nscript_runtime::eval::top_level_operation_calls`], reported as
+/// `operation N: <value>`) and then every top-level literal-field `publish`
+/// ([`Runtime::run`], reported as `publication N: <accepted>/<total> relays
+/// accepted`) — exactly as `nscript run`/`nscript deploy` always ran them,
+/// then every `every`/`at` schedule's own body once, in real source order,
+/// through the same sequential evaluator a handler body gets
+/// ([`nscript_runtime::eval::run_schedule_bodies`]) — a schedule's `let`
+/// bindings, `print`, `publish` and module operation calls thread values
+/// between them the way the two static passes never could, and a `print`
+/// finally runs (`deferred_spans` keeps a schedule body's own content out
+/// of the two static passes, so nothing here runs twice). The two families
+/// share one running `operation`/`publication` counter, continuing after
+/// the static passes rather than restarting at 0.
+///
+/// Root-level top-level code outside any schedule keeps the old static
+/// passes' behaviour deliberately: unlike a schedule body (always a
+/// `let`/`publish`/`print` sequence in every example this codebase has),
+/// arbitrary root-level code exercises constructs the plain evaluator was
+/// never meant to run outside a handler (`select`, `latest`) and the
+/// checker's own leniency toward a bare demo identifier as a typed
+/// argument — moving that to the sequential evaluator broke real examples
+/// when tried, so it stays out of scope here.
+///
+/// # Errors
+///
+/// Returns the exit code for the first unhandled failure the sequence hits.
+#[allow(clippy::too_many_arguments)]
+fn run_startup_sequential<R, S, C, A>(
     runtime: &mut nscript_runtime::Runtime<R, S, C, A>,
     program: &Program,
     checked: &nscript_semantics::CheckedProgram,
     policy: &nscript_runtime::OperationPolicy,
     operations: &mut nscript_runtime::eval::SimulatedOperations,
+    principal: Option<&str>,
 ) -> Result<(), ExitCode>
 where
     R: nscript_runtime::RelayHost,
@@ -697,10 +812,71 @@ where
             eprintln!("error[R1002]: {error:?}");
             ExitCode::from(1)
         })?;
+    let operation_index = values.len();
     for (index, value) in values.iter().enumerate() {
         println!("operation {index}: {value:?}");
     }
-    Ok(())
+    let reports = runtime.run(program, checked).map_err(|error| {
+        eprintln!("error[R1001]: {error:?}");
+        ExitCode::from(1)
+    })?;
+    let publication_index = reports.len();
+    for (index, report) in reports.iter().enumerate() {
+        let accepted = report
+            .outcomes
+            .iter()
+            .filter(|outcome| outcome.accepted)
+            .count();
+        println!(
+            "publication {index}: {accepted}/{} relays accepted",
+            report.outcomes.len()
+        );
+    }
+
+    let mut session = nscript_runtime::eval::RuntimeSession {
+        runtime,
+        policy,
+        operations,
+        log: &mut StartupLog,
+        principal: principal.map(str::to_owned),
+        idempotency: None,
+        events: &checked.events,
+    };
+    let mut traced = StartupTrace {
+        inner: &mut session,
+        operation_index,
+        publication_index,
+    };
+    match nscript_runtime::eval::run_schedule_bodies(
+        program,
+        &mut traced,
+        nscript_runtime::eval::EvalLimits::default(),
+    ) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            eprintln!("error[R1002]: {error:?}");
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
+/// The [`nscript_runtime::LogHost`] startup execution logs through: an
+/// unindented `log <level>: <message>` line, matching the unindented
+/// `publication N:`/`operation N:` lines startup already prints (a
+/// delivered event's own handler dispatch indents its log lines by two
+/// spaces instead, to set them apart from the event/handler lines around
+/// them — startup has no such surrounding lines to set apart from).
+struct StartupLog;
+
+impl nscript_runtime::LogHost for StartupLog {
+    fn log(
+        &mut self,
+        _invocation: nscript_runtime::InvocationId,
+        record: &nscript_runtime::LogRecord,
+    ) -> Result<(), nscript_runtime::RuntimeError> {
+        println!("log {}: {}", record.level, record.message);
+        Ok(())
+    }
 }
 
 /// The simulator every command that runs handlers uses: it runs what the fake
@@ -782,32 +958,15 @@ fn run_program(arguments: &[String]) -> ExitCode {
         |policy, call| policy.allow(&call.module, &call.operation),
     );
     let mut operation_host = simulated_operations(&graph, &options.failing);
-    if let Err(code) = run_startup_operations(
+    if let Err(code) = run_startup_sequential(
         &mut runtime,
         &program,
         &checked,
         &operation_policy,
         &mut operation_host,
+        options.principal.as_deref(),
     ) {
         return code;
-    }
-    let reports = match runtime.run(&program, &checked) {
-        Ok(reports) => reports,
-        Err(error) => {
-            eprintln!("error[R1001]: {error:?}");
-            return ExitCode::from(1);
-        }
-    };
-    for (index, report) in reports.iter().enumerate() {
-        let accepted = report
-            .outcomes
-            .iter()
-            .filter(|outcome| outcome.accepted)
-            .count();
-        println!(
-            "publication {index}: {accepted}/{} relays accepted",
-            report.outcomes.len()
-        );
     }
     deliver_events(
         &mut runtime,
@@ -1094,33 +1253,15 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
             "note: module operation calls (kick, react, publish_report, ...) are still simulated here; only publish/sign/relay are real"
         );
     }
-    if let Err(code) = run_startup_operations(
+    if let Err(code) = run_startup_sequential(
         &mut runtime,
         &program,
         &checked,
         &operation_policy,
         &mut operation_host,
+        options.principal.as_deref(),
     ) {
         return code;
-    }
-
-    let reports = match runtime.run(&program, &checked) {
-        Ok(reports) => reports,
-        Err(error) => {
-            eprintln!("error[R1001]: {error:?}");
-            return ExitCode::from(1);
-        }
-    };
-    for (index, report) in reports.iter().enumerate() {
-        let accepted = report
-            .outcomes
-            .iter()
-            .filter(|outcome| outcome.accepted)
-            .count();
-        println!(
-            "publication {index}: {accepted}/{} relays accepted",
-            report.outcomes.len()
-        );
     }
 
     if checked.handlers.is_empty() {

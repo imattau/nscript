@@ -2185,17 +2185,22 @@ fn the_release_monitor_publishes_judges_upgrades_and_selects_artefacts() {
 #[allow(clippy::too_many_lines)]
 fn the_service_operator_bot_composes_the_full_ncc_service_cluster() {
     let path = repository_path("examples/service-operator-bot.ns");
+    let principal = "a".repeat(64);
     let run = |extra: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_nscript"))
             .arg("run")
             .arg(&path)
+            .args(["--as", &principal])
             .args(extra)
             .output()
             .unwrap()
     };
 
-    // No event: the schedule's literal-field publishes (manifest, record,
-    // state) run at startup and the 24h timer registers.
+    // No event: the schedule runs once at startup — manifest, service
+    // record, encrypted locator and operational state, in real sequence,
+    // the `let`s computing the locator's payload and its encrypted content
+    // reaching the `publish` after them in the same schedule body — and
+    // the 24h timer registers for (never fired) refiring.
     let output = run(&[]);
     assert!(
         output.status.success(),
@@ -2204,21 +2209,11 @@ fn the_service_operator_bot_composes_the_full_ncc_service_cluster() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("timer schedule-0"), "{stdout}");
-    assert!(stdout.contains("9 handler(s) registered"), "{stdout}");
-
-    // The encrypted locator refresh needs a configured principal (`me`).
-    let refresh = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "refresh", "tags": [["t", "refresh-locator"]]}"#;
-    let output = run(&["--as", &"a".repeat(64), "--event", refresh]);
     assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("locator published: true/1 relays"),
+        stdout.contains("refresh: manifest true, record true, locator true, state true"),
         "{stdout}"
     );
+    assert!(stdout.contains("8 handler(s) registered"), "{stdout}");
 
     // NCC-09 as principal: delegate two scopes to an automation key.
     let authorise = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "bring up CI", "tags": [["t", "authorise-operator"]]}"#;
