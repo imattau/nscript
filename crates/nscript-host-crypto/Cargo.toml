@@ -15,9 +15,15 @@ hkdf = "0.12"
 hmac = "0.12"
 k256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdh", "schnorr"] }
 nscript-runtime = { path = "../nscript-runtime" }
+rustls = { workspace = true, optional = true }
 serde_json.workspace = true
 sha2.workspace = true
 subtle = "2"
+tungstenite = { workspace = true, optional = true }
+
+[features]
+default = ["real-hosts"]
+real-hosts = ["dep:rustls", "dep:tungstenite"]
 
 [dev-dependencies]
 nscript-semantics = { path = "../nscript-semantics" }

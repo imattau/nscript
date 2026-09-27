@@ -23,6 +23,7 @@ fn main() -> ExitCode {
         [command, rest @ ..] if command == "inspect" => inspect_program(rest, false),
         [command, rest @ ..] if command == "run" => run_program(rest),
         [command, rest @ ..] if command == "deploy" => deploy_program(rest),
+        [command, rest @ ..] if command == "concord-run" => concord_run(rest),
         [command, rest @ ..] if command == "test-event" => test_event(rest),
         [package, manifest, rest @ ..] if package == "package" && manifest == "manifest" => {
             package_manifest(rest)
@@ -52,7 +53,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>]\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>]\n  nscript concord-run [-M <directory>]... <file> --community <link-signer-hex>=<invite-fragment> --channel <name> --as <secret-hex-or-keyfile> [--relay <wss://url>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -1810,4 +1811,358 @@ fn finish(path: &str, mut diagnostics: Vec<Diagnostic>) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+#[derive(Default)]
+struct ConcordRunOptions {
+    /// `<link-signer-hex>=<invite-fragment>`.
+    community: Option<(String, String)>,
+    channel: Option<String>,
+    /// Bot identity: 64 hex characters (a secret key) or a path to a keyfile
+    /// holding one (created, with a freshly generated secret, if absent).
+    identity: Option<String>,
+    relays: Vec<String>,
+}
+
+/// Separates `concord-run`'s own flags (`--community`, `--channel`, `--as`,
+/// `--relay`) from the compiler arguments, the same way [`take_deploy_options`]
+/// does for `deploy`.
+fn take_concord_run_options(
+    arguments: &[String],
+) -> Result<(Vec<String>, ConcordRunOptions), String> {
+    let mut rest = Vec::new();
+    let mut options = ConcordRunOptions::default();
+    let mut index = 0;
+    while index < arguments.len() {
+        let flag = arguments[index].as_str();
+        if !matches!(flag, "--community" | "--channel" | "--as" | "--relay") {
+            rest.push(arguments[index].clone());
+            index += 1;
+            continue;
+        }
+        let Some(value) = arguments.get(index + 1) else {
+            return Err(format!("{flag} requires a value"));
+        };
+        match flag {
+            "--community" => {
+                let Some((signer, fragment)) = value.split_once('=') else {
+                    return Err(format!(
+                        "--community expects <link-signer-hex>=<invite-fragment>, found {value}"
+                    ));
+                };
+                options.community = Some((signer.to_owned(), fragment.to_owned()));
+            }
+            "--channel" => options.channel = Some(value.clone()),
+            "--relay" => options.relays.push(value.clone()),
+            _ => options.identity = Some(value.clone()),
+        }
+        index += 2;
+    }
+    Ok((rest, options))
+}
+
+/// Loads a bot's secret key from `--as`: either 64 hex characters directly,
+/// or the path to a keyfile holding them, generated on first use if the file
+/// does not exist yet. Never prints the secret.
+fn concord_run_identity(value: &str) -> Result<[u8; 32], String> {
+    if value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Ok(nscript_host_crypto::runner::unhex32(value));
+    }
+    if let Ok(text) = fs::read_to_string(value) {
+        let text = text.trim();
+        if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(format!("{value} does not hold a 64-hex-character secret"));
+        }
+        return Ok(nscript_host_crypto::runner::unhex32(text));
+    }
+    let secret = nscript_host_crypto::random32()
+        .map_err(|error| format!("could not generate an identity: {error:?}"))?;
+    fs::write(value, nscript_host_crypto::runner::hex(&secret))
+        .map_err(|error| format!("could not write keyfile {value}: {error}"))?;
+    println!("generated a new bot identity, saved to {value}");
+    Ok(secret)
+}
+
+/// Prints the program's checked operation policy: what it may do, before it
+/// does anything (this milestone's requirement 3).
+fn print_operation_policy(program: &Program, checked: &nscript_semantics::CheckedProgram) {
+    println!("profile: {:?}", program.profile);
+    if !checked.effects.is_empty() {
+        println!(
+            "effects: {}",
+            checked
+                .effects
+                .iter()
+                .map(|effect| format!("{effect:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    for call in &checked.operation_calls {
+        println!("operation: {}.{}", call.module, call.operation);
+    }
+    for handler in &checked.handlers {
+        println!("handler: {}", handler.event_type);
+    }
+}
+
+/// The body of the program's (first) `on` handler, the way
+/// `nscript-host-crypto`'s `tests/handler.rs` extracts it.
+fn concord_run_handler_body(
+    program: &nscript_syntax::Program,
+) -> Result<Vec<nscript_syntax::ast::Item>, String> {
+    use nscript_syntax::ast::{Item, StatementKind};
+    program
+        .ast
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::Statement(statement) => match &statement.value {
+                StatementKind::On { body, .. } => Some(body.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .ok_or_else(|| "the program declares no `on` handler".to_owned())
+}
+
+/// The controlled, single-pass Concord bot runner (see
+/// `docs/CONCORD-BOT.md`'s "first implementation milestone").
+///
+/// Scope note (milestone requirement 4): this is a **single pass**, not a
+/// persistent poll loop. The community's authority fold is loaded once,
+/// immediately before the already-fetched channel history is processed, so
+/// the host's final authorization check for every message in this run sees
+/// the same, just-verified roles and grants. It is not refreshed again
+/// mid-run because there is no mid-run: run the command again to pick up
+/// later role, grant, or ban changes against a fresh fetch.
+#[allow(clippy::too_many_lines)]
+fn concord_run(arguments: &[String]) -> ExitCode {
+    let (arguments, options) = match take_concord_run_options(arguments) {
+        Ok(taken) => taken,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let Some((signer_hex, fragment)) = options.community else {
+        eprintln!("error: concord-run requires --community <link-signer-hex>=<invite-fragment>");
+        return ExitCode::from(2);
+    };
+    let Some(channel_name) = options.channel else {
+        eprintln!("error: concord-run requires --channel <name>");
+        return ExitCode::from(2);
+    };
+    let Some(identity_arg) = options.identity else {
+        eprintln!("error: concord-run requires --as <secret-hex-or-keyfile>");
+        return ExitCode::from(2);
+    };
+
+    // Requirement 1: program, community/channel selection, bot identity, and
+    // relay configuration are all explicit inputs, parsed above and below.
+    let Ok((path, program, graph, mut diagnostics)) = load_program(&arguments) else {
+        return ExitCode::from(2);
+    };
+    diagnostics.extend(analyze_with_modules(&program, &graph));
+    if !diagnostics.is_empty() {
+        return finish(&path, diagnostics);
+    }
+    let (checked, typed_diagnostics) = check(&program);
+    if !typed_diagnostics.is_empty() {
+        return finish(&path, typed_diagnostics);
+    }
+    let checked = checked.expect("checked program");
+
+    // Requirement 3: check the source and print its operation policy before
+    // starting anything else.
+    print_operation_policy(&program, &checked);
+
+    let handler_body = match concord_run_handler_body(&program) {
+        Ok(body) => body,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let secret = match concord_run_identity(&identity_arg) {
+        Ok(secret) => secret,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let bot_pubkey = match nscript_host_crypto::group_key::xonly_pubkey(&secret) {
+        Ok(pubkey) => nscript_host_crypto::runner::hex(&pubkey),
+        Err(error) => {
+            eprintln!("error: could not derive the bot's public key: {error:?}");
+            return ExitCode::from(1);
+        }
+    };
+    println!("bot identity: {bot_pubkey}");
+
+    // Requirement 2: load and verify the community authority state and
+    // channel stream.
+    nscript_host_crypto::runner::init_tls();
+    println!("loading community authority from the invite fragment...");
+    let loaded = match nscript_host_crypto::runner::load_community(
+        &signer_hex,
+        &fragment,
+        &options.relays,
+    ) {
+        Ok(loaded) => loaded,
+        Err(message) => {
+            eprintln!("error: could not load the community: {message}");
+            return ExitCode::from(1);
+        }
+    };
+    println!(
+        "authority loaded: owner {}, {} role(s), {} grant(s), {} banned",
+        loaded.authority.roster().owner,
+        loaded.authority.roster().roles.len(),
+        loaded.authority.roster().grants.len(),
+        loaded.authority.roster().banned.len()
+    );
+    let channel_id = match nscript_host_crypto::runner::public_channel(&loaded, &channel_name) {
+        Ok(channel_id) => channel_id,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(1);
+        }
+    };
+    println!("channel '{channel_name}' resolved to {channel_id}");
+
+    let key = nscript_host_crypto::runner::channel_key(&loaded, &channel_id);
+    let plane = match nscript_runtime::DerivedKey::new(key.secret_bytes().to_vec()) {
+        Ok(plane) => plane,
+        Err(error) => {
+            eprintln!("error: could not derive the channel's read key: {error:?}");
+            return ExitCode::from(1);
+        }
+    };
+    let Some(mut reader) = nscript_host_crypto::reader::ChannelReader::new(
+        &plane,
+        &channel_id,
+        loaded.invite.root_epoch,
+    ) else {
+        eprintln!("error: could not build a channel reader for {channel_id}");
+        return ExitCode::from(1);
+    };
+
+    // Process the channel's current message history once: fetch every wrap
+    // the reader's address has authored, from every configured relay, and
+    // ingest each (verified, channel-bound, unexpired, unbanned,
+    // de-duplicated) into canonical order.
+    let mut relays_for_history: Vec<String> = loaded.invite.relays.clone();
+    for relay in &options.relays {
+        if !relays_for_history.contains(relay) {
+            relays_for_history.push(relay.clone());
+        }
+    }
+    let mut raw_wraps = Vec::new();
+    let mut seen_wraps = std::collections::BTreeSet::new();
+    for relay in &relays_for_history {
+        let filter =
+            serde_json::json!({"kinds": [1059], "authors": [reader.address()], "limit": 500});
+        match nscript_host_crypto::runner::query(relay, &filter) {
+            Ok(found) => {
+                for wrap in found {
+                    if seen_wraps.insert(wrap["id"].as_str().unwrap_or("").to_owned()) {
+                        raw_wraps.push(wrap.to_string());
+                    }
+                }
+            }
+            Err(error) => eprintln!("warning: {relay} did not answer the channel query: {error}"),
+        }
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let banned = loaded.authority.roster().banned;
+    let messages = reader.ingest_all(raw_wraps.iter().map(String::as_str), now, &banned);
+    println!(
+        "channel history: {} wrap(s) fetched, {} message(s) delivered",
+        raw_wraps.len(),
+        messages.len()
+    );
+
+    // Requirement 4 (single-pass scope, see the doc comment on this
+    // function): the authority fold used for the host's final authorization
+    // check is the one just loaded above, immediately before this dispatch.
+    let mut relay_pool = nscript_runtime::RealRelayPool::new();
+    for relay in &relays_for_history {
+        if let Err(error) = relay_pool.add_relay(relay.clone()) {
+            eprintln!("warning: could not connect to {relay} for publishing: {error:?}");
+        }
+    }
+    let community_id = nscript_host_crypto::runner::unhex32(&loaded.invite.community_id);
+    let community_root = nscript_host_crypto::runner::unhex32(loaded.invite.community_root());
+    let keys = nscript_host_crypto::moderation::CommunityKeys {
+        community_id,
+        community_root,
+        epoch: loaded.invite.root_epoch,
+        control_root: None,
+    };
+    let mut moderation = nscript_host_crypto::moderation::ConcordModerationHost::new(
+        secret,
+        keys,
+        loaded.authority,
+        Box::new(relay_pool),
+        "community",
+    );
+
+    // Requirement 5: dispatch verified messages to handlers, which route
+    // authorized kicks to the real moderation host above.
+    let policy = checked.operation_calls.iter().fold(
+        nscript_runtime::OperationPolicy::default(),
+        |policy, call| policy.allow(&call.module, &call.operation),
+    );
+    let mut runtime = nscript_runtime::Runtime::new(
+        nscript_runtime::FakeRelayHost::default(),
+        nscript_runtime::FakeSignerHost::default(),
+        nscript_runtime::RealClock,
+        nscript_runtime::RecordingAudit::default(),
+    );
+    let events = std::collections::BTreeMap::new();
+    let mut dispatched = 0_usize;
+    let mut refused = 0_usize;
+    for message in &messages {
+        let mut log = nscript_runtime::FakeLogHost::default();
+        let signed = message.to_signed_event();
+        // Requirement 6: only the public key and event id are ever printed,
+        // never key bytes.
+        println!(
+            "message {} from {}…",
+            signed.id.get(..12).unwrap_or(&signed.id),
+            signed.signer.get(..12).unwrap_or(&signed.signer)
+        );
+        let event = nscript_runtime::eval::Value::from_event(&signed);
+        let mut session = nscript_runtime::eval::RuntimeSession {
+            runtime: &mut runtime,
+            policy: &policy,
+            operations: &mut moderation,
+            log: &mut log,
+            principal: Some(bot_pubkey.clone()),
+            idempotency: None,
+            events: &events,
+        };
+        match nscript_runtime::eval::run_handler(
+            &program,
+            &handler_body,
+            event,
+            &mut session,
+            nscript_runtime::eval::EvalLimits::default(),
+        ) {
+            Ok(_) => dispatched += 1,
+            Err(error) => {
+                refused += 1;
+                eprintln!("  refused: {error:?}");
+            }
+        }
+        for record in &log.records {
+            println!("  log {}: {}", record.level, record.message);
+        }
+    }
+    println!("single pass complete: {dispatched} handled, {refused} refused");
+    ExitCode::SUCCESS
 }

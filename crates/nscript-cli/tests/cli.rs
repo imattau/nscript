@@ -2459,6 +2459,112 @@ fn a_fold_query_runs_pure_with_no_permission_and_no_result_wrapping() {
     assert!(stdout.contains("invite still valid"), "{stdout}");
 }
 
+#[test]
+fn concord_run_requires_its_explicit_inputs() {
+    // Requirement 1: program, community/channel selection, bot identity, and
+    // relay configuration are explicit inputs — missing any but the program
+    // and relay configuration (which the invite fragment can itself carry)
+    // is refused before anything is loaded or connected.
+    let program = repository_path("examples/concord-stream-moderation-bot.ns");
+
+    let missing_community = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("concord-run")
+        .arg(&program)
+        .args(["--channel", "general", "--as", &"1".repeat(64)])
+        .output()
+        .unwrap();
+    assert!(!missing_community.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_community.stderr).contains("--community"),
+        "{}",
+        String::from_utf8_lossy(&missing_community.stderr)
+    );
+
+    let missing_channel = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("concord-run")
+        .arg(&program)
+        .args(["--community", "aa=bb", "--as", &"1".repeat(64)])
+        .output()
+        .unwrap();
+    assert!(!missing_channel.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_channel.stderr).contains("--channel"),
+        "{}",
+        String::from_utf8_lossy(&missing_channel.stderr)
+    );
+
+    let missing_identity = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("concord-run")
+        .arg(&program)
+        .args(["--community", "aa=bb", "--channel", "general"])
+        .output()
+        .unwrap();
+    assert!(!missing_identity.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_identity.stderr).contains("--as"),
+        "{}",
+        String::from_utf8_lossy(&missing_identity.stderr)
+    );
+}
+
+#[test]
+fn concord_run_checks_and_prints_policy_before_touching_a_relay() {
+    // Requirement 3: the source is checked and its operation policy is
+    // printed before the (here, deliberately unreachable) community is
+    // loaded. No `--relay` is given and the fragment is malformed, so this
+    // fails fast, offline, once past the policy print — proving the policy
+    // print happens first and does not depend on a live relay.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("concord-run")
+        .arg(repository_path("examples/concord-stream-moderation-bot.ns"))
+        .args([
+            "--community",
+            &format!("{}=not-a-real-fragment", "a".repeat(64)),
+            "--channel",
+            "general",
+            "--as",
+            &"1".repeat(64),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("operation: concord04.kick_member"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("handler: StreamMessage"), "{stdout}");
+    assert!(
+        stdout.contains("bot identity: "),
+        "bot pubkey printed: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("could not load the community"), "{stderr}");
+}
+
+#[test]
+fn concord_run_rejects_a_program_with_no_handler() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("concord-run")
+        .arg(repository_path("conformance/valid/default-publish.ns"))
+        .args([
+            "--community",
+            &format!("{}=x", "a".repeat(64)),
+            "--channel",
+            "general",
+            "--as",
+            &"1".repeat(64),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no `on` handler"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 mod deploy_with_real_hosts {
     use std::net::{TcpListener, TcpStream};
     use std::thread;

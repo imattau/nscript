@@ -25,17 +25,30 @@ stream-based bot, and `docs/CONCORD-BOT.md` separates safe simulation from the
 real-host test coverage. `nscript inspect` now reports the resolved module
 versions, canonical descriptor hashes, and origins for preflight review. The
 moderation host can merge a newly verified same-community authority fold
-before handling more events. The controlled live runner and independent-client
-verification are still open.
+before handling more events. `nscript concord-run` is now a real, tested,
+**single-pass** controlled runner: it loads a real invite fragment, verifies
+the community's Control Plane, resolves and reads a public channel's current
+history through the real `ChannelReader`, dispatches each message to the
+program's NScript handler, and routes any authorized kick through the real
+`ConcordModerationHost` and a real relay pool — connecting, processing the
+history once, and exiting, rather than polling. Its authority fold is loaded
+once, immediately before dispatch, which is refresh-before-dispatch in
+single-pass scope but not the persistent-loop, interval-refresh behavior a
+long-running deployment would need. Running it against a disposable community
+and confirming the result with an independent Concord client is still open.
 
 - Provide a documented, reproducible path from a checked NScript source file to
   a running bot with an explicitly provisioned identity, community, channel,
-  and relay set.
+  and relay set. Done for a single pass: `nscript concord-run`.
 - Connect the real Concord stream reader and moderation host to a controlled
   deployment entry point. Do not silently treat the generic `deploy` command's
-  simulated module operations as real moderation.
+  simulated module operations as real moderation. Done for a single pass;
+  `deploy` itself is unchanged and still simulates module operations.
 - Refresh the verified Control Plane fold before dispatching new messages, so
-  grant revocations and role changes reach the moderation gate promptly.
+  grant revocations and role changes reach the moderation gate promptly. Done
+  for a single pass (the fold is loaded once, right before that pass's
+  dispatch); a persistent deployment would still need interval refresh, which
+  is not built.
 - Make startup inspection show the resolved module versions, event source,
   requested and granted capabilities, identity, and community scope before the
   event loop begins.

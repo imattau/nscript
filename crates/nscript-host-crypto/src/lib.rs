@@ -11,6 +11,8 @@ pub mod nip46;
 pub mod reader;
 pub mod refound;
 pub mod rekey;
+#[cfg(feature = "real-hosts")]
+pub mod runner;
 pub mod schnorr;
 pub mod stream;
 pub mod voice;
