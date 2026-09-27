@@ -30,14 +30,11 @@
 //
 // Try it:
 //
-//   nscript run examples/service-operator-bot.ns
-//       (no --event: publishes the capability manifest, service record
-//       and operational state; the 24h refresh timer is registered)
-//
-//   nscript run examples/service-operator-bot.ns --as aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-//       --event '{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "refresh", "tags": [["t", "refresh-locator"]]}'
-//       (encrypts the locator to the configured principal and publishes it;
-//       `--as` provisions `me`, which the host would otherwise supply)
+//   nscript run examples/service-operator-bot.ns --as aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+//       (no --event: publishes the capability manifest, service record,
+//       encrypted locator and operational state; the 24h refresh timer is
+//       registered. `--as` provisions `me`, which the host would
+//       otherwise supply, for the locator's encryption)
 //
 //   nscript run examples/service-operator-bot.ns \
 //       --event '{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "bring up CI", "tags": [["t", "authorise-operator"]]}'
@@ -114,15 +111,19 @@ fn service_pubkey() -> Text {
     return "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 }
 
-// Only literal-field publishes belong directly in a schedule body: a
-// computed field or an operation call there runs through the CLI's
-// top-level startup simulation rather than ordinary statement execution
-// (`run_startup_operations` in nscript-cli — module operation calls at
-// top level are collected and reported on their own, not interleaved
-// with the surrounding `let`/`print` statements the way a handler runs
-// them). The encrypted Locator refresh below needs `nip44.encrypt_text`,
-// so it moves to its own handler, exactly where NCC-05's own worked
-// example puts the identical encrypt-then-publish sequence.
+// The refresh cycle: capability manifest, service record, operational
+// state, and — NCC-05 §5.1 — an encrypted Locator, the endpoint travelling
+// only inside encrypted content. It is encrypted to this service's own
+// configured principal (`me`); who may resolve the locator is the
+// publisher's own policy (§9), and here that policy is "whoever the host
+// provisions as this program's principal", the same identity an NCC-09
+// grant would need to name before an automation key could read it
+// instead. The `let`s computing the payload and the encrypted content run
+// in real sequence before the `publish` that needs them, in the same
+// schedule body — every/at bodies run once, inline, through the same
+// sequential evaluator a handler's own body runs through, so a value
+// computed earlier in the block reaches a later statement exactly as it
+// would inside `on Event { ... }`.
 every 24h {
     let manifest = publish CapabilityManifest {
         d: "capabilities";
@@ -138,6 +139,14 @@ every 24h {
         content: "";
     } to public with account
 
+    let payload = ncc05.payload(600, 1790380000, [ncc05.endpoint_object("wss://relay-ops.example.com", 10, "clearnet", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")], [])
+    let encrypted = nip44.encrypt_text(payload, me)?
+    let locator = publish Locator {
+        d: "relay-ops";
+        expiration: 1790380000 + 86400;
+        content: encrypted;
+    } to public with account
+
     let state = publish ServiceState {
         d: "relay-ops";
         service: "relay-ops";
@@ -145,24 +154,7 @@ every 24h {
         content: "";
     } to public with account
 
-    print("refresh: manifest " + text(manifest.accepted) + ", record " + text(record.accepted) + ", state " + text(state.accepted))
-}
-
-// NCC-05 §5.1: the endpoint travels only inside encrypted content. It is
-// encrypted to this service's own configured principal (`me`) — who may
-// resolve the locator is the publisher's own policy (§9), and here that
-// policy is "whoever the host provisions as this program's principal",
-// the same identity an NCC-09 grant would need to name before an
-// automation key could read it instead.
-on Note where tags.t contains "refresh-locator" {
-    let payload = ncc05.payload(600, event.created_at, [ncc05.endpoint_object("wss://relay-ops.example.com", 10, "clearnet", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")], [])
-    let encrypted = nip44.encrypt_text(payload, me)?
-    let locator = publish Locator {
-        d: "relay-ops";
-        expiration: event.created_at + 86400;
-        content: encrypted;
-    } to public with account
-    print("locator published: " + text(locator.accepted) + "/1 relays")
+    print("refresh: manifest " + text(manifest.accepted) + ", record " + text(record.accepted) + ", locator " + text(locator.accepted) + ", state " + text(state.accepted))
 }
 
 // NCC-09 as principal: delegate two narrow, time-bounded scopes to an

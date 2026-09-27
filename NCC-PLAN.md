@@ -161,26 +161,8 @@ validators are script-invoked pure functions, not implicit dispatch gating).
   empty tag list.
 - Route `send <record>` through the lowering once NIP-17 encrypt-and-gift-wrap
   lands; it stays deliberately `OperationUnavailable` until then.
-- **Top-level and schedule bodies don't execute in source order.** `nscript
-  run` with no `--event` handles startup two ways, independently:
-  `top_level_publications` collects every literal-field `publish` outside a
-  handler/`fn` body and runs it; `top_level_operation_calls` separately
-  collects every other module operation call outside a handler/`fn` body
-  and runs *those* through the simulator, reporting each as a flat
-  `operation N: <value>` line. Neither honours a `let` binding threading a
-  value from one into the other — a schedule body computing something
-  (for example encrypting a payload with `nip44.encrypt_text`) and then
-  publishing the result is silently split into two disconnected pieces,
-  and the `print` statements around them never run at all. Every existing
-  schedule-body example avoided this by only ever publishing literal
-  fields; `examples/service-operator-bot.ns` hit it building the encrypted
-  Locator refresh and moved that one sequence into a handler instead
-  (exactly where NCC-05's own worked example already puts the same
-  encrypt-then-publish pattern), which is the correct workaround today but
-  not a fix. A real fix means giving startup execution the same sequential,
-  data-flow-aware interpretation a handler body gets — an evaluator
-  change, not a diagnostic — and is deferred rather than attempted
-  alongside this stage's audit.
+- ~~Top-level and schedule bodies don't execute in source order.~~ *(Fixed:
+  see "Sequential startup execution" below.)*
 
 ## Stages
 
@@ -838,6 +820,89 @@ own module file).
 The guard test now runs on every `cargo test`, so a future module reusing
 an already-shipped name fails the build immediately rather than waiting
 for some later script to compose the two and discover it by hand.
+
+## Sequential schedule-body execution (after the cross-module export audit)
+
+The other issue composing `examples/service-operator-bot.ns` surfaced was
+architectural, not a naming clash: `nscript run`/`nscript deploy`'s startup
+phase (everything that runs before the first `--event` is delivered, or
+ever, for `deploy`, which still declines to fire a schedule on its actual
+timer) ran a schedule's own body through the same two disconnected static
+passes it runs everything else through — `top_level_publications` collected
+every literal-field `publish` outside a handler/`fn` body and executed it
+directly from the checked snapshot; `top_level_operation_calls` separately
+collected every other module operation call and ran *those* through the
+simulator, reporting each as a flat `operation N: <value>` line. Neither
+pass evaluated an expression, so neither honoured a `let` binding threading
+a value from one into the other: a schedule body encrypting a payload and
+then publishing the result split silently into two unconnected pieces, and
+any `print` around them never ran at all — the first version of the
+service-operator bot's Locator refresh hit exactly this and had to move
+into its own handler to work.
+
+The fix gives a schedule's body the same evaluator a handler body already
+runs through, and deliberately stops there:
+
+- `Interpreter::statement`'s `Every`/`At` arm, previously `Err(unsupported
+  ("nested handler or send statement"))`, now runs `self.block(body)` — a
+  schedule's body executes exactly once, inline, at the point its
+  declaration is reached, the same way an `if`'s or a `once`'s body already
+  did. This is real sequential evaluation of the one firing every host
+  already guaranteed a schedule (startup), not new periodic-timer support;
+  `deploy` still only registers the timer for actual refiring.
+- A new `nscript_runtime::eval::run_schedule_bodies` walks the program's own
+  top-level items for every `every`/`at` statement, filters its body down to
+  `let`s and non-`on` statements the same way `run_handler` already expects
+  (a schedule body cannot itself contain another `on`/`every`/`at`
+  meaningfully, and none in the corpus tries), and runs it through
+  `run_handler` with no event bound (`Value::Unit`; the checker never lets
+  schedule-body code reference `event` in the first place, so nothing can
+  observe the placeholder).
+- `deferred_spans` (which `top_level_publications`/`top_level_operation_calls`
+  both filter through) now also excludes a schedule body's span, alongside
+  a handler's and a `fn`'s — so the two static passes stop seeing a
+  schedule's content at all, and `run_schedule_bodies` is the only thing
+  that runs it, once, not twice.
+- `nscript-cli`'s `run_program`/`deploy_program` run the two static passes
+  first, completely unchanged, then call `run_schedule_bodies` through a
+  small `EvalHost` wrapper (`StartupTrace`) that traces every operation call
+  and publish inside a schedule to the same `operation N: <value>` /
+  `publication N: <accepted>/<total> relays accepted` lines startup already
+  printed for everything else — continuing the same counters rather than
+  restarting at 0 — plus an unindented `log <level>: <message>` line for a
+  schedule's own `print`, which finally runs. `nscript inspect`'s static
+  manifest is unaffected: it still previews `top_level_publications`/
+  `top_level_operation_calls` directly.
+
+**Root-level top-level code (outside any schedule) deliberately keeps the
+old, purely static behaviour.** The first version of this fix ran the
+*entire* top-level program — not just schedule bodies — through the
+sequential evaluator, on the reasoning that a schedule body is just
+top-level code with extra ceremony. Checking that version's output against
+every file in `examples/` and `conformance/valid/` (not just what the test
+suite happened to assert) found it broke roughly twenty of them: fixtures
+whose top-level code exists to demonstrate the type checker, not to run —
+a bare undeclared name like `alice` used only as a checker-accepted typed
+argument (the checker resolves it as a literal value at the type level and
+never requires it to be a real binding; the evaluator, correctly, does),
+and `let`s binding `select ... from ...`/`latest ... from ...` expressions,
+which are subscription constructs the plain evaluator has never
+implemented and were never executed at startup either. A schedule body
+never contains either shape in this codebase — every one is a
+`let`/`publish`/`print` sequence — so restricting the fix to schedule
+bodies keeps the value (the real bug, fixed) without the breakage, and is
+why `run_schedule_bodies` is scoped to schedule bodies specifically rather
+than to every top-level statement in the program.
+
+`examples/service-operator-bot.ns` now runs its encrypted Locator refresh
+directly inside `every 24h { ... }` alongside the other three publishes,
+one `print` reporting all four — the fix, not the workaround. Every file in
+`examples/` and `conformance/valid/` was run before and after and diffed:
+of the ones whose output changed, all four (`ncc02-service-registry.ns`,
+`ncc07-capability-bot.ns`, `timer.ns`, and `service-operator-bot.ns` itself)
+gained exactly the `print` their schedule always should have produced —
+nothing was lost or newly broken — and the full test suite
+(250 `nscript-runtime` + 69 CLI tests) passed unchanged.
 
 ## Guardrails
 

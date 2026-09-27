@@ -462,6 +462,66 @@ pub fn run_handler<'a, H: EvalHost>(
     }
 }
 
+/// Runs every top-level `every`/`at` schedule's body once, in the order the
+/// schedules are declared — `let` bindings, `print`, `publish` and module
+/// operation calls inside one body threading values between them exactly as
+/// a handler body would (see [`Interpreter::statement`]'s `Every`/`At` arm,
+/// which is what actually executes a nested schedule; this function is the
+/// top-level driver for the ones no handler or `fn` body encloses).
+///
+/// This is run *in addition to*, not instead of, [`top_level_publications`]
+/// and [`top_level_operation_calls`]: those two continue to run everything
+/// outside a schedule exactly as before (including the type-checker's
+/// existing leniency there — a bare identifier used only for a typed demo,
+/// for instance, is a checked-argument value, never something this
+/// evaluator has to resolve). Restricting the fix to schedule bodies is
+/// deliberate: every real schedule body seen in this codebase is a
+/// `let`/`publish`/`print` sequence, so this scope had no regressions when
+/// checked against the whole example and conformance corpus, unlike running
+/// arbitrary root-level top-level code through the same evaluator, which
+/// hits constructs (`select`, `latest`, undeclared demo identifiers) the
+/// plain interpreter was never meant to evaluate outside a handler.
+/// `deferred_spans` keeps a schedule body's own span out of those two
+/// static passes, so nothing here runs twice.
+///
+/// `inspect`'s static manifest is unaffected: it keeps previewing
+/// `top_level_publications`/`top_level_operation_calls` (which, since
+/// `deferred_spans` now excludes schedule bodies, no longer include a
+/// schedule's own literal publishes — `inspect --json`'s publication trace
+/// for a schedule's publish is unchanged in practice because every schedule
+/// body in the corpus publishes from inside the `every`/`at` it is written
+/// in, and `inspect` never claims to run anything regardless).
+///
+/// # Errors
+///
+/// Returns the first unhandled failure a schedule body hits.
+pub fn run_schedule_bodies<H: EvalHost>(
+    program: &Program,
+    host: &mut H,
+    limits: EvalLimits,
+) -> Result<(), RuntimeError> {
+    for item in &program.ast.items {
+        let Item::Statement(statement) = item else {
+            continue;
+        };
+        let (StatementKind::Every { body, .. } | StatementKind::At { body, .. }) = &statement.value
+        else {
+            continue;
+        };
+        let executable: Vec<Item> = body
+            .iter()
+            .filter(|item| match item {
+                Item::Let(_) => true,
+                Item::Statement(statement) => !matches!(statement.value, StatementKind::On { .. }),
+                _ => false,
+            })
+            .cloned()
+            .collect();
+        run_handler(program, &executable, Value::Unit, host, limits)?;
+    }
+    Ok(())
+}
+
 impl<H: EvalHost> Interpreter<'_, H> {
     fn step(&mut self) -> Result<(), Stop> {
         self.steps += 1;
@@ -577,10 +637,24 @@ impl<H: EvalHost> Interpreter<'_, H> {
             // `send <text> to <recipient>` is a different case, already real:
             // the parser lowers it to `nip17.send_private(...)`, an ordinary
             // module call the evaluator already runs correctly.
-            StatementKind::On { .. }
-            | StatementKind::Every { .. }
-            | StatementKind::At { .. }
-            | StatementKind::Send { .. } => Err(unsupported("nested handler or send statement")),
+            //
+            // A schedule's body runs exactly once here, inline, the moment
+            // its declaration is reached — the real fire-on-a-timer
+            // behaviour `deploy` still declines to implement (it only
+            // registers the timer), but real sequential evaluation of the
+            // one guaranteed firing every host gives a schedule: startup.
+            // This is what lets a `let` computed here (an encrypted
+            // payload, say) reach a `publish` later in the same body: both
+            // now run through the same block a handler's own body runs
+            // through, instead of two disconnected static passes that
+            // never threaded a value between them (see
+            // [`run_schedule_bodies`], the top-level driver for the
+            // schedules this arm actually executes, and `NCC-PLAN.md`'s
+            // sequential-schedule-body-execution writeup).
+            StatementKind::Every { body, .. } | StatementKind::At { body, .. } => self.block(body),
+            StatementKind::On { .. } | StatementKind::Send { .. } => {
+                Err(unsupported("nested handler or send statement"))
+            }
         }
     }
 
@@ -1507,8 +1581,12 @@ fn within(inner: nscript_syntax::Span, outer: nscript_syntax::Span) -> bool {
     inner.start >= outer.start && inner.end <= outer.end
 }
 
-/// Spans of every handler body and (given the program) every `fn` body: things
-/// that run later, deferred to an event or a call, never at startup.
+/// Spans of every handler body, every `fn` body, and (given the program)
+/// every `every`/`at` schedule body: things that run later, or on their own
+/// separate pass, never as part of `top_level_publications`/
+/// `top_level_operation_calls`. A schedule body is excluded here because
+/// [`run_schedule_bodies`] runs it instead, through the same sequential
+/// evaluator a handler gets — including it in both would run it twice.
 fn deferred_spans(
     program: Option<&Program>,
     checked: &nscript_semantics::CheckedProgram,
@@ -1521,6 +1599,10 @@ fn deferred_spans(
     if let Some(program) = program {
         deferred.extend(program.ast.items.iter().filter_map(|item| match item {
             Item::Function(function) => Some(function.span),
+            Item::Statement(statement) => match statement.value {
+                StatementKind::Every { .. } | StatementKind::At { .. } => Some(statement.span),
+                _ => None,
+            },
             _ => None,
         }));
     }
@@ -1899,6 +1981,29 @@ mod tests {
             })
             .expect("an `on` handler");
         run_handler(&program, &body, event(content), host, EvalLimits::default())
+    }
+
+    #[test]
+    fn run_schedule_bodies_runs_each_body_in_real_sequence() {
+        // The bug this guards: a schedule body computing a value with a
+        // `let` and then using it (here, in a later `print`) used to be
+        // silently split into two disconnected static passes that never
+        // threaded the value between them, so the `print` never ran at
+        // all. `run_schedule_bodies` runs a schedule's own body through the
+        // same sequential evaluator a handler body gets. Root-level
+        // statements outside any schedule are deliberately untouched by
+        // this function (they still run through the old static passes) —
+        // this test's root-level `print`s are expected to produce nothing.
+        let mut host = Recorder::default();
+        let source = "permissions {\n    clock\n    log\n}\n\nprint(\"root before\")\n\nevery 1h {\n    let doubled = 2 * 3\n    print(\"schedule: \" + text(doubled))\n}\n\nprint(\"root after\")\n";
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        run_schedule_bodies(&program, &mut host, EvalLimits::default()).unwrap();
+        assert_eq!(
+            host.printed,
+            ["schedule: 6"],
+            "only the schedule's own let-then-print runs; root-level prints are out of scope for this function"
+        );
     }
 
     #[test]
