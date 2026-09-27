@@ -3571,19 +3571,19 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("ncc07", "capability_is_valid") => Some(ncc07_capability_is_valid as PureFunction),
         ("ncc08", "role") => Some(ncc08_role as PureFunction),
         ("ncc08", "handover_id") => Some(ncc08_handover_id as PureFunction),
-        ("ncc08", "service") => Some(ncc08_service as PureFunction),
+        ("ncc08", "handover_service") => Some(ncc08_handover_service as PureFunction),
         ("ncc08", "counterparty") => Some(ncc08_counterparty as PureFunction),
         ("ncc08", "proposal_is_valid") => Some(ncc08_proposal_is_valid as PureFunction),
         ("ncc08", "acceptance_is_valid") => Some(ncc08_acceptance_is_valid as PureFunction),
         ("ncc08", "pair_is_valid") => Some(ncc08_pair_is_valid as PureFunction),
         ("ncc08", "effective_time") => Some(ncc08_effective_time as PureFunction),
-        ("ncc08", "state") => Some(ncc08_state as PureFunction),
+        ("ncc08", "handover_state") => Some(ncc08_handover_state as PureFunction),
         ("ncc08", "conflicts_with") => Some(ncc08_conflicts_with as PureFunction),
         ("ncc08", "continues") => Some(ncc08_continues as PureFunction),
         ("ncc08", "chain_has_loop") => Some(ncc08_chain_has_loop as PureFunction),
         ("ncc09", "operator") => Some(ncc09_operator as PureFunction),
         ("ncc09", "service") => Some(ncc09_service as PureFunction),
-        ("ncc09", "status") => Some(ncc09_status as PureFunction),
+        ("ncc09", "authority_status") => Some(ncc09_authority_status as PureFunction),
         ("ncc09", "scopes") => Some(ncc09_scopes as PureFunction),
         ("ncc09", "address") => Some(ncc09_address as PureFunction),
         ("ncc09", "scope_namespace") => Some(ncc09_scope_namespace as PureFunction),
@@ -5122,8 +5122,8 @@ fn ncc08_handover_id(arguments: &[OperationValue]) -> Result<OperationValue, Run
 
 /// NCC-08 §5: the service a handover transfers, the same identifier an
 /// NCC-02 Service Record is addressed by when the two are used together.
-fn ncc08_service(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
-    tag_value(arguments, "service", "ncc08.service")
+fn ncc08_handover_service(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "service", "ncc08.handover_service")
 }
 
 /// NCC-08 §8.1/§9.1: the other side of the handover named by the `p`
@@ -5294,14 +5294,14 @@ fn ncc08_effective_time(arguments: &[OperationValue]) -> Result<OperationValue, 
 /// the caller's verdict that a valid pair exists (and not a proposal
 /// alone); an accepted transition becomes `effective` once `now` reaches
 /// its effective time, and until then the predecessor is still current.
-fn ncc08_state(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+fn ncc08_handover_state(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
     let [
         OperationValue::Bool(accepted),
         OperationValue::Integer(effective_at),
         OperationValue::Integer(now),
     ] = arguments
     else {
-        return Err(invalid("ncc08.state"));
+        return Err(invalid("ncc08.handover_state"));
     };
     let state = if !accepted {
         "proposed"
@@ -5398,9 +5398,12 @@ fn ncc09_service(arguments: &[OperationValue]) -> Result<OperationValue, Runtime
     tag_value(arguments, "service", "ncc09.service")
 }
 
-/// NCC-09 §6.3: a grant's status, `active` or `revoked`.
-fn ncc09_status(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
-    tag_value(arguments, "status", "ncc09.status")
+/// NCC-09 §6.3: a grant's status, `active` or `revoked`. Named distinctly
+/// from NCC-00's `status` (a document's lifecycle status) because
+/// importing both modules in one program requires every declared name
+/// across them to be unique.
+fn ncc09_authority_status(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "status", "ncc09.authority_status")
 }
 
 /// NCC-09 §6.3: every scope the grant lists, in order, skipping empty ones.
@@ -11016,7 +11019,7 @@ mod tests {
             text(&handover)
         );
         assert_eq!(
-            host.call_pure_function("ncc08", "service", &[proposal()])
+            host.call_pure_function("ncc08", "handover_service", &[proposal()])
                 .unwrap(),
             text("relay")
         );
@@ -11313,7 +11316,7 @@ mod tests {
         let mut state = |accepted: bool, effective_at: i64, now: i64| {
             host.call_pure_function(
                 "ncc08",
-                "state",
+                "handover_state",
                 &[
                     OperationValue::Bool(accepted),
                     OperationValue::Integer(effective_at),
@@ -11458,7 +11461,7 @@ mod tests {
         };
         assert_eq!(extract("operator"), text(&operator));
         assert_eq!(extract("service"), text("relay"));
-        assert_eq!(extract("status"), text("active"));
+        assert_eq!(extract("authority_status"), text("active"));
         assert_eq!(
             extract("scopes"),
             OperationValue::List(vec![

@@ -46,8 +46,8 @@ on Handover where tags.role contains "predecessor" {
     if not ncc08.proposal_is_valid(event.tags, event.created_at) {
         print("proposal rejected: incomplete or backdated")
     } else {
-        print("proposal " + ncc08.handover_id(event.tags) + " moves service " + ncc08.service(event.tags) + " to " + ncc08.counterparty(event.tags))
-        print("a proposal alone is " + ncc08.state(false, 0, event.created_at) + ", never accepted")
+        print("proposal " + ncc08.handover_id(event.tags) + " moves service " + ncc08.handover_service(event.tags) + " to " + ncc08.counterparty(event.tags))
+        print("a proposal alone is " + ncc08.handover_state(false, 0, event.created_at) + ", never accepted")
     }
 }
 
@@ -55,7 +55,7 @@ on Handover where tags.role contains "successor" {
     if not ncc08.acceptance_is_valid(event.tags) {
         print("acceptance rejected: incomplete")
     } else {
-        print("acceptance " + ncc08.handover_id(event.tags) + " acknowledges " + ncc08.counterparty(event.tags) + " for service " + ncc08.service(event.tags))
+        print("acceptance " + ncc08.handover_id(event.tags) + " acknowledges " + ncc08.counterparty(event.tags) + " for service " + ncc08.handover_service(event.tags))
         print("with no effective tag the pair is effective at " + text(ncc08.effective_time(false, 0, event.created_at)))
     }
 }

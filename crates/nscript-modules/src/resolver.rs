@@ -738,7 +738,7 @@ fn dependency_cycle(selected: &BTreeMap<String, RegisteredModule>) -> Option<Vec
 mod tests {
     use semver::{Version, VersionReq};
 
-    use super::{ModuleOrigin, ModuleRegistry, ResolutionError};
+    use super::{BUILTINS, ModuleOrigin, ModuleRegistry, ResolutionError};
     use crate::{CANONICAL_ENCODING_VERSION, ModuleDependency, ModuleDescriptor, ModuleId};
 
     fn module(name: &str, version: &str, dependencies: &[(&str, &str)]) -> ModuleDescriptor {
@@ -863,6 +863,55 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules/std");
         let mut registry = ModuleRegistry::default();
         assert_eq!(registry.load_root(&root).unwrap(), 93);
+    }
+
+    /// Every built-in module's declared name (a type, event, tag, error,
+    /// function or operation) must be unique across the *entire* standard
+    /// library, not just within the modules any one program happens to
+    /// import together: `nscript-semantics`'s `E4003` ambiguous-export check
+    /// runs per program, over whichever modules its own `use` graph pulls
+    /// in, so two builtins can each check and test cleanly on their own and
+    /// still collide the moment a script imports both — exactly what
+    /// happened when NCC-13 (reviewed and shipped independently) reused
+    /// NCC-10's `operator_for_tag`/`operator_project`/`operator_application`
+    /// verbatim, caught only by hand while composing both into
+    /// `examples/service-operator-bot.ns`. This test makes that class of
+    /// collision a build failure instead of something a future NCC or NIP
+    /// module stage has to discover by accident.
+    #[test]
+    fn built_in_modules_export_no_ambiguous_names_across_the_standard_library() {
+        let mut owners: std::collections::BTreeMap<String, &str> =
+            std::collections::BTreeMap::new();
+        let mut collisions = Vec::new();
+        for &(module_name, source) in BUILTINS {
+            let (descriptor, diagnostics) = crate::parse_module(source);
+            let descriptor = descriptor
+                .unwrap_or_else(|| panic!("invalid built-in {module_name}: {diagnostics:#?}"));
+            let names = descriptor
+                .types
+                .iter()
+                .map(crate::TypeDefinition::name)
+                .chain(descriptor.events.iter().map(|item| item.name.as_str()))
+                .chain(descriptor.tags.iter().map(|item| item.name.as_str()))
+                .chain(descriptor.errors.iter().map(|item| item.name.as_str()))
+                .chain(descriptor.functions.iter().map(|item| item.name.as_str()))
+                .chain(descriptor.operations.iter().map(|item| item.name.as_str()));
+            for name in names {
+                match owners.insert(name.to_owned(), module_name) {
+                    Some(first) if first != module_name => {
+                        collisions.push(format!(
+                            "`{name}` is provided by `{first}` and `{module_name}`"
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(
+            collisions.is_empty(),
+            "ambiguous exports across the standard library:\n{}",
+            collisions.join("\n")
+        );
     }
 
     #[test]
