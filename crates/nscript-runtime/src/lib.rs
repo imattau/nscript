@@ -8949,15 +8949,16 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             integer("end"),
             text("location"),
         ) {
-            (Some(title), Some(start), Some(end), Some(location))
-                if let (Ok(start), Ok(end)) = (u64::try_from(start), u64::try_from(end)) =>
-            {
-                OperationValue::CalendarEvent(CalendarEvent {
-                    title,
-                    start,
-                    end,
-                    location,
-                })
+            (Some(title), Some(start), Some(end), Some(location)) => {
+                match (u64::try_from(start), u64::try_from(end)) {
+                    (Ok(start), Ok(end)) => OperationValue::CalendarEvent(CalendarEvent {
+                        title,
+                        start,
+                        end,
+                        location,
+                    }),
+                    _ => value.clone(),
+                }
             }
             _ => value.clone(),
         },
@@ -8966,14 +8967,15 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             integer("uptime_percent"),
             integer("latency_ms"),
         ) {
-            (Some(relay), Some(uptime_percent), Some(latency_ms))
-                if let Ok(uptime_percent) = u8::try_from(uptime_percent) =>
-            {
-                OperationValue::RelayStatus(RelayStatus {
-                    relay,
-                    uptime_percent,
-                    latency_ms,
-                })
+            (Some(relay), Some(uptime_percent), Some(latency_ms)) => {
+                match u8::try_from(uptime_percent) {
+                    Ok(uptime_percent) => OperationValue::RelayStatus(RelayStatus {
+                        relay,
+                        uptime_percent,
+                        latency_ms,
+                    }),
+                    _ => value.clone(),
+                }
             }
             _ => value.clone(),
         },
