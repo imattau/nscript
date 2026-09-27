@@ -11854,11 +11854,17 @@ mod tests {
             vec!["32267:pub:com.example.runtime", ">=2.0.0"]
         );
         assert_eq!(
-            call("requirement_address", &[runtime_requirement.clone()]),
+            call(
+                "requirement_address",
+                std::slice::from_ref(&runtime_requirement)
+            ),
             text("32267:pub:com.example.runtime")
         );
         assert_eq!(
-            call("requirement_constraint", &[runtime_requirement.clone()]),
+            call(
+                "requirement_constraint",
+                std::slice::from_ref(&runtime_requirement)
+            ),
             text(">=2.0.0")
         );
         assert_eq!(
