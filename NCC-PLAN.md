@@ -8,7 +8,7 @@ existing protocols) and the workflow-first rule in `ROADMAP.md` (no protocol
 breadth without a concrete workflow and conformance need).
 
 The NCC repository is pinned at commit
-`adad77869d2a3be2ce8c5f673b88711e02df0bfb`. A release MUST record a new pin
+`186c3ad50966a2319c354ace12e0a5a2267b75d9`. A release MUST record a new pin
 when NCC lowering behaviour changes, mirroring the NIP review-commit rule in
 [`spec/README.md`](spec/README.md).
 
@@ -26,14 +26,12 @@ when NCC lowering behaviour changes, mirroring the NIP review-commit rule in
 | 09 | 30064 authority grant | 02 (service scope) | Scoped operator authority: `d=<service-id>:<operator>`, `service`, `p`, `status` (`active`/`revoked`), repeatable `scope` tags, optional `expiration`/`valid_from` |
 | 10 | 30065 state | 02 (service id); optionally 09 | Operational state (`operational`/`degraded`/`maintenance`/`unavailable`/`retiring`), direct `d=<service-id>` or operator `d=<pubkey>:<service-id>` + three-column `operator_for` |
 | 11 | 30067 policy | 02 + 05 (rules over both); 09/10 rule namespaces | Portable trust policy: named `d`, three-column `rule <key> <value>` and `trust certifier <pubkey>`, private rules NIP-44-encrypted in `content` |
+| 13 | 30063 release (profiles NIP-51); 32267/30617/1063 referenced, not owned | composes 07 (advert), 08 (successor identity), 09 (`ncc:13:publish` operator scope) | Package-manager semantics over an existing NIP-51 Release Artifact Set: `version`/`version_scheme`/`channel`, two-column `requires`/`optional`/`conflicts`, `source`/`commit` provenance, and `os`/`arch`/`format` artefact selectors added to the NIP-94 artefacts it references |
 
-The table covers every convention the pin contains — all nine reviewed and
-all scheduled below. Upstream has added nothing beyond these; the only
-commits after `fe5981f` create `ncc-09`, `ncc-10` and `ncc-11` (and their
-reference implementations), so the pin was bumped to `adad778`, their merge
-commit, to record the text these stages lower. Upstream has never contained
-`ncc-01` or `ncc-04` — checked against the repository's full history — so
-those gaps are upstream's own numbering, not conventions this plan skipped.
+The table covers every convention the pin contains — ten reviewed and all
+scheduled below. Upstream has never contained `ncc-01`, `ncc-04` or `ncc-12`
+— checked against the repository's full history — so those gaps are
+upstream's own numbering, not conventions this plan skipped.
 
 ## Upstream prerequisites
 
@@ -58,7 +56,7 @@ off `71238583`. They are kept for the record because each one gated a stage:
 
 ## Pin history
 
-The pin has moved twice, each move recorded here:
+The pin has moved three times, each move recorded here:
 
 - `71238583` → `fe5981f` before stage 3: upstream `3a45e72` added the `d`
   tag NCC-02's addressable events were missing and made NCC-03's kinds
@@ -69,6 +67,10 @@ The pin has moved twice, each move recorded here:
   `ncc-11` folders or the repository index `README.md` — so no convention
   lowered by stages 1–7 changed text, and every module and vector reference
   moved to the new commit.
+- `adad778` → `186c3ad` before stage 11: upstream added NCC-13. Again
+  purely additive — every new file sits under `ncc-13/` or the repository
+  index `README.md` — so no convention lowered by earlier stages changed
+  text.
 
 Stages 8–10 also needed an infrastructure step the earlier stages did not:
 NCC-10's `operator_for` and NCC-11's `rule`/`trust certifier` are
@@ -181,6 +183,7 @@ adoption (or an explicit non-adoption note).
 | 8 | NCC-09 | Delegated authority the service cluster builds on; needs the pin bump | Principals publish scoped, time-bounded operator grants |
 | 9 | NCC-10 | Current state over the same service identity; composes stage 8 | Services and their authorised operators publish operational state |
 | 10 | NCC-11 | Policy data over the whole service stack | Clients and agents read one portable trust policy |
+| 11 | NCC-13 | Composes 07/08/09 and profiles NIP-51/94/34 rather than owning new kinds, so it lands after the service cluster it cites; needs the pin bump | A release monitor judges upgrade eligibility, dependency and conflict declarations, and platform-matching artefacts over a published Release Artifact Set |
 
 ## Stage 1 — NCC-07 capability manifest *(Done)*
 
@@ -681,6 +684,82 @@ so it stands on the same infrastructure as stage 9.
   `ncc:05:stale-fallback` are the policy keys a client would enforce, while
   the host still performs neither.
 
+## Stage 11 — NCC-13 software package release profile *(Done)*
+
+A profile with no event of its own: every rule adds tags to a NIP-51
+Release Artifact Set and the NIP-94 artefacts it references (§2), so this
+stage's only new event is a minimal `ArtefactMetadata` declaration for
+NIP-94's kind 1063 carrying NCC-13's own `os`/`arch`/`format` selectors —
+file identity, hash and location stay NIP-94's, undeclared here. Software
+Application (32267) and Git Repository (30617) stay address text a script
+builds and compares; NCC-13 does not define their identity either (§3).
+
+- **Module** `modules/std/ncc13/0.1.0.nsm`, registered in `BUILTINS`, with
+  `use ncc09`, the pinned `186c3ad` reference, a `present` validator, the
+  addressable `ReleaseArtifactSet` event (kind 30063: `d`, `a`, `version`,
+  `version_scheme`, `channel`, `source`, `commit`, repeatable `requires`,
+  `optional`, `conflicts`, `e`, and `operator_for`), the regular
+  `ArtefactMetadata` event (kind 1063: NIP-94's `url`/`x`/`m`/`size` plus
+  NCC-13's `os`/`arch`/`format`), and twenty-two pure functions:
+  `application`/`version`/`source`/`commit` extract their tags directly;
+  `version_scheme` and `channel` apply §8.4/§9.1's defaults
+  (`"opaque"`/`"stable"`) when the tag is absent, so an unscoped version is
+  never assumed ordered; `requirement` builds the two-column
+  `requires`/`optional`/`conflicts` value (mirroring NCC-10's
+  `operator_for` shape) and `requirement_address`/`requirement_constraint`
+  split it back, while `requires`/`optional_dependencies`/`conflicts` read
+  every repeated entry, in order, for the caller to AND-fold (§13);
+  `operator_for_tag`/`operator_project`/`operator_application` build and
+  read the `ncc:13:publish` operator claim (§33); `semver_is_valid` and
+  `semver_compare` implement SemVer §11 precedence (major/minor/patch,
+  build metadata parsed and discarded, prerelease ranked below the release
+  it precedes, prerelease identifiers compared per §11.4); and
+  `version_satisfies` judges one `=`/`>`/`>=`/`<`/`<=` constraint —
+  equality under any scheme, a relational operator only under `semver`,
+  matching §8.2/§8.3's refusal to generically order CalVer or opaque
+  versions. `artefact_os`/`artefact_arch`/`artefact_format` extract the
+  NIP-94 selectors and `artefact_matches` judges §19–20's `os`/`arch` match
+  with `"any"` as the platform-independent wildcard on either side; package
+  format (§19 step 3) stays the caller's own policy membership check, not
+  an equality this function can decide.
+- **Runtime** dispatch in `nscript-runtime`'s shared pure-function
+  registry, with a unit test covering extraction and the two defaults, the
+  two-column requirement and operator_for builders and readers, SemVer
+  validity, precedence (including the prerelease-before-release rule and
+  identifier comparison), constraint satisfaction under both semver and a
+  non-ordered scheme, and artefact matching including the `any` wildcard.
+- **Fixtures**: `conformance/valid/ncc13-package-release.ns` (a handler
+  publishes a release with `requires`/`conflicts` built by
+  `ncc13.requirement` — a `.ns` literal cannot carry the tag column
+  separator — then judges delivered releases for upgrade eligibility and
+  reads a delivered artefact's platform match) and
+  `conformance/invalid/ncc13-version-satisfies-wrong-type.ns`
+  (`version_satisfies(scheme, version, event.created_at)` → `E1001`, since
+  a constraint is Text, never a timestamp).
+- **Wire vector** `conformance/vectors/ncc13.json` (kind 30063; the checked
+  snapshot holds the literal `d`/`a`/`version`/`version_scheme`/`channel`/
+  `source`/`commit`, since `requires`/`conflicts` are computed), asserted
+  against the `inspect --json` publication trace, plus two `nscript run`
+  tests exercising the `ReleaseArtifactSet` and `ArtefactMetadata` handlers
+  with real two-column tags.
+- **Worked example** `examples/ncc13-release-monitor.ns`: publishes a
+  release for one Software Application, judges every Release Artifact Set
+  it receives against a tracked installed version and preferred channel
+  (§26–28), and selects a matching artefact by platform. Run end to end by
+  a CLI test covering the beta-declined, stable-accepted, mismatched- and
+  matched-artefact paths.
+- **Docs**: spec subsection and matrix row.
+- **Infrastructure adoption**: a package-distribution bot publishes its own
+  releases and a monitor decides upgrade eligibility, dependency and
+  conflict exposure, and artefact selection purely from published Nostr
+  events — exactly `examples/ncc13-release-monitor.ns`'s workflow.
+
+Scope notes: NCC-13 v0.1 deliberately excludes ranges, wildcards and
+boolean dependency expressions (§13); `version_satisfies` matches that
+scope rather than a general SemVer range library. Dependency resolution
+(§14) and installation itself are explicitly out of NCC-13's scope and
+are not implemented here.
+
 ## Guardrails
 
 - No NCC-specific syntax: conventions arrive as typed modules with records,
@@ -708,3 +787,8 @@ so it stands on the same infrastructure as stage 9.
    three implemented against the bumped `adad778` pin, with the
    multi-column tag infrastructure they required in place. The release now
    records `adad778`.)*
+4. ~~NCC-13 (added upstream after the `adad778` pin): schedule as a further
+   stage with another pin bump, or defer.~~ *(resolved at stage 11: the pin
+   moved to `186c3ad` and NCC-13 shipped on the multi-column tag
+   infrastructure stages 8–10 already built — no further infrastructure
+   was needed.)*

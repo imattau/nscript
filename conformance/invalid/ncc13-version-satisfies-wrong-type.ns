@@ -1,0 +1,15 @@
+// error: E1001 nominal-type-mismatch
+// NCC-13's `version_satisfies` takes a scheme, a candidate version, and a
+// constraint, all Text; the delivered event's `created_at` is an Int and
+// cannot name a constraint. Constraints are opaque strings parsed for a
+// leading operator, never a timestamp.
+use ncc13
+use nip01
+
+permissions {
+    log
+}
+
+on ReleaseArtifactSet {
+    print(text(ncc13.version_satisfies(ncc13.version_scheme(event.tags), ncc13.version(event.tags), event.created_at)))
+}

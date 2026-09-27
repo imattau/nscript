@@ -88,8 +88,10 @@ protocol breadth.
   then NCC-00 (document lifecycle), then the service cluster NCC-02, NCC-05,
   NCC-06, then NCC-08 (identity handover), then the post-pin additions
   NCC-09 (scoped operator authority), NCC-10 (operational state) and NCC-11
-  (portable trust policy) with the three-column tag support they need;
-  NCC-03 lands last (see Explicitly deferred below).
+  (portable trust policy) with the three-column tag support they need, then
+  NCC-13 (software package release profile), a further post-pin addition
+  that profiles NIP-51/94/34 rather than owning new kinds; NCC-03 lands
+  last (see Explicitly deferred below).
 - Build the real record-fields-to-wire-tags lowering path for declared events,
   so `publish <record>` statements emit correct kinds and tags on real relays.
   Module operation calls remain simulated until a host is wired in.

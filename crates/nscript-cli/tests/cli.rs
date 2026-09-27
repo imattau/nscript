@@ -343,6 +343,89 @@ fn ncc11_trust_policy_lowers_to_the_pinned_wire_vector() {
 }
 
 #[test]
+fn ncc13_package_release_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc13.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path(
+            "conformance/valid/ncc13-package-release.ns",
+        ))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "ReleaseArtifactSet");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+    // `requires` and `conflicts` are built by ncc13.requirement at publish
+    // time (a `.ns` literal cannot carry the tag column separator), so the
+    // checked snapshot holds only the literal fields. The two-column
+    // lowering that builder produces is asserted by the runtime's own tag
+    // round-trip test and by the run-with-event coverage below.
+    assert_eq!(create["content"], expected["content"]);
+}
+
+#[test]
+fn ncc13_release_artifact_set_handler_reads_dependencies_and_upgrade_eligibility() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("conformance/valid/ncc13-package-release.ns"))
+        .args([
+            "--event",
+            r#"{"event_type": "ReleaseArtifactSet", "kind": 30063, "created_at": 1790380000, "content": "notes", "tags": [["d", "com.example.app@1.4.2"], ["a", "32267:aaa:com.example.app"], ["version", "1.4.2"], ["version_scheme", "semver"], ["channel", "stable"], ["requires", "32267:bbb:com.example.runtime\u001f>=2.0.0"]]}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("upgrade candidate true"),
+        "1.4.2 on the stable channel should outrank the fixture's installed 1.4.1: {stdout}"
+    );
+    assert!(
+        stdout.contains("requires 32267:bbb:com.example.runtime >=2.0.0"),
+        "the requirement's address and constraint should read back from the two-column tag: {stdout}"
+    );
+}
+
+#[test]
+fn ncc13_artefact_metadata_handler_selects_by_platform() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("conformance/valid/ncc13-package-release.ns"))
+        .args([
+            "--event",
+            r#"{"event_type": "ArtefactMetadata", "kind": 1063, "created_at": 1790380000, "content": "", "tags": [["url", "https://example.com/app_arm64.deb"], ["os", "linux"], ["arch", "arm64"], ["format", "deb"]]}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("matches linux/arm64: true"),
+        "the linux/arm64 artefact should match the fixture's wanted linux/arm64 platform: {stdout}"
+    );
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])
@@ -2010,6 +2093,92 @@ fn the_policy_client_publishes_and_evaluates_trust_policy() {
         stdout.contains("transport wss allow, http deny; operator state deny"),
         "{stdout}"
     );
+}
+
+#[test]
+fn the_release_monitor_publishes_judges_upgrades_and_selects_artefacts() {
+    let path = repository_path("examples/ncc13-release-monitor.ns");
+    let run = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    let publish = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "cut a release", "tags": [["t", "publish-release"]]}"#;
+    let output = run(&["--event", publish]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("handler Note: ok"), "{stdout}");
+    assert!(
+        stdout.contains("release published: true/1 relays"),
+        "{stdout}"
+    );
+
+    // A beta release is newer but on the wrong channel: not an upgrade.
+    let beta = r#"{"event_type": "ReleaseArtifactSet", "kind": 30063, "created_at": 1790380000, "content": "", "tags": [["d", "com.example.app@1.5.0"], ["a", "32267:aaa:com.example.app"], ["version", "1.5.0"], ["version_scheme", "semver"], ["channel", "beta"]]}"#;
+    let output = run(&["--event", beta]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("not an upgrade: 32267:aaa:com.example.app@1.5.0 (beta) — right channel false, newer true"),
+        "{stdout}"
+    );
+
+    // A stable release newer than the tracked installed version is an
+    // upgrade candidate.
+    let stable = r#"{"event_type": "ReleaseArtifactSet", "kind": 30063, "created_at": 1790380000, "content": "", "tags": [["d", "com.example.app@1.4.2"], ["a", "32267:aaa:com.example.app"], ["version", "1.4.2"], ["version_scheme", "semver"], ["channel", "stable"], ["requires", "32267:bbb:com.example.runtime\u001f>=2.0.0"]]}"#;
+    let output = run(&["--event", stable]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("upgrade candidate: 32267:aaa:com.example.app@1.4.2 (stable, semver)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("requires 32267:bbb:com.example.runtime >=2.0.0"),
+        "{stdout}"
+    );
+
+    // An artefact whose arch does not match the monitor's own platform is
+    // reported, not silently accepted.
+    let mismatched = r#"{"event_type": "ArtefactMetadata", "kind": 1063, "created_at": 1790380000, "content": "", "tags": [["url", "https://example.com/app_amd64.deb"], ["os", "linux"], ["arch", "amd64"], ["format", "deb"]]}"#;
+    let output = run(&["--event", mismatched]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("artefact linux/amd64 does not match linux/arm64"),
+        "{stdout}"
+    );
+
+    // A matching artefact is selected.
+    let matching = r#"{"event_type": "ArtefactMetadata", "kind": 1063, "created_at": 1790380000, "content": "", "tags": [["url", "https://example.com/app_arm64.deb"], ["os", "linux"], ["arch", "arm64"], ["format", "deb"]]}"#;
+    let output = run(&["--event", matching]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("selected artefact: deb"), "{stdout}");
 }
 
 #[test]

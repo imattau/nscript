@@ -464,3 +464,53 @@ for key pinning, `allow`/`deny` for the transport and operator rules, a
 non-negative integer for `max-stale-age`, and anything for an unknown key.
 Named profiles are independent (§19, §20), and which one is active is a
 local choice, as `examples/ncc11-policy-client.ns` shows.
+
+### NCC-13 software package release profile
+
+`ncc13` implements the package-release profile: it adds package-manager
+metadata to a kind-30063 NIP-51 Release Artifact Set rather than defining a
+new event (§2). The module declares that event (`d`, `a`, `version`,
+`version_scheme`, `channel`, `source`, `commit`, repeatable `requires`,
+`optional` and `conflicts`, and `e` references to NIP-94 artefacts) plus a
+minimal `ArtefactMetadata` event for kind 1063, carrying only the `os`,
+`arch` and `format` selectors NCC-13 adds to NIP-94 (§15) — the file's
+identity, hash and location stay NIP-94's own concern and are not
+redeclared. NCC-13 does not define Software Application (kind 32267) or Git
+Repository (kind 30617) identity either (§3); scripts read and build those
+as plain address text.
+
+`ncc13.version_scheme` and `ncc13.channel` apply the two documented
+defaults — an absent scheme reads as `"opaque"` (§8.4), so an unscoped
+version string is never assumed ordered, and an absent channel reads as
+`"stable"` (§9.1). `ncc13.semver_is_valid` and `ncc13.semver_compare`
+implement SemVer precedence over `major.minor.patch` plus an optional
+dot-separated prerelease (build metadata is parsed and ignored, per SemVer
+§10): equal releases compare equal, a prerelease has lower precedence than
+the release it precedes (§11.3), and prerelease identifiers compare
+per §11.4 (numeric identifiers compare numerically and always rank below
+alphanumeric ones, equal-length ties compare lexically, and a shorter
+identifier list with an equal prefix ranks lower). `ncc13.version_satisfies`
+judges exactly one `=`/`>`/`>=`/`<`/`<=` constraint (§13); equality works
+under any scheme, but a relational operator is scoped to `semver` only,
+matching §8.2/§8.3's rule that CalVer and opaque versions are not generically
+ordered. §13's multiple-constraints-are-ANDed rule is left to the calling
+script folding this function over each constraint tag, the same shape as
+NCC-11's rule extraction.
+
+`ncc13.requirement` builds the two-column `requires`/`optional`/`conflicts`
+value (a Software Application address and a constraint); `ncc13.requires`,
+`ncc13.optional_dependencies` and `ncc13.conflicts` read the repeated tags
+back, and `ncc13.requirement_address`/`ncc13.requirement_constraint` split
+one entry. `ncc13.operator_for_tag` builds NCC-13's own `operator_for`
+two-column tag for the `ncc:13:publish` NCC-09 scope (§33), mirroring
+NCC-10's `operator_for` shape rather than inventing a new one.
+`ncc13.artefact_matches` judges §19-20's `os`/`arch` selection, with `"any"`
+on either side as the platform-independent wildcard; package format
+(§19 step 3) is left to the script, since "supported" is local policy
+membership rather than an equality the artefact can decide on its own.
+
+`examples/ncc13-release-monitor.ns` publishes a release for one Software
+Application, judges every Release Artifact Set it receives against a
+tracked installed version and preferred channel, and selects a matching
+artefact by platform — the read half is exactly §26-28's discovery and
+upgrade-selection model, and NCC-13 itself never installs anything (§27).
