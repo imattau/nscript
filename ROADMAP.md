@@ -105,6 +105,64 @@ protocol breadth.
 commit is recorded, and no doc describes a convention as implemented while its
 publication path is still simulated.
 
+## Phase 5: adoption (scaffold, then editor support)
+
+**Status:** proposed. Not started. This phase adds no NIP breadth and no Layer 3
+keywords, so it does not conflict with the Draft 0.1 feature freeze. The two
+parts are ordered: the scaffold comes first because its templates become the
+test material for the language server.
+
+### 5a: `nscript new` scaffold and starter templates
+
+- Add an `nscript new <template> <dir>` subcommand that writes a checked,
+  runnable project: source file, package metadata, lockfile, and a
+  `test-event` script.
+- Ship a small set of starter templates. Each template must:
+  - pass `check` and `inspect` with no diagnostics;
+  - declare the narrowest permissions that work, with a short comment naming
+    why each one is needed;
+  - run to a meaningful result under `run` or `test-event` in simulation;
+  - double as a conformance fixture, so a template cannot drift from the
+    compiler without CI failing.
+- State plainly, in the generated README and at the top of each template,
+  which effects are simulated and which would be live. A template must not
+  imply live behaviour that `nscript deploy` does not yet provide (see
+  Current constraints).
+- Choose the initial template set before implementation. Candidates are a
+  moderation bot, a scheduled poster, and a relay monitor, but the set is an
+  open decision for the maintainer, not settled by this roadmap.
+
+**Exit criteria:** a new user can run `nscript new`, then `check`, `inspect`
+and `test-event` on the result without reading any Rust source, and every
+template is covered by a CI-run fixture.
+
+### 5b: language server and editor integration
+
+- Package `nscript-lang` (symbols, completions, hover) as a Language Server
+  Protocol server, adding diagnostics from the existing checker.
+- Publish a minimal VS Code client. Other editors (Neovim, Zed) should work
+  from the generic LSP server with documented configuration, without bespoke
+  clients.
+- Reuse the 5a templates and the `conformance/` corpus as the server's test
+  inputs, so diagnostics seen in the editor match `nscript check` exactly.
+- Surface the permission footprint, as Studio does, so authority is visible
+  while editing rather than only at `inspect` time.
+- Keep the server on the same compiler front end as the CLI and the wasm build;
+  do not fork a separate parser for editor use.
+
+**Exit criteria:** opening any 5a template in a supported editor shows
+diagnostics, completions, and hover that agree with the CLI, and the server is
+exercised by automated tests rather than manual checks only.
+
+### Sequencing and dependencies
+
+- 5a depends on nothing outside this repository, but live-effect templates
+  stay simulation-only until the Phase 1 live runner exists.
+- 5b depends on 5a for fixtures and should not start until the template set is
+  fixed.
+- Neither part depends on the Phase 2 grammar freeze, but both benefit from it:
+  a frozen grammar and stable diagnostic codes avoid editor-side churn.
+
 ## Explicitly deferred
 
 - Adding more NIP descriptors or Layer 3 keywords without a concrete workflow
