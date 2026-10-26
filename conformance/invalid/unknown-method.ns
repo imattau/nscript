@@ -1,0 +1,15 @@
+// error: E1101 unknown-method
+// `receiver.name()` calls an imported module's function with the receiver as
+// its first argument. No imported module exports `looks_like_spam`, and the
+// language has no other methods.
+use nip01
+
+permissions {
+    log
+}
+
+on Note {
+    if event.content.looks_like_spam() {
+        print("spam")
+    }
+}

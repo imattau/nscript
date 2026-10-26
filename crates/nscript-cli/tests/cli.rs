@@ -830,6 +830,125 @@ fn the_constrained_agent_requests_no_more_authority_than_it_says() {
     assert!(stdout.contains("schedules: 0"), "{stdout}");
 }
 
+/// Roadmap item "check and run agree": an unqualified call `check` accepts is
+/// one `run` executes, not one that fails when a handler reaches it.
+#[test]
+fn bare_and_method_calls_resolve_to_the_same_operations_as_the_qualified_form() {
+    let event = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "x", "tags": []}"#;
+    let run = |file: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(repository_path(file))
+            .args(["--event", event])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{file}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    // The sugar: `npub(...)` and `encoded.pubkey()`.
+    let sugar = run("conformance/valid/bare-and-method-calls.ns");
+    assert!(sugar.contains("log info: converted"), "{sugar}");
+
+    // The same program written with qualified calls executes the same two
+    // operations, in the same order, with the receiver as the first argument.
+    let qualified_source = std::fs::read_to_string(repository_path(
+        "conformance/valid/bare-and-method-calls.ns",
+    ))
+    .unwrap()
+    .replace("= npub(", "= nip19.npub(")
+    .replace("encoded.pubkey()", "nip19.pubkey(encoded)");
+    let (ok, qualified, stderr) =
+        run_source("qualified-calls", &qualified_source, &["--event", event]);
+    assert!(ok, "{stderr}");
+    let operations = |output: &str| {
+        output
+            .lines()
+            .filter(|line| line.trim_start().starts_with("operation "))
+            .map(|line| line.split('(').next().unwrap().trim().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(operations(&sugar), operations(&qualified));
+    assert_eq!(
+        operations(&sugar),
+        ["operation nip19.npub", "operation nip19.pubkey"]
+    );
+}
+
+#[test]
+fn an_unresolved_call_is_a_check_error_not_a_run_failure() {
+    for (fixture, code, wording) in [
+        ("unknown-function", "E1101", "unknown function `frobnicate`"),
+        ("unknown-method", "E1101", "no method `looks_like_spam`"),
+        (
+            "builtin-wrong-arity",
+            "E1102",
+            "`len` expects 1 argument, found 2",
+        ),
+        (
+            "method-wrong-arity",
+            "E1102",
+            "`nip19.pubkey` expects 1 arguments, found 2",
+        ),
+        (
+            "bare-call-missing-permission",
+            "E3001",
+            "requires `decrypt` permission",
+        ),
+    ] {
+        let path = repository_path(&format!("conformance/invalid/{fixture}.ns"));
+        // `run` refuses it before any handler is reached, with the same error.
+        for command in ["check", "run"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+                .arg(command)
+                .arg(&path)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{fixture} {command} passed");
+            assert!(
+                stderr.contains(&format!("error[{code}]")) && stderr.contains(wording),
+                "{fixture} {command}: {stderr}"
+            );
+            assert!(
+                !stderr.contains("R1004"),
+                "{fixture} {command} reached a handler: {stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn calls_inside_a_select_predicate_are_a_query_not_handler_code() {
+    // The predicate language is lowered to a relay filter or run locally, so
+    // `follows(me)` and `content.words().count()` are not resolved against
+    // modules. Handler code with the same shape is rejected.
+    let timeline = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("check")
+        .arg(repository_path("examples/timeline.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        timeline.status.success(),
+        "examples/timeline.ns: {}",
+        String::from_utf8_lossy(&timeline.stderr)
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("check")
+        .arg(repository_path(
+            "conformance/invalid/unbounded-local-filter.ns",
+        ))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error[E2401]"), "{stderr}");
+    assert!(!stderr.contains("E1101"), "{stderr}");
+}
+
 #[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))

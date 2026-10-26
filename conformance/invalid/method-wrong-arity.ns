@@ -1,0 +1,15 @@
+// error: E1102 method-wrong-arity
+// The receiver of a method call is the function's first argument, so
+// `nip19.pubkey(value)` called as `encoded.pubkey(1)` is given two.
+use nip01
+use nip19
+
+permissions {
+    log
+}
+
+on Note {
+    let encoded = nip19.npub("npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg")?
+    let key = encoded.pubkey(1)?
+    print(text(key))
+}

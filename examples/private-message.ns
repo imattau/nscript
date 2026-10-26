@@ -1,3 +1,19 @@
+// A private-message bot: open a NIP-17 gift-wrapped message addressed to us
+// and, if it says `/status`, answer in a private message.
+//
+// `nip17.receive_private` opens the wrap and returns the PrivateMessage; the
+// `private_message` permission it needs is declared below.
+//
+// Try it:
+//
+//   nscript check examples/private-message.ns
+//   nscript inspect examples/private-message.ns
+//
+// `run` simulates every module operation and answers a record-returning one
+// with placeholder text, so the handler reaches `receive_private` and then
+// stops at `message.content`. The reply branch cannot be exercised in
+// simulation; it needs a real NIP-17 host, which `nscript deploy` does not
+// connect.
 use nip17
 use nip44
 use nip46
@@ -12,10 +28,11 @@ permissions {
     publish GiftWrap to inboxes
     sign GiftWrap with account
     relay inboxes
+    private_message
 }
 
 on GiftWrap where addressed_to == me {
-    let message = decrypt(event, account)?
+    let message = nip17.receive_private(event)?
 
     if message.content == "/status" {
         send PrivateMessage {

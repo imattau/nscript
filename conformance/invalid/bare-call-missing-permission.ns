@@ -1,0 +1,14 @@
+// error: E3001 bare-call-missing-permission
+// An unqualified call to an imported module's operation is gated exactly as
+// the qualified form is: `decrypt_text` needs the `decrypt` permission.
+use nip01
+use nip44
+
+permissions {
+    log
+}
+
+on Note {
+    let text_value = decrypt_text(event.content, event.author)
+    print("decrypted")
+}

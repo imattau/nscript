@@ -31,7 +31,7 @@ applies inside a handler exactly as it does outside one.
 | `print(x)`, `len(x)`, `text(x)` | `text(x)` renders any value the same way `print` does, as `Text` — the explicit conversion `+` needs to concatenate a non-`Text` value, e.g. `"count: " + text(n)` |
 | `publish <record> [to <relayset>] [with <signer>]` | see below |
 | user `fn`s | recursion allowed; a function sees only its own parameters |
-| `module.operation(args)` and the Layer 3 forms that lower to it | arguments become typed `OperationValue`s (`PubKey`, `Text`, `Integer`, `StreamMessage`, records) |
+| `operation(args)`, `receiver.operation(args)`, `module.operation(args)` and the Layer 3 forms that lower to it | the first two are the module call with the module name dropped, resolved by `check` against the modules the program imports (a method call passes its receiver as the first argument); a call that resolves to nothing is `E1101` at `check`, not a failure when a handler runs (see `spec/language.md` §4). Arguments become typed `OperationValue`s (`PubKey`, `Text`, `Integer`, `StreamMessage`, records) |
 
 A tag with more than two wire columns iterates as `name=value` too, with the
 extra columns inside the value joined by U+001F (unit separator). Module

@@ -260,6 +260,11 @@ normalization every `FakeOperationHost` call goes through. See
   valid program changed; the five example programs that fail `check` (four need
   external packages, and `examples/private-message.ns` has a parse problem at
   `decrypt(event, account)?`) fail identically before and after.
+  *(Since fixed: the four external-package examples now check with `-M
+  examples/modules`, and `private-message.ns` calls `nip17.receive_private`.
+  `decrypt` was never an operation any module declared; `check` now rejects a
+  call to an unknown function as `E1101` instead of letting it fail when a
+  handler runs.)*
   Still accepted: `return return`, where a reserved word is read as a name.
 - **Unresolvable module calls used to pass `check`.** A call the checker could
   not resolve was skipped rather than reported. Calling an operation an imported

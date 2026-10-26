@@ -85,6 +85,23 @@ pub struct Import {
     pub span: Span,
 }
 
+/// A call written without a module qualifier that the checker resolved to a
+/// function or operation an imported module exports: `npub("...")` (a bare
+/// call) or `encoded.pubkey()` (a method call, whose receiver becomes the
+/// function's first argument). Built-ins and the program's own `fn`s are not
+/// recorded here.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedCall {
+    pub module: String,
+    pub function: String,
+    /// Whether the call was written `receiver.function(...)`.
+    pub method: bool,
+}
+
+/// A call site's callee span as `(start, end)`, the key under which
+/// [`Program::resolved_calls`] records how the checker resolved it.
+pub type CallSite = (usize, usize);
+
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     pub ast: ast::AstProgram,
@@ -96,6 +113,12 @@ pub struct Program {
     pub identifiers: Vec<(String, Span)>,
     pub imports: Vec<Import>,
     pub publishes: Vec<PublishSite>,
+    /// How each unqualified call resolved, filled in by
+    /// `nscript_semantics::resolve_calls` once the module graph is known. The
+    /// evaluator consults it so that what `check` accepts is what `run`
+    /// executes; a program that has not been through resolution simply has
+    /// none, and such a call fails at run time as an unknown function.
+    pub resolved_calls: std::collections::BTreeMap<CallSite, ResolvedCall>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

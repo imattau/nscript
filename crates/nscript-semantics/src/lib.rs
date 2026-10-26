@@ -1,12 +1,15 @@
 //! Static policy checks for `NScript` programs.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{BTreeMap, BTreeSet},
+};
 
 use nscript_modules::ResolvedModuleGraph;
 
 mod events;
 use nscript_syntax::{
-    Diagnostic, Program, RuntimeProfile, Span,
+    CallSite, Diagnostic, Program, ResolvedCall, RuntimeProfile, Span,
     ast::{Expr, ExprKind, Item, PatternKind, Permission, StatementKind, TypeRef},
 };
 
@@ -334,7 +337,18 @@ struct CallContext {
     resolved: BTreeSet<String>,
     /// Names the program declares itself, which shadow module names.
     locals: BTreeSet<String>,
+    /// How each unqualified call resolved, recorded as the walk meets it.
+    resolutions: RefCell<BTreeMap<CallSite, ResolvedCall>>,
+    /// How many `select` predicates enclose the expression being walked. A
+    /// predicate is a query, lowered to a relay filter or run locally against
+    /// fetched events (`where content.words().count() > 20`), not handler
+    /// code, so the calls inside one are not resolved against modules.
+    query_depth: Cell<u32>,
 }
+
+/// The functions the evaluator provides to every program, each taking exactly
+/// one argument.
+const BUILTIN_FUNCTIONS: [&str; 5] = ["print", "text", "len", "Ok", "Err"];
 
 #[derive(Clone)]
 struct ModuleCall {
@@ -349,6 +363,33 @@ fn validate_module_calls(
     graph: &ResolvedModuleGraph,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    let context = call_context(program, graph);
+    let permissions = program_permissions(program);
+    for item in &program.ast.items {
+        validate_item_calls(item, &context, &permissions, diagnostics);
+    }
+}
+
+/// How each unqualified call in `program` resolves against the modules it
+/// imports: `npub("...")` to `nip19.npub`, `encoded.pubkey()` to
+/// `nip19.pubkey(encoded)`. This is the same resolution `check` applies, so the
+/// evaluator executes exactly the calls the checker accepted. Calls that do not
+/// resolve are diagnosed by [`analyze_with_modules`], not recorded here.
+#[must_use]
+pub fn resolve_calls(
+    program: &Program,
+    graph: &ResolvedModuleGraph,
+) -> BTreeMap<CallSite, ResolvedCall> {
+    let context = call_context(program, graph);
+    let permissions = program_permissions(program);
+    let mut ignored = Vec::new();
+    for item in &program.ast.items {
+        validate_item_calls(item, &context, &permissions, &mut ignored);
+    }
+    context.resolutions.into_inner()
+}
+
+fn call_context(program: &Program, graph: &ResolvedModuleGraph) -> CallContext {
     let imported = program
         .imports
         .iter()
@@ -392,8 +433,7 @@ fn validate_module_calls(
                 .push(call);
         }
     }
-    let permissions = program_permissions(program);
-    let context = CallContext {
+    CallContext {
         calls,
         imported: program
             .imports
@@ -403,9 +443,8 @@ fn validate_module_calls(
         known: graph.known.clone(),
         resolved: graph.modules.keys().cloned().collect(),
         locals: program_locals(program),
-    };
-    for item in &program.ast.items {
-        validate_item_calls(item, &context, &permissions, diagnostics);
+        resolutions: RefCell::new(BTreeMap::new()),
+        query_depth: Cell::new(0),
     }
 }
 
@@ -669,6 +708,114 @@ fn report_unresolved_module_call(
     }
 }
 
+/// Decides what a call's callee names, reporting the ones that name nothing.
+///
+/// Returns the key the call is validated under, the module functions it could
+/// be, and how many arguments the callee receives, or `None` when there is
+/// nothing further to validate (a built-in, a function the program declares, a
+/// qualified `module.operation` call that [`report_unresolved_module_call`]
+/// already covers, an unresolvable call inside a `select` predicate, or an
+/// unresolvable call that has just been reported).
+///
+/// A call written `name(...)` resolves to a built-in, to a function the
+/// program declares, or to a function or operation a module it imports
+/// exports. A call written `receiver.name(...)` where `receiver` is not a
+/// module is a method call: it resolves to that same kind of module function,
+/// with the receiver as its first argument. Anything else is a call to
+/// something that does not exist, which `run` would only discover when a
+/// handler reached it.
+fn resolve_call_target<'a>(
+    expression: &Expr,
+    callee: &Expr,
+    argument_count: usize,
+    calls: &'a CallContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<(String, &'a Vec<ModuleCall>, usize)> {
+    let site = (callee.span.start, callee.span.end);
+    match &callee.value {
+        ExprKind::Identifier(name) => {
+            if BUILTIN_FUNCTIONS.contains(&name.as_str()) {
+                if argument_count != 1 {
+                    diagnostics.push(Diagnostic {
+                        code: "E1102",
+                        message: format!("`{name}` expects 1 argument, found {argument_count}"),
+                        span: expression.span,
+                    });
+                }
+                return None;
+            }
+            if calls.locals.contains(name) {
+                return None;
+            }
+            if let Some(candidates) = calls.calls.get(name) {
+                if let [only] = candidates.as_slice() {
+                    calls.resolutions.borrow_mut().insert(
+                        site,
+                        ResolvedCall {
+                            module: only.module.clone(),
+                            function: only.operation.clone(),
+                            method: false,
+                        },
+                    );
+                }
+                return Some((name.clone(), candidates, argument_count));
+            }
+            if calls.query_depth.get() > 0 {
+                return None;
+            }
+            diagnostics.push(Diagnostic {
+                code: "E1101",
+                message: format!("unknown function `{name}`"),
+                span: callee.span,
+            });
+            None
+        }
+        ExprKind::Member { value, name } => {
+            let base = expression_path(value);
+            let names_a_module = base.as_deref().is_some_and(|base| {
+                !base.contains('.')
+                    && !calls.locals.contains(base)
+                    && (calls.imported.contains(base) || calls.known.contains(base))
+            });
+            if names_a_module {
+                // `module.operation(...)`: validated under its qualified path.
+                let path = format!("{}.{}", base.unwrap_or_default(), name.value);
+                return calls
+                    .calls
+                    .get(&path)
+                    .map(|candidates| (path, candidates, argument_count));
+            }
+            if let Some(candidates) = calls.calls.get(&name.value) {
+                if let [only] = candidates.as_slice() {
+                    calls.resolutions.borrow_mut().insert(
+                        site,
+                        ResolvedCall {
+                            module: only.module.clone(),
+                            function: only.operation.clone(),
+                            method: true,
+                        },
+                    );
+                }
+                // The receiver is the function's first argument.
+                return Some((name.value.clone(), candidates, argument_count + 1));
+            }
+            if calls.query_depth.get() > 0 {
+                return None;
+            }
+            diagnostics.push(Diagnostic {
+                code: "E1101",
+                message: format!(
+                    "no method `{}`: no imported module exports a function of that name",
+                    name.value
+                ),
+                span: callee.span,
+            });
+            None
+        }
+        _ => None,
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn validate_expr_calls(
     expression: &Expr,
@@ -682,8 +829,8 @@ fn validate_expr_calls(
         report_unresolved_module_call(&name, callee.span, calls, diagnostics);
     }
     if let ExprKind::Call { callee, arguments } = &expression.value
-        && let Some(name) = expression_path(callee)
-        && let Some(candidates) = calls.calls.get(&name)
+        && let Some((name, candidates, argument_count)) =
+            resolve_call_target(expression, callee, arguments.len(), calls, diagnostics)
     {
         if candidates.len() > 1 {
             diagnostics.push(Diagnostic {
@@ -692,15 +839,12 @@ fn validate_expr_calls(
                 span: callee.span,
             });
         } else if let Some(call) = candidates.first() {
-            if arguments.len() != call.arity {
+            if argument_count != call.arity {
                 diagnostics.push(Diagnostic {
                     code: "E1102",
                     message: format!(
-                        "{}.{}` expects {} arguments, found {}",
-                        call.module,
-                        call.operation,
-                        call.arity,
-                        arguments.len()
+                        "`{}.{}` expects {} arguments, found {}",
+                        call.module, call.operation, call.arity, argument_count
                     ),
                     span: expression.span,
                 });
@@ -766,7 +910,9 @@ fn validate_expr_calls(
         }
         ExprKind::Select(select) => {
             if let Some(predicate) = &select.predicate {
+                calls.query_depth.set(calls.query_depth.get() + 1);
                 validate_expr_calls(predicate, calls, permissions, diagnostics);
+                calls.query_depth.set(calls.query_depth.get() - 1);
             }
             if let Some(since) = &select.since {
                 validate_expr_calls(since, calls, permissions, diagnostics);
@@ -1687,7 +1833,29 @@ impl<'a> Checker<'a> {
                 }
             }
             ExprKind::Call { callee, arguments } => {
-                if let Some(path) = expression_path(callee)
+                let resolved = self
+                    .program
+                    .resolved_calls
+                    .get(&(callee.span.start, callee.span.end))
+                    .cloned();
+                if let Some(resolved) = resolved {
+                    // An unqualified call resolved to an imported module's
+                    // function is the same operation call as the qualified
+                    // form, so the host's policy must allow it too.
+                    let mut checked_arguments = Vec::new();
+                    if resolved.method
+                        && let ExprKind::Member { value, .. } = &callee.value
+                    {
+                        checked_arguments.extend(checked_argument(value));
+                    }
+                    checked_arguments.extend(arguments.iter().filter_map(checked_argument));
+                    self.operation_calls.push(CheckedOperationCall {
+                        module: resolved.module,
+                        operation: resolved.function,
+                        arguments: checked_arguments,
+                        span: expression.span,
+                    });
+                } else if let Some(path) = expression_path(callee)
                     && let Some((module, operation)) = path.split_once('.')
                 {
                     let checked_arguments = arguments.iter().filter_map(checked_argument).collect();

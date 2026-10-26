@@ -1,0 +1,13 @@
+// error: E1101 unknown-function
+// A call to a name that is not a built-in, not declared by the program, and
+// not exported by any imported module. Without this check it passed `check`
+// and failed only when the handler ran.
+use nip01
+
+permissions {
+    log
+}
+
+on Note {
+    print(frobnicate(event.content))
+}

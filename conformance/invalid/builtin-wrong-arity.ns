@@ -1,0 +1,12 @@
+// error: E1102 builtin-wrong-arity
+// The built-ins `print`, `text`, `len`, `Ok` and `Err` each take exactly one
+// argument.
+use nip01
+
+permissions {
+    log
+}
+
+on Note {
+    print(len(event.content, event.tags))
+}

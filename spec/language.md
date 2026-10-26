@@ -115,6 +115,33 @@ there is no explicit `return`. Recoverable operations return `Result<T,E>`.
 Postfix `?` returns the error from the nearest enclosing function or handler.
 NScript has no exceptions.
 
+### Calls
+
+A call names its target in one of three ways, and the compiler MUST resolve
+every call to exactly one of them or reject it; a call that resolves to nothing
+is `E1101`, never a failure deferred to run time.
+
+- `name(args)` is a built-in (`print`, `text`, `len`, `Ok`, `Err`, each taking
+  exactly one argument), a function the program declares, or a function or
+  operation that exactly one imported module exports. `module.name(args)` is
+  the same call written with the module named, and is what a program SHOULD
+  write when two imported modules export the same name.
+- `receiver.name(args)`, where `receiver` is not a module, is a method call.
+  There are no methods of their own: it calls the function or operation an
+  imported module exports as `name`, with `receiver` as its first argument, so
+  `encoded.pubkey()` is `nip19.pubkey(encoded)`. Arity is checked against the
+  function's parameters including the receiver.
+- A name exported by more than one imported module is ambiguous (`E4003`).
+
+A resolved call is checked exactly as the qualified form is: arity (`E1102`),
+the permission its operation requires (`E3001`), and the effects it adds. The
+calls inside a `select` predicate are the exception. A predicate is a query,
+lowered to a relay filter or run locally against fetched events, so it is not
+resolved against modules (`follows(me)`, `content.words().count()`).
+
+References to names that are not calls, such as an undeclared variable, are not
+yet rejected statically.
+
 The compiler infers a closed effect set for every function. Standard effects are
 `Relay`, `Sign`, `Encrypt`, `Decrypt`, `Storage`, `HTTP`, `Filesystem`, `Payment`,
 `Clock`, and `Log`. Pure functions have an empty set. Effects propagate through

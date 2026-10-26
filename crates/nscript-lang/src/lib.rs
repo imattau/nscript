@@ -34,7 +34,7 @@ pub struct AnalyzedProgram {
 /// module graph, and runs the same structural analysis the CLI does.
 #[must_use]
 pub fn analyze(source: &str, modules: &[(&str, &str)]) -> AnalyzedProgram {
-    let (program, mut diagnostics) = parse_program(source);
+    let (mut program, mut diagnostics) = parse_program(source);
     let mut registry = ModuleRegistry::with_builtins();
     for (name, module_source) in modules {
         let (descriptor, mut module_diagnostics) = parse_module(module_source);
@@ -99,6 +99,7 @@ pub fn analyze(source: &str, modules: &[(&str, &str)]) -> AnalyzedProgram {
     };
     diagnostics.extend(analyze_with_modules(&program, &graph));
     diagnostics.sort_by_key(|diagnostic| (diagnostic.span.start, diagnostic.code));
+    program.resolved_calls = nscript_semantics::resolve_calls(&program, &graph);
     AnalyzedProgram {
         program,
         graph,

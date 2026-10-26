@@ -1706,7 +1706,7 @@ fn load_program(
     let Ok(source) = read_source(path) else {
         return Err(());
     };
-    let (program, mut diagnostics) = parse_program(&source);
+    let (mut program, mut diagnostics) = parse_program(&source);
     let mut registry = ModuleRegistry::with_builtins();
     for module_path in module_paths {
         if let Err(error) = registry.load_root(&module_path) {
@@ -1755,6 +1755,9 @@ fn load_program(
             }
         }
     };
+    // Record how each unqualified call resolves, so what `check` accepts is
+    // what `run` executes.
+    program.resolved_calls = nscript_semantics::resolve_calls(&program, &graph);
     Ok((path.to_owned(), program, graph, diagnostics))
 }
 

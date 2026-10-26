@@ -1,0 +1,17 @@
+// A call to an imported module's function can drop the module name.
+// `npub(...)` is `nip19.npub(...)`, and `encoded.pubkey()` is
+// `nip19.pubkey(encoded)`: a method call passes its receiver as the
+// function's first argument. The checker resolves both against the modules the
+// program imports, so what `check` accepts is exactly what `run` executes.
+use nip01
+use nip19
+
+permissions {
+    log
+}
+
+on Note {
+    let encoded = npub("npub10elfcs4fr0l0r8af98jlmgdh9c8tcxjvz9qkw038js35mp4dma8qzvjptg")?
+    let key = encoded.pubkey()?
+    print("converted")
+}

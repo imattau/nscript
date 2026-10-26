@@ -17,6 +17,7 @@ use nscript_syntax::Program;
 use nscript_syntax::ast::{
     Expr, ExprKind, FunctionDeclaration, Item, MatchArm, PatternKind, StatementKind,
 };
+use nscript_syntax::{CallSite, ResolvedCall};
 
 use crate::{
     AuditEntry, AuditHost, ClockHost, IdempotencyHost, LogHost, LogRecord, OperationHost,
@@ -343,6 +344,9 @@ pub struct Interpreter<'a, H: EvalHost> {
     host: &'a mut H,
     functions: BTreeMap<&'a str, &'a FunctionDeclaration>,
     modules: BTreeSet<&'a str>,
+    /// How the checker resolved each unqualified call (see
+    /// `nscript_semantics::resolve_calls`), keyed by the callee's span.
+    resolved: &'a BTreeMap<CallSite, ResolvedCall>,
     /// `key` declarations: name to the host label.
     keys: BTreeMap<&'a str, &'a str>,
     /// `defaults { signer: ...; relays: ... }`, used by a `publish`/`send`
@@ -437,6 +441,7 @@ pub fn run_handler<'a, H: EvalHost>(
         host,
         functions,
         modules,
+        resolved: &program.resolved_calls,
         keys,
         defaults_signer: program
             .defaults
@@ -880,6 +885,22 @@ impl<H: EvalHost> Interpreter<'_, H> {
     }
 
     fn call(&mut self, callee: &Expr, arguments: &[Expr]) -> Result<Value, Stop> {
+        // An unqualified call the checker resolved to an imported module's
+        // function: `npub("...")` is `nip19.npub`, and `encoded.pubkey()` is
+        // `nip19.pubkey(encoded)`, the receiver evaluated first.
+        if let Some(resolved) = self.resolved.get(&(callee.span.start, callee.span.end)) {
+            let mut operands = Vec::with_capacity(arguments.len() + 1);
+            if resolved.method {
+                let ExprKind::Member { value, .. } = &callee.value else {
+                    return Err(fail("a resolved method call must be a member call"));
+                };
+                operands.push(self.expression(value)?);
+            }
+            for argument in arguments {
+                operands.push(self.expression(argument)?);
+            }
+            return self.call_module(&resolved.module, &resolved.function, &operands);
+        }
         let arguments = arguments
             .iter()
             .map(|argument| self.expression(argument))
@@ -933,36 +954,48 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 let ExprKind::Identifier(module) = &value.value else {
                     unreachable!("guarded above")
                 };
-                let operands = arguments
-                    .iter()
-                    .map(Value::to_operation)
-                    .collect::<Result<Vec<_>, _>>()?;
-                // A pure fold query (RFC 0002 §3): no permission gate, no
-                // effect, no `Result` wrapping — just the answer.
-                if self.host.is_pure_function(module, &name.value) {
-                    let result = self
-                        .host
-                        .call_pure_function(module, &name.value, &operands)
-                        .map_err(Stop::Error)?;
-                    return Ok(Value::from_operation(result));
-                }
-                let declared = self.host.declared_return(module, &name.value);
-                let outcome = self.host.call_operation(module, &name.value, &operands);
-                match declared.as_deref().and_then(result_error_type) {
-                    // Declared `Result<T,E>`: hand the script `Ok`/`Err`. A failure
-                    // that is not the operation's to report (a capability denial, a
-                    // bad argument) still aborts the handler.
-                    Some(error_type) => Ok(match outcome {
-                        Ok(value) => Value::ResultOk(Box::new(Value::from_operation(value))),
-                        Err(error) => match recoverable(&error, &error_type) {
-                            Some(failure) => Value::ResultErr(Box::new(failure)),
-                            None => return Err(Stop::Error(error)),
-                        },
-                    }),
-                    None => Ok(Value::from_operation(outcome?)),
-                }
+                self.call_module(module, &name.value, &arguments)
             }
             _ => Err(fail("this call is not supported")),
+        }
+    }
+
+    /// Calls `module.function` with already-evaluated arguments: a pure
+    /// function answers directly, anything else is a gated operation call
+    /// whose declared `Result<T,E>` becomes an `Ok`/`Err` value.
+    fn call_module(
+        &mut self,
+        module: &str,
+        function: &str,
+        arguments: &[Value],
+    ) -> Result<Value, Stop> {
+        let operands = arguments
+            .iter()
+            .map(Value::to_operation)
+            .collect::<Result<Vec<_>, _>>()?;
+        // A pure fold query (RFC 0002 §3): no permission gate, no
+        // effect, no `Result` wrapping — just the answer.
+        if self.host.is_pure_function(module, function) {
+            let result = self
+                .host
+                .call_pure_function(module, function, &operands)
+                .map_err(Stop::Error)?;
+            return Ok(Value::from_operation(result));
+        }
+        let declared = self.host.declared_return(module, function);
+        let outcome = self.host.call_operation(module, function, &operands);
+        match declared.as_deref().and_then(result_error_type) {
+            // Declared `Result<T,E>`: hand the script `Ok`/`Err`. A failure
+            // that is not the operation's to report (a capability denial, a
+            // bad argument) still aborts the handler.
+            Some(error_type) => Ok(match outcome {
+                Ok(value) => Value::ResultOk(Box::new(Value::from_operation(value))),
+                Err(error) => match recoverable(&error, &error_type) {
+                    Some(failure) => Value::ResultErr(Box::new(failure)),
+                    None => return Err(Stop::Error(error)),
+                },
+            }),
+            None => Ok(Value::from_operation(outcome?)),
         }
     }
 
