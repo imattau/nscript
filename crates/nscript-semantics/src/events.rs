@@ -28,6 +28,12 @@ const COMMON_FIELDS: [(&str, &str); 7] = [
     ("tags", "List<Text>"),
 ];
 
+/// What a `publish` expression evaluates to, and the fields a script can read
+/// from it. `accepted` is always true in a script that continues: a publication
+/// no relay accepted aborts the handler instead of producing a report.
+const PUBLISH_REPORT: &str = "PublishReport";
+const PUBLISH_REPORT_FIELDS: [&str; 1] = ["accepted"];
+
 /// Types the checker will compare. Anything else (a record, a generic, an
 /// unknown name) is left unchecked: a wrong guess would reject a valid program.
 const SCALARS: [&str; 5] = ["Text", "Int", "Bool", "PubKey", "EventId"];
@@ -300,6 +306,20 @@ impl HandlerChecker<'_> {
                 {
                     self.unknown_field(&name.value, name.span);
                 }
+                if let ExprKind::Identifier(base) = &value.value
+                    && env.get(base).is_some_and(|ty| ty == PUBLISH_REPORT)
+                    && !PUBLISH_REPORT_FIELDS.contains(&name.value.as_str())
+                {
+                    self.error(
+                        "E1101",
+                        name.span,
+                        format!(
+                            "`{base}` (a `{PUBLISH_REPORT}`) has no field `{}`; its fields are: {}",
+                            name.value,
+                            PUBLISH_REPORT_FIELDS.join(", ")
+                        ),
+                    );
+                }
                 self.expression(value, env);
             }
             ExprKind::Call { callee, arguments } => {
@@ -392,6 +412,8 @@ impl HandlerChecker<'_> {
             ExprKind::Member { value, name } if matches!(&value.value, ExprKind::Identifier(base) if base == "event") => {
                 self.fields.get(&name.value).cloned()
             }
+            // `publish` evaluates to a report of the publication.
+            ExprKind::Publish { .. } => Some(PUBLISH_REPORT.to_owned()),
             _ => None,
         }
     }

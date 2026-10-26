@@ -2614,6 +2614,50 @@ mod tests {
         assert_eq!(runtime.relay.published[0].unsigned.content, "reply: hi");
     }
 
+    /// What a script sees of a publication no relay accepted: nothing. The
+    /// handler aborts at the `publish`, so a script that continues past one
+    /// always holds a report whose `accepted` is true (`spec/language.md` §6).
+    #[test]
+    fn a_publish_no_relay_accepts_aborts_the_handler_before_the_next_statement() {
+        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    publish Note to public\n    sign Note with account\n    relay public\n    log\n}\n\non Note {\n    let result = publish Note {\n        content: \"x\",\n    } to public with account\n    print(\"reached\")\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = Runtime::new(
+            FakeRelayHost {
+                relays: [("fake://public".to_owned(), false)].into_iter().collect(),
+                ..FakeRelayHost::default()
+            },
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let policy = policy_for(&checked);
+        let hit = event_from_json(&serde_json::json!({"content": "hi", "tags": []})).unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &hit,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(
+            matches!(&outcomes[0].result, Err(RuntimeError::PublicationRejected)),
+            "{:?}",
+            outcomes[0].result
+        );
+        assert!(
+            log.records.iter().all(|record| record.message != "reached"),
+            "the statement after a rejected publish must not run"
+        );
+        assert!(runtime.relay.published.is_empty());
+    }
+
     #[test]
     fn a_handlers_publish_lowers_computed_fields_declared_kinds_and_the_d_tag() {
         let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\nevent Reply {\n    kind: 30717\n    parameterised by thread\n    thread: Text\n    content: Text\n}\n\npermissions {\n    publish Reply to public\n    sign Reply with account\n    relay public\n    log\n}\n\non Note where tags.t contains \"trigger\" {\n    let result = publish Reply {\n        thread: event.content,\n        content: \"hi\",\n        p: [\"npub1alice\", \"npub1bob\"],\n        count: 2 + 3,\n    } to public with account\n    print(result.accepted)\n}\n";

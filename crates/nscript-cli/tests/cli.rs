@@ -950,6 +950,45 @@ fn calls_inside_a_select_predicate_are_a_query_not_handler_code() {
 }
 
 #[test]
+fn a_publish_evaluates_to_a_named_report_with_one_readable_field() {
+    let event = r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "x", "tags": [["t", "trigger"]]}"#;
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("conformance/valid/publish-report.ns"))
+        .args(["--event", event])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("log info: accepted: true"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    // A field the report does not have is refused at `check`, before any
+    // handler runs, naming the one field it does have.
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path(
+            "conformance/invalid/publish-report-unknown-field.ns",
+        ))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("`report` (a `PublishReport`) has no field `relays`")
+            && stderr.contains("its fields are: accepted"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("R1004"), "{stderr}");
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])

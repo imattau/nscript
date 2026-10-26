@@ -998,6 +998,8 @@ fn core_types() -> BTreeSet<String> {
         "Signer",
         "SecretKey",
         "Tag",
+        // What a `publish` expression evaluates to.
+        "PublishReport",
     ]
     .into_iter()
     .map(str::to_owned)

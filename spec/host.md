@@ -44,7 +44,8 @@ subscribe(filters, relayset) -> Result<Subscription, RelayError>
 publish(event, relayset) -> Result<PublishReport, RelayError>
 ```
 
-`PublishReport` contains a result for every resolved relay. Subscription items
+`PublishReport` contains a result for every resolved relay. A script's `publish`
+expression exposes less of it: see `spec/language.md` §6. Subscription items
 include the event and relays from which it was observed. Relay URLs are
 normalised before permission comparison. Dynamic relay discovery is allowed only
 inside a declared relay set whose policy permits discovery.

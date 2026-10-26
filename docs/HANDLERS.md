@@ -29,7 +29,7 @@ applies inside a handler exactly as it does outside one.
 | `event.id`, `event.author`, `event.content`, `event.kind`, `event.created_at`, `event.tags` | `tags` iterates as `name=value` text |
 | `me` | the program's principal; an error if none is configured |
 | `print(x)`, `len(x)`, `text(x)` | `text(x)` renders any value the same way `print` does, as `Text` — the explicit conversion `+` needs to concatenate a non-`Text` value, e.g. `"count: " + text(n)` |
-| `publish <record> [to <relayset>] [with <signer>]` | see below |
+| `publish <record> [to <relayset>] [with <signer>]` | evaluates to a `PublishReport`, whose one field `accepted` is always `true` in a handler that continues: a publication no relay accepted aborts the handler with `publication rejected`. There is no `Result` to `?` or `match`. See `spec/language.md` §6 |
 | user `fn`s | recursion allowed; a function sees only its own parameters |
 | `operation(args)`, `receiver.operation(args)`, `module.operation(args)` and the Layer 3 forms that lower to it | the first two are the module call with the module name dropped, resolved by `check` against the modules the program imports (a method call passes its receiver as the first argument); a call that resolves to nothing is `E1101` at `check`, not a failure when a handler runs (see `spec/language.md` §4). Arguments become typed `OperationValue`s (`PubKey`, `Text`, `Integer`, `StreamMessage`, records) |
 

@@ -236,13 +236,28 @@ publish signed to public
 
 `publish unsigned to public with account` is shorthand for signing followed by
 publication. The compiler MUST reject publication without a signer when the
-value is unsigned. Publication returns a per-relay outcome and succeeds at the
-language level when at least one target relay accepts the event; callers can
-inspect or require a stricter acknowledgement policy explicitly.
+value is unsigned. Publication succeeds at the language level when at least
+one target relay accepts the event.
 
-`publish` is an effectful expression returning
-`Result<PublishReport, RelayError>`. At statement position its result may be
-discarded with a warning; functions and workflows may return or inspect it.
+`publish` is an effectful expression. It evaluates to a `PublishReport` and
+nothing else: there is no `Result` to match or `?`, because a publication that
+no relay accepted does not produce a value. It aborts the enclosing handler with
+`publication rejected`, and the statements after it do not run. The report has
+one field a script can read, `accepted`, a `Bool`; since a script that continues
+past a `publish` has by construction been accepted by at least one relay, it is
+always `true` there. `PublishReport` is a type a script can name, for a `let`
+annotation or a function parameter. Reading a field it does not have is
+`E1101` where the report is bound by a `let` inside a handler; elsewhere the
+read is not yet checked and fails when it runs.
+
+This is deliberately less than the host capability offers (`spec/host.md`,
+`publish(event, relayset) -> Result<PublishReport, RelayError>`). A script
+cannot see which relays accepted or refused, cannot require a stricter
+acknowledgement than one relay, and cannot recover from a rejected publication
+in the language. A module operation that publishes (for example
+`concord04.kick_member`) is different: it declares `Result<PublishReport, E>`,
+and a script receives `Ok`/`Err` it can match.
+
 The record's author fields lower to wire tags as specified in §3.
 
 For each omitted `with` or `to` clause, the compiler substitutes the matching

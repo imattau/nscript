@@ -1,0 +1,28 @@
+// `publish` evaluates to a PublishReport. A script can name the type, for a
+// `let` annotation or a function parameter, and read its one field,
+// `accepted`. A publication no relay accepts aborts the handler, so a script
+// that gets this far holds a report whose `accepted` is true; there is no
+// `Result` to `?` or match.
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Note to public
+    sign Note with account
+    relay public
+    log
+}
+
+fn describe(report: PublishReport) -> Text {
+    return "accepted: " + text(report.accepted)
+}
+
+on Note where tags.t contains "trigger" {
+    let report: PublishReport = publish Note {
+        content: "reply",
+    } to public with account
+    print(describe(report))
+}
