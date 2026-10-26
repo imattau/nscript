@@ -16,8 +16,9 @@
 //       (healthy: the handler's filter does not match, so nothing happens)
 //
 // An earlier version polled with `every 1h { select ServerStatus since 1h ... }`.
-// That checks, but the simulator does not evaluate `select` inside a handler,
-// so it could not be run; reacting to each delivered report does the same job.
+// `check` now rejects that (E3002): the relay host cannot answer a query from a
+// schedule or handler. Reacting to each delivered report, as below, does the
+// same job.
 use nip01
 use nostrhost::status
 use nip46

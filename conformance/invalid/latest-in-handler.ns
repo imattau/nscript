@@ -1,0 +1,17 @@
+// error: E3002 latest-in-handler
+// `latest` is a relay query too, and no more answerable from a handler than
+// `select` is.
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+on Note {
+    let newest = latest Note(event.author) from public
+    print("after")
+}

@@ -200,8 +200,13 @@ and `RelaySet`, respectively. Defaults grant no permission by themselves.
 
 ## 5. Queries and streams
 
-`select` produces a finite `Result<List<E>, RelayError>`. A query compiler MUST
-lower supported predicates to Nostr filters. A predicate that cannot be lowered
+`select` declares a query. It is a stream source (`stream x = select ...`), whose
+events a handler receives one at a time, or a top-level query that is checked and
+lowered to filters. It does not hand a list to running code: the relay host
+cannot answer a query from a handler, function or schedule, so using `select` or
+`latest` there is `E3002` (unavailable capability), and a script does not receive
+a `Result<List<E>, RelayError>`. A query compiler MUST lower supported
+predicates to Nostr filters. A predicate that cannot be lowered
 MAY run locally only when its remote superset is bounded by an explicit `limit`,
 `since`, or `until`; otherwise compilation fails.
 

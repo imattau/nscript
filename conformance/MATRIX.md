@@ -18,6 +18,7 @@ against deterministic host fakes.
 | At-least-once handlers | `idempotent-handler.ns` | `dispatch_event` runtime test | Duplicate delivery |
 | Store transactions | `idempotent-handler.ns` | `dispatch_event_transactional` runtime test | Transaction rollback |
 | Publication result (`PublishReport`) | `publish-report.ns` | `publish-report-unknown-field.ns` | Handler abort on a rejected publication (runtime test) |
+| Relay queries in running code | `mentions.ns` (stream source), `timeline.ns` (top-level query) | `select-in-handler.ns`, `latest-in-handler.ns`, `select-in-schedule.ns` | `check` rejects what the evaluator cannot run |
 | Name resolution (handlers, functions, schedules) | `name-scopes.ns` | `undeclared-name.ns`, `top-level-let-in-handler.ns`, `let-out-of-scope.ns`, `event-in-function.ns` | `check` and `run` agree on what is in scope |
 | Call resolution (unqualified and method calls) | `bare-and-method-calls.ns` | `unknown-function.ns`, `unknown-method.ns`, `builtin-wrong-arity.ns`, `method-wrong-arity.ns`, `bare-call-missing-permission.ns` | `check` and `run` agree on the operations executed |
 | NIP-19 round trips | `nip19.ns` | Runtime invalid-input tests | Runtime npub round-trip vector |

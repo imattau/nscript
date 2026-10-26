@@ -7,8 +7,8 @@ use std::{
 
 use nscript_modules::ResolvedModuleGraph;
 
+mod bodies;
 mod events;
-mod names;
 use nscript_syntax::{
     CallSite, Diagnostic, Program, ResolvedCall, RuntimeProfile, Span,
     ast::{Expr, ExprKind, Item, PatternKind, Permission, StatementKind, TypeRef},
@@ -248,7 +248,7 @@ pub fn analyze_with_modules(program: &Program, graph: &ResolvedModuleGraph) -> V
     let mut diagnostics = analyze(program);
     diagnostics.extend(validate_module_symbols(program, graph));
     diagnostics.extend(events::validate(program, graph));
-    diagnostics.extend(names::validate(program, &graph.known));
+    diagnostics.extend(bodies::validate(program, &graph.known));
     diagnostics.sort_by_key(|diagnostic| (diagnostic.span.start, diagnostic.code));
     diagnostics
 }

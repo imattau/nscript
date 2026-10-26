@@ -1,0 +1,18 @@
+// error: E3002 select-in-schedule
+// The same holds for a schedule body: polling relays with `select` from an
+// `every` block cannot run. React to delivered events instead.
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    clock
+    log
+}
+
+every 1h {
+    let recent = select Note since 1h from public
+    print("tick")
+}

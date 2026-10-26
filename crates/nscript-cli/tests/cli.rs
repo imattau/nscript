@@ -1043,6 +1043,47 @@ fn every_way_a_name_comes_into_scope_checks_and_runs() {
 }
 
 #[test]
+fn a_relay_query_in_running_code_is_a_check_error_but_a_stream_source_is_not() {
+    for (fixture, word) in [
+        ("select-in-handler", "`select` cannot run inside"),
+        ("latest-in-handler", "`latest` cannot run inside"),
+        ("select-in-schedule", "`select` cannot run inside"),
+    ] {
+        let path = repository_path(&format!("conformance/invalid/{fixture}.ns"));
+        for command in ["check", "run"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+                .arg(command)
+                .arg(&path)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{fixture} {command} passed");
+            assert!(
+                stderr.contains("error[E3002]") && stderr.contains(word),
+                "{fixture} {command}: {stderr}"
+            );
+            assert!(
+                !stderr.contains("R1004") && !stderr.contains("OperationUnavailable"),
+                "{fixture} {command} reached a handler: {stderr}"
+            );
+        }
+    }
+    // The same `select` as a stream source, and as a top-level query, still checks.
+    for ok in ["conformance/valid/mentions.ns", "examples/timeline.ns"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("check")
+            .arg(repository_path(ok))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{ok}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])

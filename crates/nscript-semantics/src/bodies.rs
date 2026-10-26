@@ -1,16 +1,23 @@
-//! Undeclared names in code that runs.
+//! What the evaluator cannot do with code that runs.
 //!
-//! The evaluator resolves a name from the enclosing scopes, from `event` (in a
-//! handler), from `me`, or from a declared `key`; anything else stops the
-//! handler with "unknown name". This pass reports the same names at `check`
-//! time, in the bodies the evaluator executes sequentially: handlers,
-//! functions and schedules.
+//! Handlers, functions and schedules are executed sequentially by the
+//! evaluator. Two things stop it there that `check` used to accept, and this
+//! pass reports both at `check` time instead:
 //!
-//! It mirrors the evaluator rather than the other way round, so it is exactly
-//! as strict as running the code would be: a top-level `let` is not visible
-//! inside a handler, a `let` ends with its block, and `event` is not visible
-//! inside a function. Top-level statements outside a schedule are evaluated by
-//! a separate, lenient pass and are not checked here.
+//! - **Undeclared names.** The evaluator resolves a name from the enclosing
+//!   scopes, from `event` (in a handler), from `me`, or from a declared `key`;
+//!   anything else stops the handler with "unknown name". The pass mirrors the
+//!   evaluator rather than the other way round, so it is exactly as strict as
+//!   running the code would be: a top-level `let` is not visible inside a
+//!   handler, a `let` ends with its block, and `event` is not visible inside a
+//!   function.
+//! - **Relay queries.** `select` and `latest` can be a stream source or a
+//!   top-level query, but the relay host has no way to answer one from running
+//!   code, so using either inside a handler, function or schedule is an
+//!   unavailable capability.
+//!
+//! Top-level statements outside a schedule are evaluated by a separate,
+//! lenient pass and are not checked here.
 
 use std::collections::BTreeSet;
 
@@ -226,11 +233,20 @@ impl Names<'_> {
                     self.scopes.pop();
                 }
             }
-            // A `select` predicate is a query over the selected events' fields,
-            // not code that runs here.
-            ExprKind::Select(_)
-            | ExprKind::Latest { .. }
-            | ExprKind::Integer(_)
+            ExprKind::Select(_) | ExprKind::Latest { .. } => {
+                let (word, source) = match &expression.value {
+                    ExprKind::Select(_) => ("select", "`stream x = select ...`"),
+                    _ => ("latest", "a top-level query"),
+                };
+                self.diagnostics.push(Diagnostic {
+                    code: "E3002",
+                    message: format!(
+                        "`{word}` cannot run inside a handler, function or schedule: the relay host cannot answer a query from running code; use it as {source} instead"
+                    ),
+                    span: expression.span,
+                });
+            }
+            ExprKind::Integer(_)
             | ExprKind::Decimal(_)
             | ExprKind::Text(_)
             | ExprKind::Bool(_)

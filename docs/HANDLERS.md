@@ -232,8 +232,10 @@ A handler that loops or recurses without end stops with
 An unsupported construct is a stable `OperationUnavailable` or
 `EvaluationError`, never a silent skip.
 
-- **Not evaluated:** `select`, `fetch`, `latest`, `sign` (standalone — see
-  below), decimals, durations, and nested `on`/`every`/`at`/`Send`.
+- **Not evaluated:** `select` and `latest` (rejected at `check` as `E3002` when
+  used inside a handler, function or schedule; a `stream x = select ...` source
+  is unaffected), `fetch`, `sign` (standalone — see below), decimals,
+  durations, and nested `on`/`every`/`at`/`Send`.
 - **`publish <record> [to <relayset>] [with <signer>]` is evaluated.** It was
   "the largest remaining missing piece" until it was wired up:
   `EvalHost::publish` backs it, implemented on `RuntimeSession` by calling a

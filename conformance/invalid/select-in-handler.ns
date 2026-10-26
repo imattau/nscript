@@ -1,0 +1,18 @@
+// error: E3002 select-in-handler
+// `select` can be a stream source or a top-level query, but the relay host has
+// no way to answer one from a handler. Without this check it passed `check` and
+// stopped the handler when it ran.
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+on Note {
+    let recent = select Note since 1h from public
+    print("after")
+}
