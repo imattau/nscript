@@ -42,7 +42,7 @@ on Note where tags.t contains "open-election" {
         rules: "One vote per pubkey; the latest vote before endsAt counts.";
         content: "Board chair election";
     } to public with account
-    print("election published: " + text(published.accepted) + "/1 relays")
+    print("election published (accepted: " + text(published.accepted) + ")")
 }
 
 on Vote {

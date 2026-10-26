@@ -43,7 +43,7 @@ on Note where tags.t contains "publish-release" {
         conflicts: [legacy_conflict];
         content: "Release notes for 1.4.2";
     } to public with account
-    print("release published: " + text(published.accepted) + "/1 relays")
+    print("release published (accepted: " + text(published.accepted) + ")")
 }
 
 // A package manager already tracking `installed_version` for this

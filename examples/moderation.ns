@@ -41,6 +41,6 @@ on Note where tags.t contains "nostrhost" {
             target: event.id,
             reason: "spam",
         } to public with service
-        print("moderation event published: " + text(result.accepted) + "/1 relays")
+        print("moderation event published (accepted: " + text(result.accepted) + ")")
     }
 }

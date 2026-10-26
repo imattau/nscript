@@ -41,7 +41,7 @@ every 24h {
         content: "";
         cap: ["ncc:02", "ncc:05", "nip:01"];
     } to public with account
-    print("capability manifest published: " + text(published.accepted) + "/1 relays")
+    print("capability manifest published (accepted: " + text(published.accepted) + ")")
 }
 
 on CapabilityManifest where tags.d contains "capabilities" {

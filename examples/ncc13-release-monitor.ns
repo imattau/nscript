@@ -58,7 +58,7 @@ on Note where tags.t contains "publish-release" {
         requires: [runtime_dependency];
         content: "1.4.2: dependency bump to runtime 2.x";
     } to public with account
-    print("release published: " + text(published.accepted) + "/1 relays")
+    print("release published (accepted: " + text(published.accepted) + ")")
 }
 
 // §26-28: discovery and upgrade selection. The monitor tracks its own

@@ -82,7 +82,7 @@ on ServiceRecord {
                 expiration: event.created_at + 86400;
                 content: encrypted;
             } to public with account
-            print("locator for " + id + " published: " + text(published.accepted) + "/1 relays, endpoints " + text(ncc05.payload_endpoints(payload)))
+            print("locator for " + id + " published (accepted: " + text(published.accepted) + "), endpoints " + text(ncc05.payload_endpoints(payload)))
         }
     }
 }

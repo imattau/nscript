@@ -51,7 +51,7 @@ on Note where tags.t contains "maintain" {
         operator_for: claim;
         content: "Scheduled maintenance.";
     } to public with account
-    print("operator state published: " + text(published.accepted) + "/1 relays")
+    print("operator state published (accepted: " + text(published.accepted) + ")")
 }
 
 on ServiceState {

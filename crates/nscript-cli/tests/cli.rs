@@ -794,7 +794,7 @@ fn the_external_module_examples_do_what_their_headers_say() {
 
     assert!(
         stdout("examples/moderation.ns", Some(&note("buy spam now")))
-            .contains("moderation event published: true/1 relays")
+            .contains("moderation event published (accepted: true)")
     );
     assert!(
         !stdout("examples/moderation.ns", Some(&note("hello"))).contains("published"),
@@ -802,7 +802,7 @@ fn the_external_module_examples_do_what_their_headers_say() {
     );
     assert!(
         stdout("examples/server-monitor.ns", Some(&status("critical")))
-            .contains("alert published: true/1 relays")
+            .contains("alert published (accepted: true)")
     );
     assert!(
         stdout("examples/server-monitor.ns", Some(&status("ok"))).contains("no handler matched"),
@@ -810,7 +810,7 @@ fn the_external_module_examples_do_what_their_headers_say() {
     );
     assert!(
         stdout("examples/constrained-agent.ns", Some(&status("critical")))
-            .contains("package requested: true/1 relays")
+            .contains("package requested (accepted: true)")
     );
     assert!(stdout("examples/http-integration.ns", None).contains("1/1 relays accepted"));
 }
@@ -986,6 +986,60 @@ fn a_publish_evaluates_to_a_named_report_with_one_readable_field() {
         "{stderr}"
     );
     assert!(!stderr.contains("R1004"), "{stderr}");
+}
+
+#[test]
+fn an_undeclared_name_is_a_check_error_not_a_run_failure() {
+    for (fixture, wording) in [
+        ("undeclared-name", "unknown name `count`"),
+        ("let-out-of-scope", "unknown name `inner`"),
+        (
+            "top-level-let-in-handler",
+            "it is a top-level `let`, which handlers, functions and schedules cannot see",
+        ),
+        ("event-in-function", "it is only bound inside a handler"),
+    ] {
+        let path = repository_path(&format!("conformance/invalid/{fixture}.ns"));
+        for command in ["check", "run"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+                .arg(command)
+                .arg(&path)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!output.status.success(), "{fixture} {command} passed");
+            assert!(
+                stderr.contains("error[E1101]") && stderr.contains(wording),
+                "{fixture} {command}: {stderr}"
+            );
+            // Refused before any handler ran, not discovered inside one.
+            assert!(
+                !stderr.contains("R1004"),
+                "{fixture} {command} reached a handler: {stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_way_a_name_comes_into_scope_checks_and_runs() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["run", "--as", "alice"])
+        .arg(repository_path("conformance/valid/name-scopes.ns"))
+        .args([
+            "--event",
+            r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "x", "tags": [["t", "a"], ["t", "b"]]}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("log info: tags: 2"), "{stdout}");
+    assert!(stdout.contains("log info: alice"), "{stdout}");
 }
 
 #[test]
@@ -2190,7 +2244,7 @@ fn the_locator_bot_encrypts_the_payload_it_publishes_and_judges_what_it_receives
     assert!(stdout.contains("handler ServiceRecord: ok"), "{stdout}");
     assert!(
         stdout.contains(
-            "locator for relay published: true/1 relays, endpoints [wss://relay.example.com]"
+            "locator for relay published (accepted: true), endpoints [wss://relay.example.com]"
         ),
         "{stdout}"
     );
@@ -2414,7 +2468,7 @@ fn the_rotation_bot_acknowledges_proposals_and_reports_acceptances() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("handler Handover: ok"), "{stdout}");
     assert!(
-        stdout.contains(&format!("accepted {handover} for relay: true/1 relays")),
+        stdout.contains(&format!("accepted {handover} for relay (accepted: true)")),
         "{stdout}"
     );
 
@@ -2569,7 +2623,7 @@ fn the_status_bot_publishes_operator_state_and_reports_states() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("handler Note: ok"), "{stdout}");
     assert!(
-        stdout.contains("operator state published: true/1 relays"),
+        stdout.contains("operator state published (accepted: true)"),
         "{stdout}"
     );
 
@@ -2627,7 +2681,7 @@ fn the_policy_client_publishes_and_evaluates_trust_policy() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("handler Note: ok"), "{stdout}");
     assert!(
-        stdout.contains("policy published: true/1 relays"),
+        stdout.contains("policy published (accepted: true)"),
         "{stdout}"
     );
 
@@ -2680,7 +2734,7 @@ fn the_release_monitor_publishes_judges_upgrades_and_selects_artefacts() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("handler Note: ok"), "{stdout}");
     assert!(
-        stdout.contains("release published: true/1 relays"),
+        stdout.contains("release published (accepted: true)"),
         "{stdout}"
     );
 
@@ -2788,7 +2842,7 @@ fn the_service_operator_bot_composes_the_full_ncc_service_cluster() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("operator grant published: true/1 relays"),
+        stdout.contains("operator grant published (accepted: true)"),
         "{stdout}"
     );
 
@@ -2802,7 +2856,7 @@ fn the_service_operator_bot_composes_the_full_ncc_service_cluster() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("release published: true/1 relays"),
+        stdout.contains("release published (accepted: true)"),
         "{stdout}"
     );
 
@@ -2939,7 +2993,7 @@ fn the_election_bot_judges_votes_keeps_one_per_pubkey_and_tallies() {
         r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "open", "tags": [["t", "open-election"]]}"#,
     );
     assert!(
-        stdout.contains("election published: true/1 relays"),
+        stdout.contains("election published (accepted: true)"),
         "{stdout}"
     );
 

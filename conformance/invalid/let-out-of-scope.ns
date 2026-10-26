@@ -1,0 +1,14 @@
+// error: E1101 let-out-of-scope
+// A `let` ends with the block it is declared in.
+use nip01
+
+permissions {
+    log
+}
+
+on Note {
+    if event.kind == 1 {
+        let inner = "x"
+    }
+    print(inner)
+}

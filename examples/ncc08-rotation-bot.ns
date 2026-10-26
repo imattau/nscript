@@ -68,7 +68,7 @@ on Handover where tags.role contains "predecessor" {
             e: event.id;
             content: "";
         } to public with account
-        print("accepted " + handover + " for " + service + ": " + text(published.accepted) + "/1 relays")
+        print("accepted " + handover + " for " + service + " (accepted: " + text(published.accepted) + ")")
     }
 }
 

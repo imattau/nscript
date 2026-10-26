@@ -29,5 +29,5 @@ every 24h {
     let result = publish Note {
         content: "Daily reminder: be kind.",
     } to public with account
-    print("posted to " + text(result.accepted) + "/1 relays")
+    print("posted (accepted: " + text(result.accepted) + ")")
 }

@@ -1,0 +1,16 @@
+// error: E1101 event-in-function
+// `event` is bound by a handler, not by a function it calls; the function takes
+// what it needs as a parameter.
+use nip01
+
+permissions {
+    log
+}
+
+fn shout() -> Text {
+    return event.content
+}
+
+on Note {
+    print(shout())
+}

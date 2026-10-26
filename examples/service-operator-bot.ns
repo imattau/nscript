@@ -174,7 +174,7 @@ on Note where tags.t contains "authorise-operator" {
         note: "CI/release automation";
         content: "";
     } to public with account
-    print("operator grant published: " + text(published.accepted) + "/1 relays")
+    print("operator grant published (accepted: " + text(published.accepted) + ")")
 }
 
 // NCC-13 as publisher: a signed release of this service's own
@@ -193,7 +193,7 @@ on Note where tags.t contains "cut-release" {
         conflicts: [legacy_conflict];
         content: "1.4.2: NCC-09 scoped operator support";
     } to public with account
-    print("release published: " + text(published.accepted) + "/1 relays")
+    print("release published (accepted: " + text(published.accepted) + ")")
 }
 
 // Reader: an operator-claimed state names its principal in a

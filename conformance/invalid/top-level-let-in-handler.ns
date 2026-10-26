@@ -1,0 +1,14 @@
+// error: E1101 top-level-let-in-handler
+// A top-level `let` is not visible inside a handler: the evaluator gives a
+// handler only `event`, `me`, declared keys and what it binds itself.
+use nip01
+
+permissions {
+    log
+}
+
+let greeting = "hello"
+
+on Note {
+    print(greeting)
+}

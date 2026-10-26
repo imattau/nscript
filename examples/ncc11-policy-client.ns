@@ -48,7 +48,7 @@ on Note where tags.t contains "publish-policy" {
         rule: [pinning, stale, wss, http, operator_state];
         content: "";
     } to public with account
-    print("policy published: " + text(published.accepted) + "/1 relays")
+    print("policy published (accepted: " + text(published.accepted) + ")")
 }
 
 on TrustPolicy {

@@ -41,7 +41,7 @@ on Note where tags.t contains "publish-policy" {
         trust: [certifier];
         content: "";
     } to public with account
-    print("policy published: " + text(published.accepted) + "/1 relays")
+    print("policy published (accepted: " + text(published.accepted) + ")")
 }
 
 on TrustPolicy {

@@ -139,8 +139,25 @@ calls inside a `select` predicate are the exception. A predicate is a query,
 lowered to a relay filter or run locally against fetched events, so it is not
 resolved against modules (`follows(me)`, `content.words().count()`).
 
-References to names that are not calls, such as an undeclared variable, are not
-yet rejected statically.
+### Names
+
+Inside a handler, a function or a schedule, a name MUST resolve to something in
+scope, and the compiler MUST reject one that does not (`E1101`) rather than
+leave it to stop the handler when it runs. The names in scope are:
+
+- a function's parameters, and in a handler `event`;
+- a `let`, `for` variable or `match` binding, from its declaration to the end of
+  the block that declares it;
+- `me`, and the `key` declarations the program makes.
+
+A top-level `let` is not in scope inside a handler, function or schedule: they
+see only what they bind or are passed, and the diagnostic says so. `event` is
+bound by a handler and is not in scope inside a function it calls, which takes
+what it needs as a parameter. The signer and relay set named by `with` and `to`
+are capabilities, not values, and are not looked up as names. A `select`
+predicate is a query over the selected events' fields and is not checked here.
+Top-level statements outside a schedule are evaluated by a separate pass that is
+not subject to this rule.
 
 The compiler infers a closed effect set for every function. Standard effects are
 `Relay`, `Sign`, `Encrypt`, `Decrypt`, `Storage`, `HTTP`, `Filesystem`, `Payment`,

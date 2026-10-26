@@ -67,7 +67,7 @@ every 7d {
         exp: 1767446400;
         content: "";
     } to public with account
-    print("service record published: " + text(published.accepted) + "/1 relays")
+    print("service record published (accepted: " + text(published.accepted) + ")")
 }
 
 on ServiceRecord {

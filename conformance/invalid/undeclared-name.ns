@@ -1,0 +1,12 @@
+// error: E1101 undeclared-name
+// A name no scope declares. Without this check it passed `check` and stopped
+// the handler with "unknown name" when it ran.
+use nip01
+
+permissions {
+    log
+}
+
+on Note {
+    print(text(count))
+}

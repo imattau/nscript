@@ -33,5 +33,5 @@ on ServerStatus where tags.disk contains "critical" {
     let result = publish PackageRequest {
         package: "disk-cleanup",
     } to control with agent
-    print("package requested: " + text(result.accepted) + "/1 relays")
+    print("package requested (accepted: " + text(result.accepted) + ")")
 }

@@ -1,0 +1,33 @@
+// Every way a name comes into scope inside code that runs: a function's
+// parameters, a `let`, a `for` variable, a `match` binding, `event`, `me`, a
+// declared key, and a module named in a qualified call. None of them is an
+// undeclared name, and a name declared in an outer block is visible in an inner
+// one.
+use nip01
+
+key signing = host("main")
+
+permissions {
+    log
+}
+
+fn label(prefix: Text, value: Int) -> Text {
+    let joined = prefix + text(value)
+    return joined
+}
+
+on Note {
+    let total = 0
+    for tag in event.tags {
+        let seen = tag
+        if seen contains "t=" {
+            total = total + 1
+        }
+    }
+    let outcome = match total {
+        0 => "none"
+        other => label("tags: ", other)
+    }
+    print(outcome)
+    print(text(me))
+}
