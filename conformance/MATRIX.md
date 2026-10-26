@@ -30,6 +30,7 @@ against deterministic host fakes.
 | NCC-07 capability manifests | `ncc07-manifest.ns` | `ncc07-regular-mode.ns` | `vectors/ncc07.json` publication trace + pure-function runtime tests |
 | NCC-00 document lifecycle | `ncc00-ledger.ns` | `ncc00-succession-wrong-type.ns` | `vectors/ncc00.json` publication trace + pure-function runtime tests |
 | NCC-02 endpoint identity binding | `ncc02-service-record.ns` | `ncc02-validity-wrong-clock.ns` | `vectors/ncc02.json` publication trace + pure-function runtime tests |
+| NCC-03 elections and voting | `ncc03-election.ns` | `ncc03-window-wrong-type.ns` | `vectors/ncc03.json` publication trace + pure-function runtime tests (window bounds, option membership, vote validity, later-vote-wins, roll membership, tally, audit claims) and vote/election/tally handler run tests |
 | NCC-05 encrypted locators | `ncc05-locator.ns` | `ncc05-locator-wrong-clock.ns` | `vectors/ncc05.json` publication trace + handler publish round-trip test |
 | NCC-06 service profile | `ncc06-service-profile.ns` | `ncc06-locator-marker-wrong-clock.ns` | `vectors/ncc06.json` publication trace + resolver unit tests and deploy identity-resolution test |
 | NCC-08 service identity rotation | `ncc08-handover.ns` | `ncc08-proposal-wrong-clock.ns` | `vectors/ncc08.json` publication trace + pure-function runtime tests and successor bot round-trip test |

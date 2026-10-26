@@ -90,8 +90,8 @@ protocol breadth.
   NCC-09 (scoped operator authority), NCC-10 (operational state) and NCC-11
   (portable trust policy) with the three-column tag support they need, then
   NCC-13 (software package release profile), a further post-pin addition
-  that profiles NIP-51/94/34 rather than owning new kinds; NCC-03 lands
-  last (see Explicitly deferred below).
+  that profiles NIP-51/94/34 rather than owning new kinds; NCC-03 landed
+  last, scoped to its normative core (§4-7).
 - Build the real record-fields-to-wire-tags lowering path for declared events,
   so `publish <record>` statements emit correct kinds and tags on real relays.
   Module operation calls remain simulated until a host is wired in.
@@ -167,11 +167,6 @@ exercised by automated tests rather than manual checks only.
 
 - Adding more NIP descriptors or Layer 3 keywords without a concrete workflow
   and conformance need.
-- NCC-03 (elections and voting) until last in the phase: its kind model is
-  normative upstream at the pinned commit (definition `36998`, vote `1071`,
-  electoral roll `36997`, audit `36999`), so the reason is surface — four
-  event kinds, a one-vote-per-pubkey tally, and a voting window — plus its
-  dependency on Concord governance workflows, not an upstream defect.
 - A general-purpose production host for all module operations. Real operation
   hosts should be added by workflow and capability, with their live behavior
   made visible to users.

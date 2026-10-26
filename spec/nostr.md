@@ -107,8 +107,9 @@ validation and lowering expressions are defined in the module specification.
 Nostr Community Conventions (NCCs) are shared usage patterns of existing
 primitives, published by the convention repository pinned in the specification
 README. They are implemented as ordinary modules under the `ncc` namespace
-(`ncc00`, `ncc02`, `ncc05`, `ncc06`, `ncc07`, `ncc08`, `ncc09`, `ncc10`, `ncc11`, ...) using the same records, validators, events,
-tags, and host operations as NIP modules.
+(`ncc00`, `ncc02`, `ncc03`, `ncc05`, `ncc06`, `ncc07`, `ncc08`, `ncc09`,
+`ncc10`, `ncc11`, `ncc13`) using the same records, validators, events, tags,
+and host operations as NIP modules.
 
 A community-convention module:
 
@@ -126,6 +127,23 @@ A community-convention module:
 Extensions MUST NOT change the meaning of conforming source when a convention
 module is absent: conventions are ignorable by default, and no NIP or language
 keyword depends on them.
+
+What is live and what is simulated, for every convention module below:
+
+- The module's pure functions (extractors, builders, validators and the
+  judgements a convention defines) compute the same result under every
+  command. Nothing about them is simulated.
+- Under `nscript check`, `run` and `test-event`, publication is simulated.
+  Under `nscript deploy`, a `publish` statement reaches real relays through
+  a real NIP-46 signer, with fields lowered to the wire tags the
+  `conformance/vectors/` files pin (see `docs/DEPLOY.md`).
+- Module operations, such as the NIP-44 encryption NCC-05 locators rely on,
+  remain simulated unless a real host is connected; `deploy` does not
+  connect one for the convention modules (see "Current constraints" in
+  `ROADMAP.md`).
+- The convention modules read and write no store. State that spans events
+  (handover chains, counted votes, attestation sets) is the calling
+  script's or host's, and each subsection says where a convention needs it.
 
 ### NCC-00 document lifecycle
 
@@ -214,6 +232,65 @@ rather than performing it — and scripts hold no wall clock
 (spec/language.md §9), so `now` flows from a delivered event's `created_at`
 or another caller-held timestamp, as `examples/ncc02-service-registry.ns`
 does while publishing its own record and judging the ones it receives.
+
+### NCC-03 elections and voting
+
+`ncc03` implements the normative core of the election convention (§4-7):
+four event kinds and the rules that make a count reproducible from public
+data. An Election Definition (kind 36998, addressable, `d` the election
+identifier) declares repeatable `option` tags and the `startsAt`/`endsAt`
+window; a Vote (kind 1071, regular and non-replaceable) carries `e`, `d` and
+`choice`; an Electoral Roll (kind 36997, addressable) lists eligible pubkeys
+as `p` tags; and an Audit Event (kind 36999, addressable) records the
+election and roll identifiers, a summary hash and a vote total. The module
+declares all four and the pure functions a handler needs to judge them.
+
+`option` carries an identifier, a label and optional further columns, so
+`ncc03.option_entry` builds it rather than a script writing a literal (a
+`.ns` string literal cannot carry the tag column separator, the same reason
+NCC-13 builds its `requires` entries); `ncc03.option_ids`,
+`ncc03.option_label` and `ncc03.option_exists` read it back and tolerate the
+extra columns.
+
+`ncc03.window_is_open` implements §6.2: a moment is inside the window when
+it is at or after `startsAt` (if present) and strictly before `endsAt`. A
+definition with no usable `endsAt`, or a malformed `startsAt`, is never open,
+so a broken definition cannot accept votes. `ncc03.vote_is_valid` adds §6.1
+and §6.3: the vote must reference the election the caller holds and select a
+declared option. The caller supplies the reference the vote's `e` tag is
+compared with, verbatim, so whether that is an event id or an address is the
+caller's policy; an empty reference never matches. The vote's `d` tag is
+informational (§5.2) and does not affect validity.
+
+`ncc03.vote_supersedes` implements §7: against a vote already counted for
+the same pubkey, only a strictly greater `created_at` replaces it. The
+convention is silent on equal timestamps; this function keeps the vote
+already counted, and §8 requires a publisher to disclose that assumption.
+`ncc03.roll_includes` checks a `PubKey` against a roll's `p` tags for
+elections that attach one (§5.3); eligibility itself, vote weighting and
+Sybil resistance are outside the convention (§3) and outside this module.
+
+A script sees one event at a time and keeps no store, so accumulating the
+votes a tally covers is the caller's job. `ncc03.tally_counts` counts
+already-validated, already-deduplicated choices per declared option in
+declaration order, ignoring choices that name no option;
+`ncc03.tally_option` and `ncc03.tally_count` read an entry back. Audit
+events are read as claims: `ncc03.audit_summary` and `ncc03.audit_votes`
+return what was published, and nothing here recomputes the hash, because
+the convention does not fix the hashed payload (§5.4).
+
+Not modelled: the companion JavaScript library's registration challenges,
+invites, manual roll additions, signing vaults and operator class (§12).
+They are library behaviour, not part of the normative convention, and
+nothing in `ncc03` depends on a Concord community or its governance.
+
+`examples/ncc03-election-bot.ns` opens an election, judges delivered votes
+against the window, options and roll, applies the later-vote-wins rule, and
+reports a tally and an audit claim. Its publication path for the Election
+Definition is the same real relay/signer path as any other published event;
+judging and counting are pure and simulated only in the sense that the
+election, roll and previously counted vote are the script's own
+configuration rather than data read from storage.
 
 ### NCC-05 encrypted locators
 

@@ -3608,6 +3608,30 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("ncc11", "rule_value_is_valid") => Some(ncc11_rule_value_is_valid as PureFunction),
         ("ncc11", "rule") => Some(ncc11_rule as PureFunction),
         ("ncc11", "certifier") => Some(ncc11_certifier as PureFunction),
+        ("ncc03", "election_identifier") => Some(ncc03_election_identifier as PureFunction),
+        ("ncc03", "option_entry") => Some(ncc03_option_entry as PureFunction),
+        ("ncc03", "option_ids") => Some(ncc03_option_ids as PureFunction),
+        ("ncc03", "option_label") => Some(ncc03_option_label as PureFunction),
+        ("ncc03", "option_exists") => Some(ncc03_option_exists as PureFunction),
+        ("ncc03", "starts_at") => Some(ncc03_starts_at as PureFunction),
+        ("ncc03", "ends_at") => Some(ncc03_ends_at as PureFunction),
+        ("ncc03", "window_is_open") => Some(ncc03_window_is_open as PureFunction),
+        ("ncc03", "vote_election") => Some(ncc03_vote_election as PureFunction),
+        ("ncc03", "vote_identifier") => Some(ncc03_vote_identifier as PureFunction),
+        ("ncc03", "vote_choice") => Some(ncc03_vote_choice as PureFunction),
+        ("ncc03", "vote_choices") => Some(ncc03_vote_choices as PureFunction),
+        ("ncc03", "vote_is_valid") => Some(ncc03_vote_is_valid as PureFunction),
+        ("ncc03", "vote_supersedes") => Some(ncc03_vote_supersedes as PureFunction),
+        ("ncc03", "roll_identifier") => Some(ncc03_roll_identifier as PureFunction),
+        ("ncc03", "roll_members") => Some(ncc03_roll_members as PureFunction),
+        ("ncc03", "roll_includes") => Some(ncc03_roll_includes as PureFunction),
+        ("ncc03", "tally_counts") => Some(ncc03_tally_counts as PureFunction),
+        ("ncc03", "tally_option") => Some(ncc03_tally_option as PureFunction),
+        ("ncc03", "tally_count") => Some(ncc03_tally_count as PureFunction),
+        ("ncc03", "audit_election") => Some(ncc03_audit_election as PureFunction),
+        ("ncc03", "audit_roll") => Some(ncc03_audit_roll as PureFunction),
+        ("ncc03", "audit_summary") => Some(ncc03_audit_summary as PureFunction),
+        ("ncc03", "audit_votes") => Some(ncc03_audit_votes as PureFunction),
         ("ncc13", "application") => Some(ncc13_application as PureFunction),
         ("ncc13", "version") => Some(ncc13_version as PureFunction),
         ("ncc13", "version_scheme") => Some(ncc13_version_scheme as PureFunction),
@@ -6213,6 +6237,363 @@ fn ncc13_artefact_matches(arguments: &[OperationValue]) -> Result<OperationValue
     let os_matches = entry_os == "any" || entry_os == wanted_os;
     let arch_matches = entry_arch == "any" || entry_arch == wanted_arch;
     Ok(OperationValue::Bool(os_matches && arch_matches))
+}
+
+// ---------------------------------------------------------------------------
+// NCC-03: elections and voting. Only the normative core (§4-7) is modelled:
+// the four event shapes, the voting window, option membership, and the
+// greatest-`created_at`-wins rule for one vote per pubkey. A script sees one
+// event at a time and keeps no store, so these are the judgements a
+// handler needs to apply to each delivered event; accumulating the votes a
+// tally covers is the caller's job (storage or a delivered batch). The
+// companion library's registration, invite and operator machinery is
+// non-normative and is deliberately not modelled here.
+// ---------------------------------------------------------------------------
+
+/// NCC-03 §5.1: the election identifier, from an Election Definition's `d`
+/// tag (its replacement key).
+fn ncc03_election_identifier(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "d", "ncc03.election_identifier")
+}
+
+/// NCC-03 §5.1: build an `option` tag's value — the option identifier and
+/// its human-readable label. Further columns (a description, metadata) are
+/// tolerated when reading but not built.
+fn ncc03_option_entry(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(id), OperationValue::Text(label)] = arguments else {
+        return Err(invalid("ncc03.option_entry"));
+    };
+    Ok(OperationValue::Text(join_tag_columns(&[id, label])))
+}
+
+fn ncc03_option_columns<'a>(
+    tags: &'a [OperationValue],
+    function: &'static str,
+) -> Result<Vec<Vec<&'a str>>, RuntimeError> {
+    Ok(tag_values(tags, "option", function)?
+        .into_iter()
+        .map(tag_value_columns)
+        .collect())
+}
+
+/// NCC-03 §5.1: every available option identifier, in declaration order.
+fn ncc03_option_ids(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc03.option_ids"));
+    };
+    Ok(OperationValue::List(
+        ncc03_option_columns(tags, "ncc03.option_ids")?
+            .into_iter()
+            .map(|columns| OperationValue::Text(columns[0].to_owned()))
+            .collect(),
+    ))
+}
+
+/// NCC-03 §5.1: the label declared for an option identifier, empty when the
+/// option is unknown or carries no label.
+fn ncc03_option_label(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags), OperationValue::Text(id)] = arguments else {
+        return Err(invalid("ncc03.option_label"));
+    };
+    let label = ncc03_option_columns(tags, "ncc03.option_label")?
+        .into_iter()
+        .find(|columns| columns[0] == id)
+        .and_then(|columns| columns.get(1).map(|label| (*label).to_owned()))
+        .unwrap_or_default();
+    Ok(OperationValue::Text(label))
+}
+
+fn ncc03_has_option(
+    tags: &[OperationValue],
+    id: &str,
+    function: &'static str,
+) -> Result<bool, RuntimeError> {
+    Ok(ncc03_option_columns(tags, function)?
+        .into_iter()
+        .any(|columns| columns[0] == id))
+}
+
+/// NCC-03 §6.3: whether the selected option exists in the election
+/// definition.
+fn ncc03_option_exists(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags), OperationValue::Text(id)] = arguments else {
+        return Err(invalid("ncc03.option_exists"));
+    };
+    Ok(OperationValue::Bool(ncc03_has_option(
+        tags,
+        id,
+        "ncc03.option_exists",
+    )?))
+}
+
+/// A unix-timestamp tag as a voting-window bound: absent, present but not an
+/// integer, or a usable timestamp. Keeping a malformed bound distinct from
+/// an absent one lets `window_is_open` refuse a broken definition instead of
+/// reading it as unbounded.
+enum Ncc03Bound {
+    Absent,
+    Malformed,
+    At(i64),
+}
+
+impl Ncc03Bound {
+    /// Absent and malformed bounds both read as 0 when a script asks for the
+    /// raw value; `window_is_open` is what tells them apart.
+    fn value_or_zero(&self) -> i64 {
+        match self {
+            Self::At(value) => *value,
+            Self::Absent | Self::Malformed => 0,
+        }
+    }
+}
+
+fn ncc03_time_tag(
+    tags: &[OperationValue],
+    name: &str,
+    function: &'static str,
+) -> Result<Ncc03Bound, RuntimeError> {
+    Ok(match tag_lookup(tags, name, function)? {
+        None => Ncc03Bound::Absent,
+        Some(value) => value
+            .parse::<i64>()
+            .map_or(Ncc03Bound::Malformed, Ncc03Bound::At),
+    })
+}
+
+/// NCC-03 §5.1: the optional `startsAt` bound. An absent or malformed tag
+/// reads as 0 (no lower bound); `window_is_open` is what rejects a malformed
+/// one.
+fn ncc03_starts_at(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc03.starts_at"));
+    };
+    let starts = ncc03_time_tag(tags, "startsAt", "ncc03.starts_at")?;
+    Ok(OperationValue::Integer(starts.value_or_zero()))
+}
+
+/// NCC-03 §5.1: the required `endsAt` bound. An absent or malformed tag
+/// reads as 0, which `window_is_open` never treats as open.
+fn ncc03_ends_at(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc03.ends_at"));
+    };
+    let ends = ncc03_time_tag(tags, "endsAt", "ncc03.ends_at")?;
+    Ok(OperationValue::Integer(ends.value_or_zero()))
+}
+
+fn ncc03_window_contains(
+    tags: &[OperationValue],
+    moment: i64,
+    function: &'static str,
+) -> Result<bool, RuntimeError> {
+    let Ncc03Bound::At(ends) = ncc03_time_tag(tags, "endsAt", function)? else {
+        return Ok(false);
+    };
+    let starts = match ncc03_time_tag(tags, "startsAt", function)? {
+        Ncc03Bound::Absent => i64::MIN,
+        Ncc03Bound::At(starts) => starts,
+        Ncc03Bound::Malformed => return Ok(false),
+    };
+    Ok(moment >= starts && moment < ends)
+}
+
+/// NCC-03 §6.2: whether `moment` falls inside the voting window — at or
+/// after `startsAt` when present, and strictly before `endsAt`. A definition
+/// with no usable `endsAt`, or a malformed `startsAt`, is never open, so a
+/// broken definition cannot accept votes.
+fn ncc03_window_is_open(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags), OperationValue::Integer(moment)] = arguments else {
+        return Err(invalid("ncc03.window_is_open"));
+    };
+    Ok(OperationValue::Bool(ncc03_window_contains(
+        tags,
+        *moment,
+        "ncc03.window_is_open",
+    )?))
+}
+
+/// NCC-03 §5.2: the Election Definition a vote references, from its `e` tag.
+fn ncc03_vote_election(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "e", "ncc03.vote_election")
+}
+
+/// NCC-03 §5.2: the election identifier a vote carries for correlation, from
+/// its `d` tag. Informational only; it is not a replacement key.
+fn ncc03_vote_identifier(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "d", "ncc03.vote_identifier")
+}
+
+/// NCC-03 §5.2: the single option a vote selects, from its `choice` tag.
+fn ncc03_vote_choice(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "choice", "ncc03.vote_choice")
+}
+
+/// NCC-03 §5.2: every `choice` tag in a tag list, in order — for a script
+/// holding several votes' choices at once (a closing note, a delivered
+/// batch). A single vote carries exactly one; [`ncc03_vote_choice`] reads it.
+fn ncc03_vote_choices(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc03.vote_choices"));
+    };
+    Ok(OperationValue::List(
+        tag_values(tags, "choice", "ncc03.vote_choices")?
+            .into_iter()
+            .map(|value| OperationValue::Text(value.to_owned()))
+            .collect(),
+    ))
+}
+
+/// NCC-03 §6: whether a vote is valid for an election — it references the
+/// definition the caller holds (`election_reference` is compared with the
+/// vote's `e` tag verbatim, so the caller decides whether that is an event
+/// id or an address), selects an option the definition declares, and was
+/// created inside the voting window. The electoral roll (§5.3) is optional
+/// and is checked separately with `roll_includes`.
+fn ncc03_vote_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(election_tags),
+        OperationValue::Text(election_reference),
+        OperationValue::List(vote_tags),
+        OperationValue::Integer(created_at),
+    ] = arguments
+    else {
+        return Err(invalid("ncc03.vote_is_valid"));
+    };
+    let function = "ncc03.vote_is_valid";
+    let referenced = tag_lookup(vote_tags, "e", function)?.unwrap_or_default();
+    if election_reference.is_empty() || referenced != election_reference {
+        return Ok(OperationValue::Bool(false));
+    }
+    let choice = tag_lookup(vote_tags, "choice", function)?.unwrap_or_default();
+    let valid = ncc03_has_option(election_tags, choice, function)?
+        && ncc03_window_contains(election_tags, *created_at, function)?;
+    Ok(OperationValue::Bool(valid))
+}
+
+/// NCC-03 §7: whether a candidate vote replaces the vote currently counted
+/// for the same pubkey — only a strictly greater `created_at` does. The
+/// convention is silent on equal timestamps; this keeps the vote already
+/// counted, and a publisher MUST disclose that counting assumption (§8).
+fn ncc03_vote_supersedes(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Integer(candidate),
+        OperationValue::Integer(current),
+    ] = arguments
+    else {
+        return Err(invalid("ncc03.vote_supersedes"));
+    };
+    Ok(OperationValue::Bool(candidate > current))
+}
+
+/// NCC-03 §5.3: the roll identifier, from an Electoral Roll's `d` tag.
+fn ncc03_roll_identifier(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "d", "ncc03.roll_identifier")
+}
+
+/// NCC-03 §5.3: every eligible pubkey, one per `p` tag, in order.
+fn ncc03_roll_members(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc03.roll_members"));
+    };
+    Ok(OperationValue::List(
+        tag_values(tags, "p", "ncc03.roll_members")?
+            .into_iter()
+            .map(|value| OperationValue::Text(value.to_owned()))
+            .collect(),
+    ))
+}
+
+/// NCC-03 §5.3: whether a pubkey appears on the roll, for elections that
+/// attach one so votes from outside it are ignored.
+fn ncc03_roll_includes(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags), OperationValue::PubKey(pubkey)] = arguments else {
+        return Err(invalid("ncc03.roll_includes"));
+    };
+    Ok(OperationValue::Bool(
+        tag_values(tags, "p", "ncc03.roll_includes")?
+            .into_iter()
+            .any(|member| member == pubkey),
+    ))
+}
+
+/// NCC-03 §8: count already-deduplicated, already-validated choices against
+/// the declared options, one `option<SEP>count` entry per option in
+/// declaration order. `options` may be bare identifiers or `option` tag
+/// values (only the first column is read); a choice that names no declared
+/// option counts toward nothing.
+fn ncc03_tally_counts(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(options), OperationValue::List(choices)] = arguments else {
+        return Err(invalid("ncc03.tally_counts"));
+    };
+    let mut chosen = Vec::with_capacity(choices.len());
+    for choice in choices {
+        let OperationValue::Text(choice) = choice else {
+            return Err(invalid("ncc03.tally_counts"));
+        };
+        chosen.push(choice.as_str());
+    }
+    let mut entries = Vec::with_capacity(options.len());
+    for option in options {
+        let OperationValue::Text(option) = option else {
+            return Err(invalid("ncc03.tally_counts"));
+        };
+        let id = tag_value_columns(option)[0];
+        let count = chosen.iter().filter(|choice| **choice == id).count();
+        entries.push(OperationValue::Text(join_tag_columns(&[
+            id,
+            &count.to_string(),
+        ])));
+    }
+    Ok(OperationValue::List(entries))
+}
+
+/// NCC-03 §8: the option half of an entry built by [`ncc03_tally_counts`].
+fn ncc03_tally_option(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(entry)] = arguments else {
+        return Err(invalid("ncc03.tally_option"));
+    };
+    Ok(OperationValue::Text(tag_value_columns(entry)[0].to_owned()))
+}
+
+/// NCC-03 §8: the count half of an entry built by [`ncc03_tally_counts`].
+fn ncc03_tally_count(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(entry)] = arguments else {
+        return Err(invalid("ncc03.tally_count"));
+    };
+    let count = tag_value_columns(entry)
+        .get(1)
+        .and_then(|count| count.parse::<i64>().ok())
+        .unwrap_or(0);
+    Ok(OperationValue::Integer(count))
+}
+
+/// NCC-03 §5.4: the election identifier an Audit Event covers, from `d`.
+fn ncc03_audit_election(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "d", "ncc03.audit_election")
+}
+
+/// NCC-03 §5.4: the electoral roll identifier an Audit Event covers.
+fn ncc03_audit_roll(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "roll", "ncc03.audit_roll")
+}
+
+/// NCC-03 §5.4: the summary hash over the tallied votes, as published. The
+/// convention does not fix the hashed payload, so this reads the claim and
+/// never verifies it.
+fn ncc03_audit_summary(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "summary", "ncc03.audit_summary")
+}
+
+/// NCC-03 §5.4: the total number of counted votes an Audit Event claims; 0
+/// when the tag is absent or malformed.
+fn ncc03_audit_votes(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("ncc03.audit_votes"));
+    };
+    let votes = tag_lookup(tags, "votes", "ncc03.audit_votes")?
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+    Ok(OperationValue::Integer(votes))
 }
 
 fn checked_to_operation(argument: &CheckedArgument) -> OperationValue {
@@ -11805,6 +12186,267 @@ mod tests {
             value_valid("ncc:99:future", "whatever"),
             OperationValue::Bool(true),
             "unknown keys are opaque, never invalid"
+        );
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn ncc03_election_functions_judge_windows_votes_rolls_and_tallies() {
+        let text = |value: &str| OperationValue::Text(value.to_owned());
+        // The functions are pure, so a fresh host per call keeps `call`
+        // shareable between the helper closures below.
+        let call = |function: &str, arguments: &[OperationValue]| {
+            FakeOperationHost::default()
+                .call_pure_function("ncc03", function, arguments)
+                .expect("pure function succeeds")
+        };
+
+        // §5.1: the option builder, and the readers over its two columns.
+        let yes = call("option_entry", &[text("yes"), text("Yes")]);
+        let no = call("option_entry", &[text("no"), text("No")]);
+        let (OperationValue::Text(yes_text), OperationValue::Text(no_text)) =
+            (yes.clone(), no.clone())
+        else {
+            panic!("option builder returns text");
+        };
+        assert_eq!(tag_value_columns(&yes_text), vec!["yes", "Yes"]);
+        let election = OperationValue::List(vec![
+            text("d=board-chair-2026"),
+            text(&format!("option={yes_text}")),
+            text(&format!("option={no_text}\u{1f}A longer description")),
+            text("startsAt=1000"),
+            text("endsAt=2000"),
+        ]);
+        assert_eq!(
+            call("election_identifier", std::slice::from_ref(&election)),
+            text("board-chair-2026")
+        );
+        assert_eq!(
+            call("option_ids", std::slice::from_ref(&election)),
+            OperationValue::List(vec![text("yes"), text("no")]),
+            "extra columns on an option tag are tolerated"
+        );
+        assert_eq!(
+            call("option_label", &[election.clone(), text("no")]),
+            text("No")
+        );
+        assert_eq!(
+            call("option_label", &[election.clone(), text("abstain")]),
+            text(""),
+            "an unknown option has no label"
+        );
+        assert_eq!(
+            call("option_exists", &[election.clone(), text("yes")]),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            call("option_exists", &[election.clone(), text("abstain")]),
+            OperationValue::Bool(false)
+        );
+
+        // §6.2: startsAt is inclusive, endsAt is exclusive.
+        let window = |moment: i64| {
+            call(
+                "window_is_open",
+                &[election.clone(), OperationValue::Integer(moment)],
+            )
+        };
+        assert_eq!(window(999), OperationValue::Bool(false));
+        assert_eq!(window(1000), OperationValue::Bool(true));
+        assert_eq!(window(1999), OperationValue::Bool(true));
+        assert_eq!(window(2000), OperationValue::Bool(false));
+        assert_eq!(
+            call("starts_at", std::slice::from_ref(&election)),
+            OperationValue::Integer(1000)
+        );
+        assert_eq!(
+            call("ends_at", std::slice::from_ref(&election)),
+            OperationValue::Integer(2000)
+        );
+
+        // An absent startsAt is no lower bound; an absent or malformed
+        // endsAt, or a malformed startsAt, is never open.
+        let open_start = OperationValue::List(vec![text("endsAt=2000")]);
+        assert_eq!(
+            call(
+                "window_is_open",
+                &[open_start.clone(), OperationValue::Integer(0)]
+            ),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            call("starts_at", std::slice::from_ref(&open_start)),
+            OperationValue::Integer(0)
+        );
+        for broken in [
+            vec![text("startsAt=1000")],
+            vec![text("endsAt=soon")],
+            vec![text("startsAt=early"), text("endsAt=2000")],
+        ] {
+            assert_eq!(
+                call(
+                    "window_is_open",
+                    &[OperationValue::List(broken), OperationValue::Integer(1500)]
+                ),
+                OperationValue::Bool(false)
+            );
+        }
+
+        // §5.2/§6: a vote must reference the held election, name a declared
+        // option, and fall inside the window.
+        let vote = |reference: &str, choice: &str| {
+            OperationValue::List(vec![
+                text(&format!("e={reference}")),
+                text("d=board-chair-2026"),
+                text(&format!("choice={choice}")),
+            ])
+        };
+        let valid = |reference: &str, vote_tags: OperationValue, created_at: i64| {
+            call(
+                "vote_is_valid",
+                &[
+                    election.clone(),
+                    text(reference),
+                    vote_tags,
+                    OperationValue::Integer(created_at),
+                ],
+            )
+        };
+        assert_eq!(
+            valid("evt", vote("evt", "yes"), 1500),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            valid("evt", vote("evt", "abstain"), 1500),
+            OperationValue::Bool(false),
+            "an undeclared option is invalid"
+        );
+        assert_eq!(
+            valid("evt", vote("evt", "yes"), 2000),
+            OperationValue::Bool(false),
+            "endsAt is exclusive"
+        );
+        assert_eq!(
+            valid("evt", vote("other", "yes"), 1500),
+            OperationValue::Bool(false),
+            "a vote for another election is invalid"
+        );
+        assert_eq!(
+            valid("", vote("", "yes"), 1500),
+            OperationValue::Bool(false),
+            "an empty reference never matches"
+        );
+        assert_eq!(call("vote_choice", &[vote("evt", "yes")]), text("yes"));
+        assert_eq!(call("vote_election", &[vote("evt", "yes")]), text("evt"));
+        assert_eq!(
+            call("vote_identifier", &[vote("evt", "yes")]),
+            text("board-chair-2026")
+        );
+
+        // §7: only a strictly greater created_at replaces a counted vote.
+        let supersedes = |candidate: i64, current: i64| {
+            call(
+                "vote_supersedes",
+                &[
+                    OperationValue::Integer(candidate),
+                    OperationValue::Integer(current),
+                ],
+            )
+        };
+        assert_eq!(supersedes(1600, 1500), OperationValue::Bool(true));
+        assert_eq!(supersedes(1500, 1500), OperationValue::Bool(false));
+        assert_eq!(supersedes(1400, 1500), OperationValue::Bool(false));
+
+        // §5.3: roll membership is by exact pubkey, and typed.
+        let roll = OperationValue::List(vec![text("d=board-roll"), text("p=aaaa"), text("p=bbbb")]);
+        assert_eq!(
+            call("roll_identifier", std::slice::from_ref(&roll)),
+            text("board-roll")
+        );
+        assert_eq!(
+            call("roll_members", std::slice::from_ref(&roll)),
+            OperationValue::List(vec![text("aaaa"), text("bbbb")])
+        );
+        assert_eq!(
+            call(
+                "roll_includes",
+                &[roll.clone(), OperationValue::PubKey("bbbb".to_owned())]
+            ),
+            OperationValue::Bool(true)
+        );
+        assert_eq!(
+            call(
+                "roll_includes",
+                &[roll.clone(), OperationValue::PubKey("cccc".to_owned())]
+            ),
+            OperationValue::Bool(false)
+        );
+
+        // §8: per-option counts in declaration order; unknown choices count
+        // toward nothing, and the entry readers invert the builder.
+        let counts = call(
+            "tally_counts",
+            &[
+                OperationValue::List(vec![yes, no]),
+                OperationValue::List(vec![text("yes"), text("yes"), text("no"), text("maybe")]),
+            ],
+        );
+        let OperationValue::List(entries) = counts else {
+            panic!("tally_counts returns a list");
+        };
+        assert_eq!(entries.len(), 2);
+        assert_eq!(call("tally_option", &entries[..1]), text("yes"));
+        assert_eq!(
+            call("tally_count", &entries[..1]),
+            OperationValue::Integer(2)
+        );
+        assert_eq!(call("tally_option", &entries[1..]), text("no"));
+        assert_eq!(
+            call("tally_count", &entries[1..]),
+            OperationValue::Integer(1)
+        );
+        assert_eq!(
+            call(
+                "vote_choices",
+                &[OperationValue::List(vec![
+                    text("choice=a"),
+                    text("x=y"),
+                    text("choice=b")
+                ])]
+            ),
+            OperationValue::List(vec![text("a"), text("b")])
+        );
+
+        // §5.4: audit events are read as claims, never verified.
+        let audit = OperationValue::List(vec![
+            text("d=board-chair-2026"),
+            text("roll=board-roll"),
+            text("summary=abc123"),
+            text("votes=3"),
+        ]);
+        assert_eq!(
+            call("audit_election", std::slice::from_ref(&audit)),
+            text("board-chair-2026")
+        );
+        assert_eq!(
+            call("audit_roll", std::slice::from_ref(&audit)),
+            text("board-roll")
+        );
+        assert_eq!(
+            call("audit_summary", std::slice::from_ref(&audit)),
+            text("abc123")
+        );
+        assert_eq!(
+            call("audit_votes", std::slice::from_ref(&audit)),
+            OperationValue::Integer(3)
+        );
+        assert_eq!(
+            call(
+                "audit_votes",
+                &[OperationValue::List(vec![text("votes=many")])]
+            ),
+            OperationValue::Integer(0),
+            "a malformed vote total reads as zero"
         );
     }
 

@@ -1,0 +1,16 @@
+{
+  "source": "https://github.com/imattau/nostr-community-conventions/blob/186c3ad50966a2319c354ace12e0a5a2267b75d9/ncc-03/README.md",
+  "vectors": [
+    {
+      "type": "election-definition",
+      "kind": 36998,
+      "content": "Board chair election",
+      "tags": [
+        ["d", "board-chair-2026"],
+        ["startsAt", "1790380000"],
+        ["endsAt", "1790383600"],
+        ["rules", "One vote per pubkey; the latest vote before endsAt counts."]
+      ]
+    }
+  ]
+}

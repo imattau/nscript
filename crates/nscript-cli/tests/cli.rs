@@ -426,6 +426,67 @@ fn ncc13_artefact_metadata_handler_selects_by_platform() {
 }
 
 #[test]
+fn ncc03_election_definition_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc03.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = &vector["vectors"][0];
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc03-election.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "ElectionDefinition");
+    assert_eq!(create["kind"], expected["kind"]);
+    // `option` entries are built by ncc03.option_entry at publish time (a
+    // `.ns` literal cannot carry the tag column separator), so the checked
+    // snapshot holds only the literal fields.
+    assert_eq!(create["tags"], expected["tags"]);
+    assert_eq!(create["content"], expected["content"]);
+}
+
+#[test]
+fn ncc03_vote_handler_enforces_the_voting_window_and_declared_options() {
+    let run_vote = |created_at: u64, choice: &str, reference: &str| {
+        let event = format!(
+            r#"{{"event_type": "Vote", "kind": 1071, "created_at": {created_at}, "content": "", "tags": [["e", "{reference}"], ["d", "board-chair-2026"], ["choice", "{choice}"]]}}"#
+        );
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(repository_path("conformance/valid/ncc03-election.ns"))
+            .args(["--event", &event])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    // §6.2: startsAt is inclusive, endsAt is exclusive.
+    assert!(
+        run_vote(1_790_380_000, "yes", "board-chair-event").contains("vote for yes: valid true")
+    );
+    assert!(run_vote(1_790_383_599, "no", "board-chair-event").contains("vote for no: valid true"));
+    assert!(run_vote(1_790_383_600, "yes", "board-chair-event").contains("valid false"));
+    assert!(run_vote(1_790_379_999, "yes", "board-chair-event").contains("valid false"));
+    // §6.3: the option must be declared; §6.1: the election must match.
+    assert!(run_vote(1_790_381_000, "maybe", "board-chair-event").contains("valid false"));
+    assert!(run_vote(1_790_381_000, "yes", "another-election").contains("valid false"));
+}
+
+#[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["run", "--dry-run"])
@@ -2345,6 +2406,82 @@ fn the_service_operator_bot_composes_the_full_ncc_service_cluster() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("received a grant for peer-relay: scopes [ncc:10:publish]"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn the_election_bot_judges_votes_keeps_one_per_pubkey_and_tallies() {
+    let path = repository_path("examples/ncc03-election-bot.ns");
+    let run = |event: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("run")
+            .arg(&path)
+            .args(["--event", event])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let vote = |author: &str, created_at: u64, choice: &str| {
+        format!(
+            r#"{{"event_type": "Vote", "kind": 1071, "created_at": {created_at}, "author": "{author}", "content": "", "tags": [["e", "board-chair-event"], ["d", "board-chair-2026"], ["choice", "{choice}"]]}}"#
+        )
+    };
+
+    let stdout = run(
+        r#"{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "open", "tags": [["t", "open-election"]]}"#,
+    );
+    assert!(
+        stdout.contains("election published: true/1 relays"),
+        "{stdout}"
+    );
+
+    // A later vote from a roll member replaces the counted one (§7).
+    let stdout = run(&vote("aaaa", 1_790_381_000, "yes"));
+    assert!(
+        stdout.contains("vote counted: yes from aaaa, replacing the vote at 1790380500"),
+        "{stdout}"
+    );
+    // An equal created_at keeps the vote already counted.
+    let stdout = run(&vote("aaaa", 1_790_380_500, "no"));
+    assert!(
+        stdout.contains("vote kept: the earlier vote at 1790380500 still counts"),
+        "{stdout}"
+    );
+    // A pubkey outside the roll is ignored (§5.3).
+    let stdout = run(&vote("cccc", 1_790_381_000, "yes"));
+    assert!(
+        stdout.contains("vote ignored: cccc is not on the electoral roll"),
+        "{stdout}"
+    );
+    // A vote after endsAt is ignored (§6).
+    let stdout = run(&vote("aaaa", 1_790_384_000, "yes"));
+    assert!(
+        stdout.contains("vote ignored: yes is outside the window"),
+        "{stdout}"
+    );
+
+    // Tally: declared options in order, undeclared choices count nowhere.
+    let stdout = run(
+        r#"{"event_type": "Note", "kind": 1, "created_at": 1790384000, "content": "close", "tags": [["t", "tally-election"], ["choice", "yes"], ["choice", "yes"], ["choice", "no"], ["choice", "maybe"]]}"#,
+    );
+    assert!(stdout.contains("tally yes: 2"), "{stdout}");
+    assert!(stdout.contains("tally no: 1"), "{stdout}");
+    assert!(!stdout.contains("maybe"), "{stdout}");
+
+    // An audit event is read as a claim, not verified.
+    let stdout = run(
+        r#"{"event_type": "ElectionAudit", "kind": 36999, "created_at": 1790384000, "content": "", "tags": [["d", "board-chair-2026"], ["roll", "board-chair-roll"], ["summary", "abc123"], ["votes", "3"]]}"#,
+    );
+    assert!(
+        stdout.contains(
+            "audit for board-chair-2026 (roll board-chair-roll) claims 3 votes, summary abc123"
+        ),
         "{stdout}"
     );
 }

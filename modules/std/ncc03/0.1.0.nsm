@@ -1,0 +1,88 @@
+module ncc03 @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nostr-community-conventions/blob/186c3ad50966a2319c354ace12e0a5a2267b75d9/ncc-03/README.md"
+
+validator present(value: Text) {
+    require length(value) > 0
+}
+
+validator positive_time(value: Int) {
+    require value > 0
+}
+
+function election_identifier(tags: List<Text>) -> Text
+function option_entry(id: Text, label: Text) -> Text
+function option_ids(tags: List<Text>) -> List<Text>
+function option_label(tags: List<Text>, id: Text) -> Text
+function option_exists(tags: List<Text>, id: Text) -> Bool
+function starts_at(tags: List<Text>) -> Int
+function ends_at(tags: List<Text>) -> Int
+function window_is_open(tags: List<Text>, moment: Int) -> Bool
+function vote_election(tags: List<Text>) -> Text
+function vote_identifier(tags: List<Text>) -> Text
+function vote_choice(tags: List<Text>) -> Text
+function vote_choices(tags: List<Text>) -> List<Text>
+function vote_is_valid(election_tags: List<Text>, election_reference: Text, vote_tags: List<Text>, vote_created_at: Int) -> Bool
+function vote_supersedes(candidate_created_at: Int, current_created_at: Int) -> Bool
+function roll_identifier(tags: List<Text>) -> Text
+function roll_members(tags: List<Text>) -> List<Text>
+function roll_includes(tags: List<Text>, pubkey: PubKey) -> Bool
+function tally_counts(options: List<Text>, choices: List<Text>) -> List<Text>
+function tally_option(entry: Text) -> Text
+function tally_count(entry: Text) -> Int
+function audit_election(tags: List<Text>) -> Text
+function audit_roll(tags: List<Text>) -> Text
+function audit_summary(tags: List<Text>) -> Text
+function audit_votes(tags: List<Text>) -> Int
+
+event ElectionDefinition {
+    kind: 36998
+    mode: addressable
+    content: Text as text
+    tags: List<ElectionDefinitionTag> = []
+    field d: Text
+    field p: Text
+    field option: List<Text>
+    field startsAt: Int
+    field endsAt: Int
+    field rules: Text
+    field ref: Text
+    require present(d)
+    require positive_time(endsAt)
+}
+
+event Vote {
+    kind: 1071
+    mode: regular
+    content: Text as text
+    tags: List<VoteTag> = []
+    field e: Text
+    field d: Text
+    field choice: Text
+    require present(e)
+    require present(d)
+    require present(choice)
+}
+
+event ElectoralRoll {
+    kind: 36997
+    mode: addressable
+    content: Text as text
+    tags: List<ElectoralRollTag> = []
+    field d: Text
+    field p: List<Text>
+    require present(d)
+}
+
+event ElectionAudit {
+    kind: 36999
+    mode: addressable
+    content: Text as text
+    tags: List<ElectionAuditTag> = []
+    field d: Text
+    field roll: Text
+    field rollHash: Text
+    field summary: Text
+    field votes: Int
+    require present(d)
+}

@@ -1,0 +1,14 @@
+// error: E1001 nominal-type-mismatch
+// NCC-03's `window_is_open` takes the election's tags and a unix timestamp
+// as an Int; the delivered event's `content` is Text and cannot name a
+// moment. The voting window is judged against `created_at`, never a string.
+use ncc03
+use nip01
+
+permissions {
+    log
+}
+
+on ElectionDefinition {
+    print(text(ncc03.window_is_open(event.tags, event.content)))
+}

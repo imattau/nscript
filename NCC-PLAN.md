@@ -50,9 +50,8 @@ off `71238583`. They are kept for the record because each one gated a stage:
    library emitted an addressable kind, and the electoral roll's kind 30000
    overlapped NIP-51 legacy list space. Fixed upstream: definition `36998`,
    vote `1071` (regular), electoral roll `36997`, audit `36999` are normative
-   and the library matches them. NCC-03 is still deferred in `ROADMAP.md`,
-   now on surface size and its Concord-governance dependency rather than on
-   an upstream defect.
+   and the library matches them. NCC-03 was deferred in `ROADMAP.md` on
+   surface size rather than on an upstream defect, and landed as stage 7.
 
 ## Pin history
 
@@ -181,7 +180,7 @@ adoption (or an explicit non-adoption note).
 | 4 | NCC-05 | First encrypted payload; composes `nip44` | Services refresh encrypted locators on address change |
 | 5 | NCC-06 | Behaviour composed from stages 3 and 4 | Identity-first endpoint resolution in deploy/monitor workflows |
 | 6 | NCC-08 | Multi-event state machine after the anchor exists | Documented bot identity rotation workflow |
-| 7 | NCC-03 | Largest surface; four event kinds and a Concord-governance dependency, so it lands last | Builds on `poll-tally-bot.ns` and Concord governance |
+| 7 | NCC-03 | Largest surface (four event kinds), so it lands last; the Concord-governance dependency originally expected did not apply to the normative core | An election bot judges votes against the window, options and roll, and tallies them; builds on `poll-tally-bot.ns` |
 | 8 | NCC-09 | Delegated authority the service cluster builds on; needs the pin bump | Principals publish scoped, time-bounded operator grants |
 | 9 | NCC-10 | Current state over the same service identity; composes stage 8 | Services and their authorised operators publish operational state |
 | 10 | NCC-11 | Policy data over the whole service stack | Clients and agents read one portable trust policy |
@@ -573,6 +572,14 @@ historical evidence, not latest state.
 - **Docs**: spec subsection (Community conventions → NCC-08 service
   identity rotation) and matrix row.
 
+- **Infrastructure adoption**: the successor side of a documented
+  rotation workflow — a bot validates a predecessor's proposal for the
+  service it is taking over and publishes the matching acceptance, exactly
+  `examples/ncc08-rotation-bot.ns`'s workflow. The predecessor publishes
+  the proposal (`conformance/valid/ncc08-handover.ns`). Deliberately
+  non-adopting beyond that: no authority, service record or locator
+  transfers automatically (§19, §30).
+
 Scope notes and follow-ups: §10's pair check and §14's chain walk span two
 or more events, and a handler sees one event at a time with no store, so
 they are pure functions over caller-supplied values rather than host
@@ -584,6 +591,85 @@ successor example publishes `p: event.author` (a `PubKey`) into a field the
 event declares `Text`, and it lowers to the hex tag correctly because only
 module function-call arguments are type-checked — the same checker gap the
 NCC-06 invalid fixture worked around.
+
+## Stage 7 — NCC-03 elections and voting *(Done)*
+
+Landed last, after stage 11, as the roadmap required. The upstream kind
+model had been fixed at `fe5981f` (see Upstream prerequisites), so nothing
+here waited on the convention itself.
+
+Scope is the normative core only (§4-7): the four event kinds, the voting
+window, option membership and the one-vote-per-pubkey rule. The companion
+JavaScript library (§12) — registration challenges, invites, manual roll
+additions, signing vaults and the operator class — is non-normative library
+behaviour and is not modelled. The Concord-governance dependency this plan
+originally anticipated did not materialise: nothing in NCC-03's normative
+text refers to a Concord community, so `ncc03` has no `use concord*`.
+Binding an election's outcome to a community role or grant remains a
+governance workflow outside this stage.
+
+- **Module** `modules/std/ncc03/0.1.0.nsm`, registered in `BUILTINS`, with
+  the pinned `186c3ad` reference, `present` and `positive_time` validators,
+  four events — addressable `ElectionDefinition` (36998: `d`, `p`,
+  repeatable `option`, `startsAt`, `endsAt`, `rules`, `ref`), regular `Vote`
+  (1071: `e`, `d`, `choice`), addressable `ElectoralRoll` (36997: `d`,
+  repeatable `p`) and addressable `ElectionAudit` (36999: `d`, `roll`,
+  `rollHash`, `summary`, `votes`) — and twenty-five pure functions.
+  `option_entry` builds the multi-column `option` value;
+  `election_identifier`, `option_ids`, `option_label`, `option_exists`,
+  `starts_at` and `ends_at` read a definition; `window_is_open` and
+  `vote_is_valid` judge §6 (start inclusive, end exclusive; an undeclared
+  option, another election, or a definition without a usable `endsAt` is
+  never valid); `vote_supersedes` is §7's strictly-later `created_at`
+  comparison; `roll_identifier`, `roll_members` and `roll_includes` (typed
+  `PubKey`, per the nominal-typing principle) read a roll;
+  `tally_counts`, `tally_option` and `tally_count` count per declared option
+  in declaration order; `vote_election`, `vote_identifier`, `vote_choice`
+  and `vote_choices` read votes; `audit_election`, `audit_roll`,
+  `audit_summary` and `audit_votes` read an audit as a claim.
+- **Runtime** dispatch in `nscript-runtime`'s shared pure-function registry,
+  with a unit test covering option building and tolerance of extra columns,
+  both window boundaries, an absent `startsAt`, absent and malformed bounds,
+  every vote-validity failure, equal and earlier `created_at`, roll
+  membership, tally ordering with an undeclared choice, and audit readers
+  including a malformed total.
+- **Fixtures**: `conformance/valid/ncc03-election.ns` (publishes a
+  definition with `option` entries built at publish time, then judges
+  delivered votes) and `conformance/invalid/ncc03-window-wrong-type.ns`
+  (`window_is_open(event.tags, event.content)` → `E1001`: a moment is an
+  Int, never text).
+- **Wire vector** `conformance/vectors/ncc03.json` (kind 36998; the checked
+  snapshot holds the literal fields, since `option` entries are computed),
+  asserted against the `inspect --json` publication trace, plus a run test
+  that drives the vote handler across the window edges, an undeclared
+  option and a mismatched election.
+- **Worked example** `examples/ncc03-election-bot.ns`: opens an election,
+  judges votes against window, options and roll, applies later-vote-wins,
+  tallies a closing note's choices and reports an audit claim. Covered
+  end to end by a CLI test.
+- **Docs**: spec subsection and matrix row.
+- **Infrastructure adoption**: an election bot publishes a definition and
+  judges and tallies votes from public events — exactly
+  `examples/ncc03-election-bot.ns`'s workflow.
+
+Scope notes and counting assumptions (disclosure is required by §8):
+
+- A script keeps no store between events, so the election, roll and
+  previously counted vote are script configuration in the example, not data
+  read back from a relay. A deployed bot would read them from storage or a
+  delivered batch; nothing in this stage adds that host.
+- A vote's `e` tag is compared verbatim with a reference the caller
+  supplies. NCC-03 says only that `e` references the Election Definition,
+  not whether by event id or by address, so `vote_is_valid` does not choose.
+- Equal `created_at` keeps the vote already counted; the convention is
+  silent here.
+- `vote_is_valid` does not consult the roll. A roll is optional (§5.3), so
+  a caller combines it with `roll_includes`.
+- Audit hashes are not recomputed or verified: the convention does not fix
+  the hashed payload.
+- Voter eligibility, weighting and Sybil resistance are outside the
+  convention (§3) and are not implemented.
+
 
 ## Stage 8 — NCC-09 scoped operator authority *(Done)*
 
@@ -622,6 +708,10 @@ convention defines the container, not what a scope means.
   publishes the grant and reports a received grant's side, start, scopes
   and whether `ncc:10:publish` is delegated, run end to end by a CLI test.
 - **Docs**: spec subsection and matrix row.
+- **Infrastructure adoption**: principals publish scoped, time-bounded
+  operator grants rather than sharing a signing key — exactly
+  `examples/ncc09-operator-grant-bot.ns`'s workflow.
+
 
 ## Stage 9 — NCC-10 service operational state *(Done)*
 
@@ -655,6 +745,10 @@ in a three-column `operator_for`.
   it does not impersonate and reports the states it sees, run end to end
   by a CLI test.
 - **Docs**: spec subsection and matrix row.
+- **Infrastructure adoption**: services and their authorised operators
+  publish operational state — exactly `examples/ncc10-status-bot.ns`'s
+  workflow.
+
 
 ## Stage 10 — NCC-11 portable trust policy *(Done)*
 
@@ -696,6 +790,9 @@ so it stands on the same infrastructure as stage 9.
   stale fallback) gain a data home: `ncc:02:key-pinning` and
   `ncc:05:stale-fallback` are the policy keys a client would enforce, while
   the host still performs neither.
+- **Infrastructure adoption**: clients and agents read one portable trust
+  policy — exactly `examples/ncc11-policy-client.ns`'s workflow.
+
 
 ## Stage 11 — NCC-13 software package release profile *(Done)*
 
@@ -918,7 +1015,9 @@ nothing was lost or newly broken — and the full test suite
 
 ## Open decision points
 
-1. NCC-03: fix the upstream kind model, or stay deferred (blocks stage 7 only).
+1. ~~NCC-03: fix the upstream kind model, or stay deferred (blocks stage 7
+   only).~~ *(resolved: the upstream kind model was fixed at `fe5981f`, and
+   NCC-03 shipped as stage 7 against the normative core only.)*
 2. ~~Stage 5: identity-reference resolution inside `deploy`, or script-level
    resolution only~~ *(resolved at stage 5: both — §A selection, the §E.1
    walk and §C.2 querying live in `deploy`'s resolver, because a script

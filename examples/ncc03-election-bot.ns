@@ -1,0 +1,105 @@
+// An NCC-03 election bot: it opens a board-chair election, judges each
+// delivered vote against the voting window and the declared options, keeps
+// one vote per pubkey by the greatest `created_at`, checks the electoral
+// roll, and reports a tally.
+//
+// What is real and what is not: the election definition is published as
+// kind 36998 with the declared tags. Judging and counting are pure
+// functions over data the script already holds. A script sees one event at
+// a time and keeps no store (see docs/HANDLERS.md), so the election the bot
+// judges against is its own configuration, and the "vote already counted"
+// timestamp and the closing note's choices stand in for what a deployed bot
+// would read from storage or a delivered batch. Nothing here proves a
+// voter's eligibility beyond the roll the bot is given: NCC-03 §3 leaves
+// eligibility, weighting, and Sybil resistance to other conventions.
+//
+// Counting assumptions MUST be disclosed (§8). This bot's are: a vote
+// counts only inside [startsAt, endsAt); the greatest `created_at` wins per
+// pubkey; an equal `created_at` keeps the vote already counted; a vote for
+// an option the definition does not declare counts toward nothing.
+//
+// Try it:
+//
+//   nscript run examples/ncc03-election-bot.ns \
+//       --event '{"event_type": "Note", "kind": 1, "created_at": 1790380000, "content": "open", "tags": [["t", "open-election"]]}'
+//       (publishes the election definition)
+//
+//   nscript run examples/ncc03-election-bot.ns \
+//       --event '{"event_type": "Vote", "kind": 1071, "created_at": 1790381000, "author": "aaaa", "content": "", "tags": [["e", "board-chair-event"], ["d", "board-chair-2026"], ["choice", "yes"]]}'
+//       (a valid vote from a roll member: counted)
+//
+//   nscript run examples/ncc03-election-bot.ns \
+//       --event '{"event_type": "Note", "kind": 1, "created_at": 1790384000, "content": "close", "tags": [["t", "tally-election"], ["choice", "yes"], ["choice", "yes"], ["choice", "no"]]}'
+//       (tallies the closing note's choices: 2 yes, 1 no)
+use ncc03
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ElectionDefinition to public
+    sign ElectionDefinition with account
+    read ElectionDefinition from public
+    read Vote from public
+    read ElectoralRoll from public
+    read ElectionAudit from public
+    relay public
+    log
+}
+
+on Note where tags.t contains "open-election" {
+    let yes = ncc03.option_entry("yes", "Yes")
+    let no = ncc03.option_entry("no", "No")
+    let published = publish ElectionDefinition {
+        d: "board-chair-2026";
+        option: [yes, no];
+        startsAt: 1790380000;
+        endsAt: 1790383600;
+        rules: "One vote per pubkey; the latest vote before endsAt counts.";
+        content: "Board chair election";
+    } to public with account
+    print("election published: " + text(published.accepted) + "/1 relays")
+}
+
+on Vote {
+    let yes = ncc03.option_entry("yes", "Yes")
+    let no = ncc03.option_entry("no", "No")
+    let election = ["d=board-chair-2026", "option=" + yes, "option=" + no, "startsAt=1790380000", "endsAt=1790383600"]
+    // The electoral roll the election attaches (§5.3), as its `p` tags.
+    let roll = ["d=board-chair-roll", "p=aaaa", "p=bbbb"]
+    let choice = ncc03.vote_choice(event.tags)
+    if not ncc03.vote_is_valid(election, "board-chair-event", event.tags, event.created_at) {
+        print("vote ignored: " + choice + " is outside the window, names no declared option, or references another election")
+    } else if not ncc03.roll_includes(roll, event.author) {
+        print("vote ignored: " + event.author + " is not on the electoral roll")
+    } else {
+        // §7: against an earlier counted vote from the same pubkey, only a
+        // strictly later created_at replaces it.
+        let counted_at = 1790380500
+        if ncc03.vote_supersedes(event.created_at, counted_at) {
+            print("vote counted: " + choice + " from " + event.author + ", replacing the vote at " + text(counted_at))
+        } else {
+            print("vote kept: the earlier vote at " + text(counted_at) + " still counts")
+        }
+    }
+}
+
+// The closing note's `choice` tags stand in for the validated,
+// deduplicated votes a deployed bot would have accumulated.
+on Note where tags.t contains "tally-election" {
+    let yes = ncc03.option_entry("yes", "Yes")
+    let no = ncc03.option_entry("no", "No")
+    let counts = ncc03.tally_counts([yes, no], ncc03.vote_choices(event.tags))
+    for entry in counts {
+        print("tally " + ncc03.tally_option(entry) + ": " + text(ncc03.tally_count(entry)))
+    }
+}
+
+// An Audit Event (§5.4) is read as a claim: the convention does not fix the
+// hashed payload, so the bot reports the claimed summary and vote total and
+// leaves verifying it against the election key to the caller.
+on ElectionAudit {
+    print("audit for " + ncc03.audit_election(event.tags) + " (roll " + ncc03.audit_roll(event.tags) + ") claims " + text(ncc03.audit_votes(event.tags)) + " votes, summary " + ncc03.audit_summary(event.tags))
+}

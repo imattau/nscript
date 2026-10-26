@@ -1,0 +1,54 @@
+// NCC-03: an election is declared with an Election Definition (kind 36998),
+// answered by Vote events (kind 1071, regular and non-replaceable), and
+// counted from public data. This fixture opens an election from a Note and
+// then judges each delivered vote against the voting window, the declared
+// options, and the one-vote-per-pubkey rule.
+//
+// The `option` tag is three-column-capable (id, label, optional description
+// and metadata), so it is built by `ncc03.option_entry` rather than written
+// as a literal: a `.ns` string literal cannot carry the tag column
+// separator, the same reason NCC-13 builds its `requires` entries.
+//
+// A script sees one event at a time and keeps no store, so the election a
+// vote is judged against is the bot's own configuration here, and the
+// vote already counted for a pubkey is stated as a number. A deployed bot
+// would read both from storage or a delivered batch.
+use ncc03
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ElectionDefinition to public
+    sign ElectionDefinition with account
+    read ElectionDefinition from public
+    read Vote from public
+    read ElectoralRoll from public
+    read ElectionAudit from public
+    relay public
+    log
+}
+
+on Note where tags.t contains "open-election" {
+    let yes = ncc03.option_entry("yes", "Yes")
+    let no = ncc03.option_entry("no", "No")
+    let published = publish ElectionDefinition {
+        d: "board-chair-2026";
+        option: [yes, no];
+        startsAt: 1790380000;
+        endsAt: 1790383600;
+        rules: "One vote per pubkey; the latest vote before endsAt counts.";
+        content: "Board chair election";
+    } to public with account
+    print("election published: " + text(published.accepted) + "/1 relays")
+}
+
+on Vote {
+    let yes = ncc03.option_entry("yes", "Yes")
+    let no = ncc03.option_entry("no", "No")
+    let election = ["d=board-chair-2026", "option=" + yes, "option=" + no, "startsAt=1790380000", "endsAt=1790383600"]
+    let counted = ncc03.vote_is_valid(election, "board-chair-event", event.tags, event.created_at)
+    print("vote for " + ncc03.vote_choice(event.tags) + ": valid " + text(counted))
+}
