@@ -1,4 +1,21 @@
+// A deliberately constrained agent: it may read server status from the
+// `control` relay set and publish one kind of request to it, signed by its own
+// key, and nothing else. No other relay, event type or authority is declared,
+// so `nscript inspect` shows exactly that footprint.
+//
+// `nostrhost::control` and `nostrhost::status` are external modules living in
+// examples/modules, so pass it with -M.
+//
+// Try it:
+//
+//   nscript inspect -M examples/modules examples/constrained-agent.ns
+//
+//   nscript run -M examples/modules examples/constrained-agent.ns \
+//       --event '{"event_type": "ServerStatus", "kind": 9311, "content": "", "tags": [["server", "web-1"], ["disk", "critical"]]}'
+//       (disk critical: requests a cleanup package)
+use nip01
 use nostrhost::control
+use nostrhost::status
 use nip46
 
 signer agent = nip46()
@@ -9,10 +26,12 @@ permissions {
     publish PackageRequest to control
     sign PackageRequest with agent
     relay control
+    log
 }
 
-fn request_package(name: Text) -> Result<PublishReport, RelayError> {
-    return publish PackageRequest {
-        package: name,
+on ServerStatus where tags.disk contains "critical" {
+    let result = publish PackageRequest {
+        package: "disk-cleanup",
     } to control with agent
+    print("package requested: " + text(result.accepted) + "/1 relays")
 }

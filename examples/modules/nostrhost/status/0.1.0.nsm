@@ -1,0 +1,26 @@
+module nostrhost::status @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://example.test/nostrhost-status"
+use nip01 @ "^0.1"
+
+// Illustrative server telemetry. The kinds are placeholders in the regular
+// range, not ones assigned by a NIP.
+event ServerStatus {
+    kind: 9311
+    mode: regular
+    content: Text as text
+    tags: List<ServerStatusTag> = []
+    field server: Text
+    // One of `ok`, `low` or `critical`. A handler reads tags by value, so the
+    // report carries a coarse state rather than a number to compare.
+    field disk: Text
+}
+
+event Alert {
+    kind: 9312
+    mode: regular
+    content: Text as text
+    tags: List<AlertTag> = []
+    field server: Text
+    field message: Text
+}

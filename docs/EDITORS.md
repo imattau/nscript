@@ -33,6 +33,10 @@ client that wants the data itself can send `nscript/authority` with a
 
 - Only the built-in standard library resolves. Module directories passed to the
   CLI with `-M` are not loaded.
+  The four examples that import external modules (`moderation.ns`,
+  `server-monitor.ns`, `constrained-agent.ns`, `http-integration.ns`) therefore
+  show a missing-module error in an editor even though `nscript check -M
+  examples/modules` accepts them.
 - No go-to-definition, rename, references, formatting or code actions.
 - Single-file analysis, full-document sync.
 - Positions use UTF-16 code units, as the protocol requires.

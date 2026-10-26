@@ -1,3 +1,25 @@
+// A community moderation bot built on a module that is not part of the
+// standard library: `community::moderation` declares the ModerationEvent this
+// bot publishes. External modules resolve from a directory laid out as
+// `<root>/<module path>/<version>.nsm`; this one lives in examples/modules, so
+// pass it with -M.
+//
+// Without -M the module cannot be found and `check` fails with E4002 (a CLI
+// test relies on exactly that).
+//
+// Try it:
+//
+//   nscript check -M examples/modules examples/moderation.ns
+//
+//   nscript run -M examples/modules examples/moderation.ns \
+//       --event '{"event_type": "Note", "kind": 1, "id": "abc", "content": "buy spam now", "tags": [["t", "nostrhost"]]}'
+//       (matches: publishes a ModerationEvent against the note and says so)
+//
+//   nscript run -M examples/modules examples/moderation.ns \
+//       --event '{"event_type": "Note", "kind": 1, "id": "def", "content": "hello", "tags": [["t", "nostrhost"]]}'
+//       (no spam: nothing is published and nothing is printed)
+//
+// `run` simulates publication; nothing is signed or sent.
 use nip01
 use community::moderation
 use nip46
@@ -10,13 +32,15 @@ permissions {
     publish ModerationEvent to public
     sign ModerationEvent with service
     relay public
+    log
 }
 
 on Note where tags.t contains "nostrhost" {
-    if content.looks_like_spam() {
-        publish ModerationEvent {
+    if event.content contains "spam" {
+        let result = publish ModerationEvent {
             target: event.id,
             reason: "spam",
         } to public with service
+        print("moderation event published: " + text(result.accepted) + "/1 relays")
     }
 }

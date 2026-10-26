@@ -1,0 +1,15 @@
+module app::weather_events @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://example.test/app-weather-events"
+use nip01 @ "^0.1"
+
+// An illustrative application event. The kind is a placeholder in the
+// regular range, not one assigned by a NIP.
+event WeatherUpdate {
+    kind: 9321
+    mode: regular
+    content: Text as text
+    tags: List<WeatherUpdateTag> = []
+    field summary: Text
+    field temperature: Int
+}

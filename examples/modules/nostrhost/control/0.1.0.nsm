@@ -1,0 +1,14 @@
+module nostrhost::control @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://example.test/nostrhost-control"
+use nip01 @ "^0.1"
+
+// An illustrative control-plane request. The kind is a placeholder in the
+// regular range, not one assigned by a NIP.
+event PackageRequest {
+    kind: 9313
+    mode: regular
+    content: Text as text
+    tags: List<PackageRequestTag> = []
+    field package: Text
+}

@@ -1,3 +1,23 @@
+// A server monitor: raise an Alert when a delivered status report shows a
+// disk critical. `nostrhost::status` is an external module declaring the
+// ServerStatus report and the Alert; it lives in examples/modules, so pass it
+// with -M.
+//
+// Try it:
+//
+//   nscript check -M examples/modules examples/server-monitor.ns
+//
+//   nscript run -M examples/modules examples/server-monitor.ns \
+//       --event '{"event_type": "ServerStatus", "kind": 9311, "content": "", "tags": [["server", "web-1"], ["disk", "critical"]]}'
+//       (critical disk: publishes an Alert)
+//
+//   nscript run -M examples/modules examples/server-monitor.ns \
+//       --event '{"event_type": "ServerStatus", "kind": 9311, "content": "", "tags": [["server", "web-1"], ["disk", "ok"]]}'
+//       (healthy: the handler's filter does not match, so nothing happens)
+//
+// An earlier version polled with `every 1h { select ServerStatus since 1h ... }`.
+// That checks, but the simulator does not evaluate `select` inside a handler,
+// so it could not be run; reacting to each delivered report does the same job.
 use nip01
 use nostrhost::status
 use nip46
@@ -10,18 +30,12 @@ permissions {
     publish Alert to admin
     sign Alert with service
     relay admin
-    clock
+    log
 }
 
-every 1h {
-    let statuses = select ServerStatus since 1h from admin
-
-    for status in statuses? {
-        if status.disk > 90% {
-            publish Alert {
-                server: status.server,
-                message: "Disk space low",
-            } to admin with service
-        }
-    }
+on ServerStatus where tags.disk contains "critical" {
+    let result = publish Alert {
+        message: "Disk space critical",
+    } to admin with service
+    print("alert published: " + text(result.accepted) + "/1 relays")
 }

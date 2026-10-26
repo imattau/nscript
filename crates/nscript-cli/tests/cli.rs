@@ -712,6 +712,124 @@ fn the_language_server_reports_exactly_the_diagnostics_nscript_check_does() {
     );
 }
 
+/// The examples that import modules outside the standard library resolve them
+/// from `examples/modules` with `-M`; without it they fail with E4002.
+fn run_example_with_modules(example: &str, event: Option<&str>) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nscript"));
+    command
+        .arg("run")
+        .arg("-M")
+        .arg(repository_path("examples/modules"))
+        .arg(repository_path(example));
+    if let Some(event) = event {
+        command.args(["--event", event]);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{example}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+#[test]
+fn every_example_checks_and_the_external_module_ones_need_their_modules() {
+    let mut needing_modules = 0;
+    for entry in std::fs::read_dir(repository_path("examples")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|extension| extension != "ns") {
+            continue;
+        }
+        let checked = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .args(["check", "-M"])
+            .arg(repository_path("examples/modules"))
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(
+            checked.status.success(),
+            "{} does not check: {}",
+            path.display(),
+            String::from_utf8_lossy(&checked.stderr)
+        );
+        // Without -M, an example that imports an external module reports it
+        // as missing rather than failing some other way.
+        let bare = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("check")
+            .arg(&path)
+            .output()
+            .unwrap();
+        if !bare.status.success() {
+            needing_modules += 1;
+            assert!(
+                String::from_utf8_lossy(&bare.stderr).contains("error[E4002]"),
+                "{} fails without -M for the wrong reason: {}",
+                path.display(),
+                String::from_utf8_lossy(&bare.stderr)
+            );
+        }
+    }
+    assert_eq!(
+        needing_modules, 4,
+        "moderation, server-monitor, constrained-agent, http-integration"
+    );
+}
+
+#[test]
+fn the_external_module_examples_do_what_their_headers_say() {
+    let note = |content: &str| {
+        format!(
+            r#"{{"event_type": "Note", "kind": 1, "id": "abc", "content": "{content}", "tags": [["t", "nostrhost"]]}}"#
+        )
+    };
+    let status = |disk: &str| {
+        format!(
+            r#"{{"event_type": "ServerStatus", "kind": 9311, "content": "", "tags": [["server", "web-1"], ["disk", "{disk}"]]}}"#
+        )
+    };
+    let stdout = |example: &str, event: Option<&str>| {
+        String::from_utf8_lossy(&run_example_with_modules(example, event).stdout).into_owned()
+    };
+
+    assert!(
+        stdout("examples/moderation.ns", Some(&note("buy spam now")))
+            .contains("moderation event published: true/1 relays")
+    );
+    assert!(
+        !stdout("examples/moderation.ns", Some(&note("hello"))).contains("published"),
+        "a clean note publishes nothing"
+    );
+    assert!(
+        stdout("examples/server-monitor.ns", Some(&status("critical")))
+            .contains("alert published: true/1 relays")
+    );
+    assert!(
+        stdout("examples/server-monitor.ns", Some(&status("ok"))).contains("no handler matched"),
+        "a healthy report matches no handler"
+    );
+    assert!(
+        stdout("examples/constrained-agent.ns", Some(&status("critical")))
+            .contains("package requested: true/1 relays")
+    );
+    assert!(stdout("examples/http-integration.ns", None).contains("1/1 relays accepted"));
+}
+
+#[test]
+fn the_constrained_agent_requests_no_more_authority_than_it_says() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "-M"])
+        .arg(repository_path("examples/modules"))
+        .arg(repository_path("examples/constrained-agent.ns"))
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("effects: Relay, Sign, Log"), "{stdout}");
+    assert!(stdout.contains("publications: 1"), "{stdout}");
+    assert!(stdout.contains("schedules: 0"), "{stdout}");
+}
+
 #[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))

@@ -1,0 +1,20 @@
+module community::moderation @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://example.test/community-moderation"
+use nip01 @ "^0.1"
+
+validator present(value: Text) {
+    require length(value) > 0
+}
+
+// An illustrative community moderation action. The kind is a placeholder in
+// the regular range, not one assigned by a NIP.
+event ModerationEvent {
+    kind: 9301
+    mode: regular
+    content: Text as text
+    tags: List<ModerationEventTag> = []
+    field target: Text
+    field reason: Text
+    require present(target)
+}

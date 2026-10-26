@@ -1,0 +1,9 @@
+module weather::api @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://example.test/weather-api"
+
+// The shape of the JSON the example's HTTP endpoint returns.
+record Weather {
+    field summary: Text
+    field temperature: Int
+}

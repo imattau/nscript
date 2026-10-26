@@ -1,3 +1,16 @@
+// Fetch JSON from an HTTP endpoint and publish what it returns. `weather::api`
+// declares the Weather shape the endpoint returns and `app::weather_events`
+// the WeatherUpdate event published; both are external modules living in
+// examples/modules, so pass it with -M. The `http` permission names the one
+// host the script may reach.
+//
+// Try it:
+//
+//   nscript check -M examples/modules examples/http-integration.ns
+//   nscript inspect -M examples/modules examples/http-integration.ns
+//   nscript run -M examples/modules examples/http-integration.ns
+//
+// `run` simulates the fetch: no request is made and nothing is published.
 use weather::api
 use app::weather_events
 use nip46
