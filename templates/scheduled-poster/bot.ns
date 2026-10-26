@@ -1,0 +1,33 @@
+// A scheduled poster: publish one note every 24 hours.
+//
+// What is real: under `nscript deploy` the note is signed by your NIP-46
+// signer and sent to the relays you pass with --relay. Under `run` and
+// `test-event` publication is simulated and nothing leaves your machine.
+// Scripts hold no wall clock: the 24h interval is registered with the host,
+// which decides when to wake the schedule.
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    // Publish plain notes, and only to the `public` relay set.
+    publish Note to public
+    // Sign them with `account`, the NIP-46 remote signer declared above.
+    // The script never sees a private key.
+    sign Note with account
+    relay public
+    // Required to declare a timer.
+    clock
+    // Lets the schedule print what it did.
+    log
+}
+
+every 24h {
+    // Edit the message here.
+    let result = publish Note {
+        content: "Daily reminder: be kind.",
+    } to public with account
+    print("posted to " + text(result.accepted) + "/1 relays")
+}

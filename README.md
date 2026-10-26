@@ -34,6 +34,8 @@ and a real relay/signer deployment loop. Module operations without a configured
 real host remain simulated by `deploy`:
 
 ```bash
+cargo run -p nscript-cli -- new --list
+cargo run -p nscript-cli -- new relay-monitor my-monitor   # a checked starter project
 cargo run -p nscript-cli -- check conformance/valid/default-publish.ns
 cargo run -p nscript-cli -- run conformance/valid/hello-note.ns
 cargo run -p nscript-cli -- run conformance/valid/nip44-call.ns
@@ -262,7 +264,11 @@ remain staged until successful completion.
   for future implementations.
 - `crates/` contains the Rust syntax, semantics, IR, reference runtime, CLI front
   end, a WebAssembly build of the compiler front end for in-browser tooling, and
-  `nscript-lang`, the editor-analysis surface (symbols, completions, hover).
+  `nscript-lang`, the editor-analysis surface (symbols, completions, hover), and
+  `nscript-lsp`, the language server built on it.
+- [`templates/`](templates/) holds the starter projects `nscript new` writes.
+- [`docs/EDITORS.md`](docs/EDITORS.md) covers `nscript-lsp`, the language
+  server, and the VS Code client in [`editors/vscode/`](editors/vscode/).
 - [`studio/`](studio/) is the in-browser authoring surface: a Monaco editor that
   runs the wasm compiler locally with live diagnostics, a permission footprint
   panel, and a synthetic-event preview.

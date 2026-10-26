@@ -486,6 +486,232 @@ fn ncc03_vote_handler_enforces_the_voting_window_and_declared_options() {
     assert!(run_vote(1_790_381_000, "yes", "another-election").contains("valid false"));
 }
 
+fn scaffold_into(template: &str, tag: &str) -> PathBuf {
+    let directory = std::env::temp_dir().join(format!(
+        "nscript-new-{}-{tag}-{template}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&directory);
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["new", template])
+        .arg(&directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    directory
+}
+
+#[test]
+fn every_starter_template_scaffolds_checks_and_passes_its_own_samples() {
+    let list = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["new", "--list"])
+        .output()
+        .unwrap();
+    assert!(list.status.success());
+    let listed = String::from_utf8_lossy(&list.stdout).into_owned();
+    let templates: Vec<&str> = listed
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    assert_eq!(
+        templates,
+        ["moderation-bot", "scheduled-poster", "relay-monitor"]
+    );
+
+    for template in templates {
+        let directory = scaffold_into(template, "all");
+        for file in ["bot.ns", "README.md", "test.sh", "nscript.lock.json"] {
+            assert!(
+                directory.join(file).is_file(),
+                "{template} is missing {file}"
+            );
+        }
+
+        // `inspect --json` is the permission-footprint review path a new
+        // user is told to run; it must succeed with no diagnostics.
+        let inspect = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .args(["inspect", "--json"])
+            .arg(directory.join("bot.ns"))
+            .output()
+            .unwrap();
+        assert!(
+            inspect.status.success(),
+            "{template}: {}",
+            String::from_utf8_lossy(&inspect.stderr)
+        );
+
+        // The generated test.sh checks the source, verifies the lockfile and
+        // runs every sample event against its `.expect` line.
+        let test = Command::new("bash")
+            .arg(directory.join("test.sh"))
+            .env("NSCRIPT", env!("CARGO_BIN_EXE_nscript"))
+            .output()
+            .unwrap();
+        assert!(
+            test.status.success(),
+            "{template}: {}{}",
+            String::from_utf8_lossy(&test.stdout),
+            String::from_utf8_lossy(&test.stderr)
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+}
+
+#[test]
+fn a_starter_template_states_what_is_simulated_and_what_is_live() {
+    // Roadmap Phase 5a: a template must not imply live behaviour that
+    // `nscript deploy` does not provide.
+    for template in ["moderation-bot", "scheduled-poster", "relay-monitor"] {
+        let directory = scaffold_into(template, "docs");
+        let readme = std::fs::read_to_string(directory.join("README.md")).unwrap();
+        assert!(
+            readme.contains("## What is simulated and what is live")
+                || readme.contains("## What it does and does not tell you"),
+            "{template} README must state what is simulated and what is live"
+        );
+        let bot = std::fs::read_to_string(directory.join("bot.ns")).unwrap();
+        assert!(
+            bot.contains("simulat") || bot.contains("nscript deploy") || bot.contains("Read-only"),
+            "{template} bot.ns must say what its effects are"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+    let moderation = scaffold_into("moderation-bot", "sim");
+    let readme = std::fs::read_to_string(moderation.join("README.md")).unwrap();
+    assert!(
+        readme.contains("Everything is simulated today"),
+        "the moderation template must not read as live moderation"
+    );
+    let _ = std::fs::remove_dir_all(&moderation);
+}
+
+#[test]
+fn new_refuses_a_non_empty_directory_and_an_unknown_template() {
+    let directory = scaffold_into("relay-monitor", "refuse");
+    let again = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["new", "relay-monitor"])
+        .arg(&directory)
+        .output()
+        .unwrap();
+    assert!(!again.status.success());
+    assert!(
+        String::from_utf8_lossy(&again.stderr).contains("already exists and is not empty"),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    let unknown = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["new", "no-such-template"])
+        .arg(directory.join("x"))
+        .output()
+        .unwrap();
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown template"));
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// Every `.ns` source the repository ships: the conformance corpus, the
+/// examples, and the starter templates.
+fn all_repository_sources() -> Vec<PathBuf> {
+    let mut sources = Vec::new();
+    for directory in ["conformance/valid", "conformance/invalid", "examples"] {
+        for entry in std::fs::read_dir(repository_path(directory)).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|extension| extension == "ns") {
+                sources.push(path);
+            }
+        }
+    }
+    for entry in std::fs::read_dir(repository_path("templates")).unwrap() {
+        let bot = entry.unwrap().path().join("bot.ns");
+        if bot.is_file() {
+            sources.push(bot);
+        }
+    }
+    sources.sort();
+    sources
+}
+
+/// Roadmap Phase 5b: diagnostics seen in an editor must match
+/// `nscript check` exactly, for every source the repository ships.
+#[test]
+fn the_language_server_reports_exactly_the_diagnostics_nscript_check_does() {
+    let sources = all_repository_sources();
+    assert!(sources.len() > 100, "found only {} sources", sources.len());
+    let mut with_diagnostics = 0;
+    for path in &sources {
+        let text = std::fs::read_to_string(path).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+            .arg("check")
+            .arg(path)
+            .output()
+            .unwrap();
+        let prefix = format!("{}:", path.display());
+        let cli: Vec<(usize, usize, String, String)> = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .filter_map(|line| {
+                let rest = line.strip_prefix(&prefix)?;
+                let (line_number, rest) = rest.split_once(':')?;
+                let (column, rest) = rest.split_once(": error[")?;
+                let (code, message) = rest.split_once("]: ")?;
+                Some((
+                    line_number.parse().ok()?,
+                    column.parse().ok()?,
+                    code.to_owned(),
+                    message.to_owned(),
+                ))
+            })
+            .collect();
+
+        let mut server = nscript_lsp::Server::new();
+        server.handle(
+            &serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+        );
+        let published = server.handle(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": {"textDocument": {"uri": "file:///check.ns", "languageId": "nscript", "version": 1, "text": text}},
+        }));
+        let editor = published[0]["params"]["diagnostics"].as_array().unwrap();
+
+        assert_eq!(
+            editor.len(),
+            cli.len(),
+            "{}: the editor shows {} diagnostics, `nscript check` {}",
+            path.display(),
+            editor.len(),
+            cli.len()
+        );
+        if !cli.is_empty() {
+            with_diagnostics += 1;
+        }
+        for (shown, (line, column, code, message)) in editor.iter().zip(&cli) {
+            let at = path.display();
+            assert_eq!(shown["code"], code.as_str(), "{at}: code");
+            assert_eq!(shown["message"], message.as_str(), "{at}: message");
+            let start_line =
+                usize::try_from(shown["range"]["start"]["line"].as_u64().unwrap()).unwrap();
+            assert_eq!(start_line + 1, *line, "{at}: line");
+            // LSP columns are UTF-16 units and the CLI's are not, so compare
+            // columns only on lines where the two cannot differ.
+            let source_line = text.lines().nth(start_line).unwrap_or_default();
+            if source_line.is_ascii() {
+                let start_column =
+                    usize::try_from(shown["range"]["start"]["character"].as_u64().unwrap())
+                        .unwrap();
+                assert_eq!(start_column + 1, *column, "{at}: column");
+            }
+        }
+    }
+    assert!(
+        with_diagnostics > 20,
+        "the corpus should include many failing sources, found {with_diagnostics}"
+    );
+}
+
 #[test]
 fn dry_run_reports_plan_without_external_effects() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))

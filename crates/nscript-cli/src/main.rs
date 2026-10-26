@@ -6,6 +6,8 @@ use std::{
     process::ExitCode,
 };
 
+mod scaffold;
+
 use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_hex, parse_module};
 use nscript_runtime::{ClockHost, SubscriptionHost};
 use nscript_semantics::{analyze_with_modules, bind_module_events, check};
@@ -23,6 +25,7 @@ fn main() -> ExitCode {
         [command, rest @ ..] if command == "inspect" => inspect_program(rest, false),
         [command, rest @ ..] if command == "run" => run_program(rest),
         [command, rest @ ..] if command == "deploy" => deploy_program(rest),
+        [command, rest @ ..] if command == "new" => scaffold::new_project(rest),
         [command, rest @ ..] if command == "test-event" => test_event(rest),
         [package, manifest, rest @ ..] if package == "package" && manifest == "manifest" => {
             package_manifest(rest)
@@ -52,7 +55,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>]\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>]\n  nscript new --list | <template> <directory>\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }

@@ -343,7 +343,9 @@ pub fn completions(analysis: &AnalyzedProgram, offset: usize) -> Vec<Completion>
     out
 }
 
-const STATEMENT_KEYWORDS: &[&str] = &[
+/// The statement keywords the editor offers, also the keyword list the VS Code
+/// grammar highlights (a test keeps the two in step).
+pub const STATEMENT_KEYWORDS: &[&str] = &[
     "assert",
     "at",
     "badge",

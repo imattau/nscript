@@ -1,0 +1,33 @@
+// A relay monitor: watch NCC-10 operational-state events for services you
+// depend on, and say which ones need attention.
+//
+// Read-only: it publishes nothing and holds no signer. It reads published
+// state, it does not probe anything, so a missing state means "unknown", not
+// "operational" (NCC-10 section 21). A state published by an operator on a
+// service's behalf is only a claim until its NCC-09 grant has been checked,
+// which this template does not do, so it reports those as unverified.
+use ncc10
+use nip01
+
+relayset public = configured
+
+permissions {
+    // The only thing it needs: read ServiceState events from `public`.
+    read ServiceState from public
+    relay public
+    // Lets the handler print its verdict.
+    log
+}
+
+on ServiceState {
+    let state = ncc10.state(event.tags)
+    if not ncc10.state_is_recognised(state) {
+        print("ignored: " + state + " is not an NCC-10 state")
+    } else if not ncc10.is_direct(event.tags) {
+        print("unverified: an operator claims " + state + " for " + ncc10.operator_service(event.tags))
+    } else if state == "operational" {
+        print("ok: " + ncc10.state_service(event.tags) + " is operational")
+    } else {
+        print("ATTENTION: " + ncc10.state_service(event.tags) + " is " + state)
+    }
+}

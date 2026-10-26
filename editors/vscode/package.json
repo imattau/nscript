@@ -1,0 +1,65 @@
+{
+  "name": "nscript",
+  "displayName": "NScript",
+  "description": "Diagnostics, completions, hover, outline and a live authority summary for NScript, from the same front end as the nscript CLI.",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/imattau/nscript"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "nscript",
+        "aliases": [
+          "NScript",
+          "nscript"
+        ],
+        "extensions": [
+          ".ns"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nscript",
+        "scopeName": "source.nscript",
+        "path": "./syntaxes/nscript.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "NScript",
+      "properties": {
+        "nscript.server.path": {
+          "type": "string",
+          "default": "nscript-lsp",
+          "description": "Path to the nscript-lsp executable. Build it with `cargo build --release -p nscript-lsp`."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "nscript.showAuthority",
+        "title": "NScript: Show Authority"
+      }
+    ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "scripts": {
+    "check": "node --check extension.js",
+    "test": "node --test test/extension.test.js"
+  }
+}

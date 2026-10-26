@@ -1,0 +1,25 @@
+// A moderation bot: kick any member whose message contains a blocked word.
+//
+// SIMULATION ONLY today. `nscript run` and `test-event` record the kick; they
+// do not send it. `nscript deploy` does not connect a real Concord moderation
+// host yet (see ROADMAP.md, Phase 1), so nothing here moderates a live
+// community. In a real deployment the host would still enforce CORD-04: the
+// acting identity must hold the KICK bit and outrank its target.
+use concord04
+
+permissions {
+    // The one thing this bot may do. Remove it and `check` fails the kick.
+    concord_kick
+    // Lets the handler print what it decided.
+    log
+}
+
+on Note {
+    // Edit the blocked words here. Matching is a plain substring test.
+    if event.content contains "spam" or event.content contains "scam" {
+        print("kicking " + event.author)
+        kick event.author
+    } else {
+        print("no action for " + event.author)
+    }
+}

@@ -25,5 +25,6 @@ sha2.workspace = true
 workspace = true
 
 [dev-dependencies]
+nscript-lsp = { path = "../nscript-lsp" }
 nscript-runtime = { path = "../nscript-runtime", features = ["wasm-engine"] }
 tungstenite.workspace = true

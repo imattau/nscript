@@ -1,0 +1,66 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "NScript",
+  "scopeName": "source.nscript",
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#string"
+    },
+    {
+      "include": "#number"
+    },
+    {
+      "include": "#keyword"
+    },
+    {
+      "include": "#type"
+    },
+    {
+      "include": "#constant"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.double-slash.nscript",
+      "match": "//.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.nscript",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.nscript",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "number": {
+      "name": "constant.numeric.nscript",
+      "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:%|[smhd])?\\b"
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "name": "keyword.control.nscript",
+          "match": "\\b(?:assert|badge|ban|calendar|comment|defaults|delete|draft|every|file|fn|for|handler|highlight|if|image|key|kick|label|let|live|match|on|once|permissions|publish|react|relay|relayset|report|repost|return|runtime|say|search|send|signer|status|store|upload|use|video|zap|at)\\b"
+        },
+        {
+          "name": "keyword.operator.word.nscript",
+          "match": "\\b(?:else|in|not|and|or|contains|where|with|to|from|since|as|bind)\\b"
+        }
+      ]
+    },
+    "type": {
+      "name": "entity.name.type.nscript",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+    },
+    "constant": {
+      "name": "constant.language.nscript",
+      "match": "\\b(?:true|false|none)\\b"
+    }
+  }
+}

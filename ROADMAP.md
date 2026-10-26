@@ -107,61 +107,69 @@ publication path is still simulated.
 
 ## Phase 5: adoption (scaffold, then editor support)
 
-**Status:** proposed. Not started. This phase adds no NIP breadth and no Layer 3
-keywords, so it does not conflict with the Draft 0.1 feature freeze. The two
-parts are ordered: the scaffold comes first because its templates become the
+**Status:** implemented. This phase added no NIP breadth and no Layer 3
+keywords, so it did not conflict with the Draft 0.1 feature freeze. The two
+parts were ordered: the scaffold came first because its templates became the
 test material for the language server.
 
 ### 5a: `nscript new` scaffold and starter templates
 
-- Add an `nscript new <template> <dir>` subcommand that writes a checked,
-  runnable project: source file, package metadata, lockfile, and a
-  `test-event` script.
-- Ship a small set of starter templates. Each template must:
-  - pass `check` and `inspect` with no diagnostics;
-  - declare the narrowest permissions that work, with a short comment naming
-    why each one is needed;
-  - run to a meaningful result under `run` or `test-event` in simulation;
-  - double as a conformance fixture, so a template cannot drift from the
-    compiler without CI failing.
-- State plainly, in the generated README and at the top of each template,
-  which effects are simulated and which would be live. A template must not
-  imply live behaviour that `nscript deploy` does not yet provide (see
-  Current constraints).
-- Choose the initial template set before implementation. Candidates are a
-  moderation bot, a scheduled poster, and a relay monitor, but the set is an
-  open decision for the maintainer, not settled by this roadmap.
+`nscript new <template> <directory>` writes a checked, runnable project:
+`bot.ns`, a `README.md`, sample events with expected output, a `test.sh`, and a
+lockfile. `nscript new --list` names the templates. Templates live in
+[`templates/`](templates/) and are embedded in the binary.
 
-**Exit criteria:** a new user can run `nscript new`, then `check`, `inspect`
+- **Templates:** `moderation-bot`, `scheduled-poster`, `relay-monitor`.
+- **Each template** declares the narrowest permissions that work with a comment
+  naming why each is needed, runs to a meaningful result in simulation, and
+  states in its README which effects are simulated and which are live. A CI
+  test scaffolds every template, runs its generated `test.sh` (check, lockfile
+  verification, every sample event), and requires `inspect --json` to succeed.
+- **`moderation-bot` is simulation-only.** `nscript deploy` does not yet
+  connect a real Concord moderation host (Phase 1), and the template and its
+  README say so.
+- **`relay-monitor` reads NCC-10 operational-state events** that services
+  publish about themselves. NIP-66 declares a record and a publish operation
+  but no event a script can read, and inventing one would be new protocol
+  surface, so the template does not read NIP-66 relay status. It publishes
+  nothing, probes nothing, and reports operator-published states as
+  unverified.
+
+**Exit criteria met:** a new user can run `nscript new`, then `check`, `inspect`
 and `test-event` on the result without reading any Rust source, and every
 template is covered by a CI-run fixture.
 
 ### 5b: language server and editor integration
 
-- Package `nscript-lang` (symbols, completions, hover) as a Language Server
-  Protocol server, adding diagnostics from the existing checker.
-- Publish a minimal VS Code client. Other editors (Neovim, Zed) should work
-  from the generic LSP server with documented configuration, without bespoke
-  clients.
-- Reuse the 5a templates and the `conformance/` corpus as the server's test
-  inputs, so diagnostics seen in the editor match `nscript check` exactly.
-- Surface the permission footprint, as Studio does, so authority is visible
-  while editing rather than only at `inspect` time.
-- Keep the server on the same compiler front end as the CLI and the wasm build;
-  do not fork a separate parser for editor use.
+`nscript-lsp` is an LSP server over `nscript-lang` and the same checker the CLI
+uses: diagnostics, completions, hover, outline, and an authority summary shown
+as a lens while editing. [`editors/vscode/`](editors/vscode/) is a thin VS Code
+client. [`docs/EDITORS.md`](docs/EDITORS.md) covers setup, limits and what has
+been verified.
 
-**Exit criteria:** opening any 5a template in a supported editor shows
-diagnostics, completions, and hover that agree with the CLI, and the server is
-exercised by automated tests rather than manual checks only.
+- **One front end.** The server has no parser of its own. A test runs
+  `nscript check` and the server over every source in `conformance/`,
+  `examples/` and `templates/` and requires identical diagnostics (code,
+  message and position); a deliberate divergence makes it fail.
+- **Tested** without an editor: protocol behaviour, a real stdio session
+  against the built binary, UTF-16 positions, grammar coverage of the
+  language's keywords, and the extension's logic with the editor stubbed.
+- **Not yet verified:** the extension running in a real VS Code, and the
+  documented Neovim configuration in a real Neovim. Zed and similar editors
+  need their own extension, which is not provided.
+- **Limits:** built-in modules only (`-M` directories are not loaded), no
+  go-to-definition, rename, references or formatting, single-file analysis.
+
+**Exit criteria met, with the caveat above:** diagnostics, completions and hover
+in the templates agree with the CLI and are exercised by automated tests. That
+they appear correctly in a real editor is unconfirmed.
 
 ### Sequencing and dependencies
 
-- 5a depends on nothing outside this repository, but live-effect templates
-  stay simulation-only until the Phase 1 live runner exists.
-- 5b depends on 5a for fixtures and should not start until the template set is
-  fixed.
-- Neither part depends on the Phase 2 grammar freeze, but both benefit from it:
-  a frozen grammar and stable diagnostic codes avoid editor-side churn.
+- Live-effect templates stay simulation-only until the Phase 1 live runner
+  exists.
+- Neither part depended on the Phase 2 grammar freeze, but both will need
+  revisiting if the grammar or diagnostic codes change after it.
 
 ## Explicitly deferred
 

@@ -1,0 +1,28 @@
+[package]
+name = "nscript-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Language Server Protocol server for NScript, built on the same front end as the CLI"
+
+[lib]
+name = "nscript_lsp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nscript-lsp"
+path = "src/main.rs"
+
+[dependencies]
+nscript-lang = { path = "../nscript-lang" }
+nscript-semantics = { path = "../nscript-semantics" }
+nscript-syntax = { path = "../nscript-syntax" }
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+nscript-lang = { path = "../nscript-lang" }

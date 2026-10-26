@@ -388,6 +388,7 @@ version = "0.1.0"
 dependencies = [
  "nscript-host-crypto",
  "nscript-ir",
+ "nscript-lsp",
  "nscript-modules",
  "nscript-runtime",
  "nscript-semantics",
@@ -438,6 +439,16 @@ dependencies = [
  "nscript-syntax",
  "semver",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "nscript-lsp"
+version = "0.1.0"
+dependencies = [
+ "nscript-lang",
+ "nscript-semantics",
+ "nscript-syntax",
  "serde_json",
 ]
 
