@@ -1,0 +1,136 @@
+name: Release package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  # The npack release used to pack, verify and publish. Bump deliberately.
+  NPACK_REF: v0.9.0
+
+jobs:
+  package:
+    name: Build package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npack
+        run: cargo install --git https://github.com/imattau/npack --tag "$NPACK_REF" --locked --root "$RUNNER_TEMP/npack" npack
+
+      - name: Build nscript
+        run: cargo build --release --locked -p nscript-cli
+
+      - name: Determine release version
+        id: release
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-ci.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Refuse a release whose tag disagrees with the workspace version.
+      - name: Check the tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          found=$(awk -F'"' '/^version *=/ { print $2; exit }' <(sed -n '/^\[workspace.package\]/,/^\[/p' Cargo.toml))
+          test "$found" = "$VERSION" || {
+            echo "Tag v$VERSION does not match workspace version $found" >&2
+            exit 1
+          }
+
+      - name: Build npk package and manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          PUBLISHER: ${{ vars.NOSTR_PUBLISHER }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
+            PUBLISHER="manual-test-publisher"
+          fi
+          mkdir -p package-output
+          packaging/build-npk.sh "$VERSION" "$PUBLISHER" target/release/nscript "$RUNNER_TEMP/npack/bin/npack" package-output
+
+      - name: Verify package output
+        run: |
+          (cd package-output && sha256sum --check SHA256SUMS)
+          "$RUNNER_TEMP/npack/bin/npack" verify package-output/nscript-*.manifest.json
+
+      - name: Attest package provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: package-output/*.npk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nscript-release-bundle
+          path: package-output
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            package-output/*.npk
+            package-output/*.manifest.json
+            package-output/SHA256SUMS
+
+  nostr-handoff:
+    name: Publish to Nostr
+    needs: package
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npack
+        run: cargo install --git https://github.com/imattau/npack --tag "$NPACK_REF" --locked --root "$RUNNER_TEMP/npack" npack
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nscript-release-bundle
+          path: package-output
+
+      - name: Publish artifact and events
+        env:
+          NOSTR_SECRET_KEY: ${{ secrets.NOSTR_SECRET_KEY }}
+          NOSTR_RELAYS: ${{ vars.NOSTR_RELAYS }}
+          NOSTR_BLOSSOM_SERVERS: ${{ vars.NOSTR_BLOSSOM_SERVERS }}
+        run: |
+          test -n "$NOSTR_SECRET_KEY" || { echo "The release environment must define NOSTR_SECRET_KEY" >&2; exit 1; }
+          relay_args=()
+          while IFS= read -r relay; do
+            [[ -z "${relay//[[:space:]]/}" ]] && continue
+            relay_args+=(--relay "$relay")
+          done <<< "$NOSTR_RELAYS"
+          server_args=()
+          while IFS= read -r server; do
+            [[ -z "${server//[[:space:]]/}" ]] && continue
+            server_args+=(--server "$server")
+          done <<< "$NOSTR_BLOSSOM_SERVERS"
+          test "${#relay_args[@]}" -gt 0 || { echo "The repository must define NOSTR_RELAYS" >&2; exit 1; }
+          test "${#server_args[@]}" -gt 0 || { echo "The repository must define NOSTR_BLOSSOM_SERVERS" >&2; exit 1; }
+          manifest=$(ls package-output/nscript-*.manifest.json)
+          artifact=$(jq -r '.artifact' "$manifest")
+          artifact_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${artifact}"
+          # Never sign a URL that does not serve exactly the bytes we built.
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/check.npk" "$artifact_url"
+          cmp "$RUNNER_TEMP/check.npk" "package-output/$artifact"
+          "$RUNNER_TEMP/npack/bin/npack" publish "$manifest" \
+            --secret-key "$NOSTR_SECRET_KEY" \
+            "${relay_args[@]}" "${server_args[@]}" \
+            --artifact-url "$artifact_url"
