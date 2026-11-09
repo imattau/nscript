@@ -2,8 +2,8 @@ use crate::{
     Diagnostic, Import, RuntimeProfile, Span, Token, TokenKind,
     ast::{
         AstProgram, CapabilityDeclaration, EventDeclaration, EventField, EventModeSyntax, Expr,
-        ExprKind, FunctionDeclaration, Item, LetDeclaration, MatchArm, Parameter, Pattern,
-        PatternKind, Permission, SelectExpression, Spanned, Statement, StatementKind,
+        ExprKind, FunctionDeclaration, InputDeclaration, Item, LetDeclaration, MatchArm, Parameter,
+        Pattern, PatternKind, Permission, SelectExpression, Spanned, Statement, StatementKind,
         StoreDeclaration, TypeRef,
     },
 };
@@ -85,6 +85,7 @@ impl Parser<'_> {
                 Some("relay") => self.parse_capability().map(Item::Relay),
                 Some("relayset") => self.parse_capability().map(Item::RelaySet),
                 Some("key") => self.parse_key(),
+                Some("input") => self.parse_input(),
                 Some("store") => self.parse_store().map(Item::Store),
                 Some("permissions") => self.parse_permissions(),
                 Some("stream") => self.parse_stream(),
@@ -335,6 +336,23 @@ impl Parser<'_> {
             return None;
         }
         Some(Item::Key(declaration))
+    }
+
+    /// `input name: Type`. The host must supply a value of the declared
+    /// type before the program runs; unlike `key`, the value is an ordinary,
+    /// visible value of its declared type, not an opaque handle.
+    fn parse_input(&mut self) -> Option<Item> {
+        let start = self.bump()?.span;
+        let name = self.take_name()?;
+        self.expect_symbol(':')?;
+        let type_ref = self.parse_type()?;
+        let span = start.join(type_ref.span);
+        self.terminator();
+        Some(Item::Input(InputDeclaration {
+            name,
+            type_ref,
+            span,
+        }))
     }
 
     fn parse_store(&mut self) -> Option<StoreDeclaration> {

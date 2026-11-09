@@ -32,6 +32,11 @@ pub enum Item {
     RelaySet(CapabilityDeclaration),
     /// `key name = host("label")`: a key the host holds, bound to a name.
     Key(CapabilityDeclaration),
+    /// `input name: Type`: a typed value the host must supply (for example,
+    /// as a form the owner fills in) before the program runs. Unlike `key`,
+    /// which is an opaque signing-key handle, an input's value is an
+    /// ordinary value of its declared type, visible to the script.
+    Input(InputDeclaration),
     Store(StoreDeclaration),
     Permissions(Spanned<Vec<Permission>>),
     Stream {
@@ -103,6 +108,13 @@ pub struct StoreDeclaration {
     pub name: Spanned<String>,
     pub key_type: Option<TypeRef>,
     pub value_type: TypeRef,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InputDeclaration {
+    pub name: Spanned<String>,
+    pub type_ref: TypeRef,
     pub span: Span,
 }
 

@@ -399,6 +399,26 @@ pub fn run_handler<'a, H: EvalHost>(
     host: &'a mut H,
     limits: EvalLimits,
 ) -> Result<Value, RuntimeError> {
+    run_with_scope(
+        program,
+        body,
+        BTreeMap::from([("event".to_owned(), event)]),
+        host,
+        limits,
+    )
+}
+
+/// [`run_handler`]'s shared implementation, seeded with an arbitrary initial
+/// scope instead of always binding exactly `event`. [`run_schedule_bodies`]
+/// uses this to additionally bind declared `input`s, which a handler body
+/// never has.
+fn run_with_scope<'a, H: EvalHost>(
+    program: &'a Program,
+    body: &'a [Item],
+    initial_scope: BTreeMap<String, Value>,
+    host: &'a mut H,
+    limits: EvalLimits,
+) -> Result<Value, RuntimeError> {
     let functions = program
         .ast
         .items
@@ -448,7 +468,7 @@ pub fn run_handler<'a, H: EvalHost>(
             .relays
             .as_ref()
             .map(|(name, _)| name.as_str()),
-        scopes: vec![BTreeMap::from([("event".to_owned(), event)])],
+        scopes: vec![initial_scope],
         limits,
         steps: 0,
         depth: 0,
@@ -500,6 +520,25 @@ pub fn run_schedule_bodies<H: EvalHost>(
     host: &mut H,
     limits: EvalLimits,
 ) -> Result<(), RuntimeError> {
+    run_schedule_bodies_with_inputs(program, host, limits, &BTreeMap::new())
+}
+
+/// [`run_schedule_bodies`], additionally binding each declared `input` (see
+/// [`crate::OperationHost`]'s doc and `Item::Input`) to the value the host
+/// supplies for it in `inputs`, alongside `event` (bound to `Unit`, as
+/// `run_schedule_bodies` always does). A schedule body with no `input`
+/// declarations behaves exactly as `run_schedule_bodies` does, regardless of
+/// what `inputs` contains.
+///
+/// # Errors
+///
+/// Returns the first unhandled failure a schedule body hits.
+pub fn run_schedule_bodies_with_inputs<H: EvalHost>(
+    program: &Program,
+    host: &mut H,
+    limits: EvalLimits,
+    inputs: &BTreeMap<String, Value>,
+) -> Result<(), RuntimeError> {
     for item in &program.ast.items {
         let Item::Statement(statement) = item else {
             continue;
@@ -517,7 +556,9 @@ pub fn run_schedule_bodies<H: EvalHost>(
             })
             .cloned()
             .collect();
-        run_handler(program, &executable, Value::Unit, host, limits)?;
+        let mut scope = inputs.clone();
+        scope.insert("event".to_owned(), Value::Unit);
+        run_with_scope(program, &executable, scope, host, limits)?;
     }
     Ok(())
 }
@@ -2005,6 +2046,40 @@ mod tests {
             ["schedule: 6"],
             "only the schedule's own let-then-print runs; root-level prints are out of scope for this function"
         );
+    }
+
+    #[test]
+    fn run_schedule_bodies_with_inputs_binds_declared_inputs_into_scope() {
+        let mut host = Recorder::default();
+        let source = "permissions {\n    clock\n    log\n}\n\ninput publisher: Text\ninput retries: Int\n\nevery 1h {\n    print(publisher + \" \" + text(retries))\n}\n";
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let inputs = BTreeMap::from([
+            ("publisher".to_owned(), Value::Text("acme".to_owned())),
+            ("retries".to_owned(), Value::Int(3)),
+        ]);
+        run_schedule_bodies_with_inputs(&program, &mut host, EvalLimits::default(), &inputs)
+            .unwrap();
+        assert_eq!(host.printed, ["acme 3"]);
+    }
+
+    #[test]
+    fn run_schedule_bodies_with_inputs_matches_the_plain_function_when_empty() {
+        // `run_schedule_bodies` is `run_schedule_bodies_with_inputs` with no
+        // inputs; a schedule body with no `input` declarations must behave
+        // identically either way.
+        let mut host = Recorder::default();
+        let source = "permissions {\n    clock\n    log\n}\n\nevery 1h {\n    print(\"no inputs needed\")\n}\n";
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        run_schedule_bodies_with_inputs(
+            &program,
+            &mut host,
+            EvalLimits::default(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(host.printed, ["no inputs needed"]);
     }
 
     #[test]

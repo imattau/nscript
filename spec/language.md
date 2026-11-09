@@ -280,6 +280,20 @@ replayed unless the declaration opts into `catch_up`.
 All access to wall time requires `clock`. Event timestamps supplied by the host
 do not. Tests MAY replace the clock with a deterministic host implementation.
 
+`input name: Type` declares a typed value the host MUST supply before the
+program runs — for example, as a form the owner fills in, or a CLI flag at
+deploy time — and binds it as an ordinary named value, visible inside every
+`every`/`at` schedule body exactly as a `let` binding would be. It differs
+from `key name = host("label")`: a `key`'s value is always an opaque signing
+handle, never readable as text or bytes, while an `input`'s value is an
+ordinary value of its declared type with no such restriction. Only `Text`,
+`Int`, `Bool`, and `PubKey` are host-portable today, since those are the
+only shapes every host implementation (not just one written in Rust) can be
+expected to supply unambiguously; a host MAY refuse to run a program
+declaring an `input` of any other type. A program with an undeclared or
+mistyped `input` value fails provisioning rather than running with a
+guessed or missing value.
+
 ## 10. Pattern matching
 
 Patterns destructure events, tags, records, enums, and result values. Alternatives
