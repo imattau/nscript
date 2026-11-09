@@ -271,11 +271,17 @@ remain staged until successful completion.
 
 NScript is an evolving Draft 0.1 implementation. The compiler, simulator,
 package metadata and lockfile commands, browser Studio, and a real relay/signer
-deployment loop exist. The deployment loop does not yet execute general NIP
-module operations against real hosts; those operations are simulated unless a
-host implementation is explicitly wired in. Concord protocol operations have
-real Rust host implementations and end-to-end tests, but are not yet available
-as a configured `nscript deploy` host.
+deployment loop exist. By default, `nscript deploy` still simulates general
+NIP module operations (`nip51.publish_user_list`, `nip78.publish_app_data`,
+and the like); pass `--operation-command <path>` to answer them for real
+through an external command instead — see
+[`ProcessOperationHost`](crates/nscript-runtime/src/lib.rs) for the process
+protocol and which operation argument/result shapes it supports today (the
+structural scalars plus the record shapes shared across modules, such as
+`UserList`, `AppData`, and `PublishReport`; anything else fails closed rather
+than being guessed at). Concord protocol operations have real Rust host
+implementations and end-to-end tests, but are not yet available as a
+configured `nscript deploy` host.
 
 The runnable [`examples/layer3-bot.ns`](examples/layer3-bot.ns) demonstrates
 the current language-facing Layer 3 surface: typed event patterns, native
