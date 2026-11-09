@@ -42,10 +42,20 @@ needed=$("$NPACK" inspect "$NSCRIPT" \
 
 jq -n \
   --arg publisher "$PUBLISHER" --arg version "$VERSION" --arg artifact "$ARTIFACT" \
+  --arg date "${RELEASE_DATE:-$(date -u +%F)}" \
   --argjson runtime_requires "$needed" \
   '{publisher:$publisher,name:"nscript",version:$version,artifact:$artifact,sha256:"",
     dependencies:[],conflicts:[],os:"linux",arch:"x86_64",format:"npk",
-    runtime_requires:$runtime_requires,provides:[]}' > "$root/.npack/manifest.json"
+    runtime_requires:$runtime_requires,provides:[],
+    app:{
+      summary:"A statically typed scripting language for Nostr",
+      description:"NScript makes events, filters, relays, signers, permissions and NIP-defined behaviour language concepts instead of SDK conventions. The nscript command checks, inspects, simulates, compiles and deploys NScript programs, and packages them for npack.",
+      homepage:"https://github.com/imattau/nscript",
+      license:"MIT",
+      categories:["Development"],
+      release_date:$date,
+      support_url:"https://github.com/imattau/nscript/issues"
+    }}' > "$root/.npack/manifest.json"
 
 "$NPACK" pack "$root" --output "$OUT/$ARTIFACT" --strict > /dev/null
 "$NPACK" manifest "$OUT/$ARTIFACT" --output "$OUT/nscript-${VERSION}.manifest.json" > /dev/null
