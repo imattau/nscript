@@ -1429,8 +1429,8 @@ mod tests {
         let (first, first_diagnostics) = parse_module(NIP10);
         let decorated = format!("// leading comment\n\n{NIP10}\n// trailing comment\n");
         let (second, second_diagnostics) = parse_module(&decorated);
-        assert!(first_diagnostics.is_empty());
-        assert!(second_diagnostics.is_empty());
+        assert_eq!(first_diagnostics, [] as [nscript_syntax::Diagnostic; 0]);
+        assert_eq!(second_diagnostics, [] as [nscript_syntax::Diagnostic; 0]);
         assert_eq!(
             first.unwrap().canonical_hash,
             second.unwrap().canonical_hash

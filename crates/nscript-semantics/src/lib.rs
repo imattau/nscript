@@ -2032,7 +2032,7 @@ mod tests {
             defaults { signer: account; relays: public }\n\
             permissions { publish Note to public; sign Note with account; relay public }\n\
             publish Note { content: \"hi\" }\n";
-        assert!(codes(source).is_empty());
+        assert_eq!(codes(source), [] as [&str; 0]);
     }
 
     #[test]
@@ -2181,12 +2181,13 @@ mod tests {
 
     #[test]
     fn a_scoped_concord_grant_needs_a_known_verb_and_a_declared_scope() {
-        assert!(
-            codes("key devs = host(\"devs\")\npermissions { concord Kick in devs }\n").is_empty()
+        assert_eq!(
+            codes("key devs = host(\"devs\")\npermissions { concord Kick in devs }\n"),
+            [] as [&str; 0]
         );
         // No `in <scope>` at all is still a valid grant (RFC 0002 §2 makes
         // the scope optional).
-        assert!(codes("permissions { concord Kick }\n").is_empty());
+        assert_eq!(codes("permissions { concord Kick }\n"), [] as [&str; 0]);
         assert_eq!(
             codes("key devs = host(\"devs\")\npermissions { concord Frobnicate in devs }\n"),
             ["E3001"]
@@ -2239,7 +2240,7 @@ mod tests {
     #[test]
     fn accepts_default_publish_fixture() {
         let source = include_str!("../../../conformance/valid/default-publish.ns");
-        assert!(codes(source).is_empty());
+        assert_eq!(codes(source), [] as [&str; 0]);
     }
 
     #[test]

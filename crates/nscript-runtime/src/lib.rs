@@ -14068,7 +14068,7 @@ mod tests {
             reports.is_empty(),
             "a handler-nested publish must not fire at startup: {reports:?}"
         );
-        assert!(runtime.relay.published.is_empty());
+        assert_eq!(runtime.relay.published.len(), 0);
     }
 
     #[test]
@@ -14102,7 +14102,7 @@ mod tests {
             runtime.run(&program, &checked),
             Err(RuntimeError::SignerDenied { .. })
         ));
-        assert!(runtime.relay.published.is_empty());
+        assert_eq!(runtime.relay.published.len(), 0);
     }
 
     #[test]
@@ -14750,7 +14750,7 @@ mod tests {
         );
         assert!(report.operations[0].simulated);
         let (quiet, _) = simulate(source, &preview_event("hello"), None);
-        assert!(quiet.operations.is_empty());
+        assert_eq!(quiet.operations.len(), 0);
     }
 
     #[test]
@@ -14762,7 +14762,7 @@ mod tests {
         assert_eq!(report.logs.len(), 1, "the second handler's log survived");
         // With a principal the same program has no failure.
         let (fine, _) = simulate(source, &preview_event("x"), Some("my-key"));
-        assert!(fine.failures.is_empty());
+        assert_eq!(fine.failures.len(), 0);
         assert_eq!(fine.logs.len(), 2);
     }
 
@@ -15326,16 +15326,16 @@ mod tests {
                 capability: "nip44.decrypt_text".to_owned()
             }
         );
-        assert!(runtime.audit.entries.is_empty());
+        assert_eq!(runtime.audit.entries.len(), 0);
     }
 
     #[test]
     fn checked_source_calls_execute_through_operation_host() {
         let source = "let result = nip44.encrypt_text(\"secret\", alice)\n";
         let (program, parse_diagnostics) = nscript_syntax::parse_program(source);
-        assert!(parse_diagnostics.is_empty());
+        assert_eq!(parse_diagnostics.len(), 0);
         let (checked, diagnostics) = nscript_semantics::check(&program);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics.len(), 0);
         let checked = checked.expect("source is statically valid");
         assert_eq!(checked.operation_calls.len(), 1);
 

@@ -2136,7 +2136,7 @@ mod tests {
     fn the_runtime_session_applies_the_operation_policy_inside_a_handler() {
         let source = "use concord04\non m {\n    kick event.author\n}\n";
         let (program, diagnostics) = parse_program(source);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics.len(), 0);
         let body = match &program.ast.items[1] {
             Item::Statement(statement) => match &statement.value {
                 StatementKind::On { body, .. } => body.clone(),
@@ -2188,7 +2188,7 @@ mod tests {
             matches!(error, RuntimeError::CapabilityDenied { .. }),
             "{error:?}"
         );
-        assert!(moderation.issued.is_empty());
+        assert_eq!(moderation.issued.len(), 0);
 
         let allowed = OperationPolicy::default().allow("concord04", "kick_member");
         let mut session = RuntimeSession {
@@ -2536,7 +2536,7 @@ mod tests {
 
         // No event delivered at all: nothing published, matching
         // `Runtime::run`'s own top-level-only startup pass.
-        assert!(runtime.relay.published.is_empty());
+        assert_eq!(runtime.relay.published.len(), 0);
 
         // An event that does not match the handler's predicate: still nothing.
         let miss = event_from_json(&serde_json::json!({"content": "hi", "tags": []})).unwrap();
@@ -2551,8 +2551,8 @@ mod tests {
             EvalLimits::default(),
             None,
         );
-        assert!(outcomes.is_empty());
-        assert!(runtime.relay.published.is_empty());
+        assert_eq!(outcomes.len(), 0);
+        assert_eq!(runtime.relay.published.len(), 0);
 
         // A matching event: the handler runs, and `publish` really creates,
         // signs and publishes, not just checks clean.
