@@ -121,6 +121,12 @@ jobs:
             [[ -z "${relay//[[:space:]]/}" ]] && continue
             relay_args+=(--relay "$relay")
           done <<< "$NOSTR_RELAYS"
+          # The GitHub Release asset is the primary download (--artifact-url
+          # below); these Blossom servers are mirrors. Set the
+          # NOSTR_BLOSSOM_SERVERS variable to override.
+          if [[ -z "${NOSTR_BLOSSOM_SERVERS//[[:space:]]/}" ]]; then
+            NOSTR_BLOSSOM_SERVERS=$'https://blossom.ditto.pub\nhttps://blossom.primal.net'
+          fi
           server_args=()
           while IFS= read -r server; do
             [[ -z "${server//[[:space:]]/}" ]] && continue
