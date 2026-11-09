@@ -729,6 +729,27 @@ fn declared_returns(
         .collect()
 }
 
+/// Every resolved module's declared `record` name to its fields, so the
+/// simulator can synthesise a field-complete placeholder for a return type
+/// this crate has no built-in `OperationValue` variant for — any module's
+/// own declared record, not just the ones `nscript-runtime` special-cases.
+fn declared_types(
+    graph: &nscript_modules::ResolvedModuleGraph,
+) -> std::collections::BTreeMap<String, Vec<nscript_modules::SchemaField>> {
+    graph
+        .modules
+        .values()
+        .flat_map(|registered| &registered.descriptor.types)
+        .filter_map(|definition| match definition {
+            nscript_modules::TypeDefinition::Record { name, fields } => {
+                Some((name.clone(), fields.clone()))
+            }
+            nscript_modules::TypeDefinition::Nominal { .. }
+            | nscript_modules::TypeDefinition::Enum { .. } => None,
+        })
+        .collect()
+}
+
 /// An [`nscript_runtime::eval::EvalHost`] wrapper that traces every module
 /// operation call and publish it forwards to `inner`, printing the same
 /// `operation N: <value>` / `publication N: <accepted>/<total> relays
@@ -951,7 +972,10 @@ fn simulated_operations(
     graph: &nscript_modules::ResolvedModuleGraph,
     failing: &[(String, String)],
 ) -> nscript_runtime::eval::SimulatedOperations {
-    let mut operations = nscript_runtime::eval::SimulatedOperations::new(declared_returns(graph));
+    let mut operations = nscript_runtime::eval::SimulatedOperations::with_types(
+        declared_returns(graph),
+        declared_types(graph),
+    );
     for (module, operation) in failing {
         operations.fail_operation(module, operation);
     }

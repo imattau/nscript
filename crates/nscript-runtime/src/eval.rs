@@ -291,6 +291,18 @@ impl Value {
                 name: "PublishReport".to_owned(),
                 fields: vec![("accepted".to_owned(), Self::Bool(report.accepted()))],
             },
+            // The generic counterpart to `Value::to_operation`'s own
+            // generic `Record` case: a custom module's record (anything
+            // this crate has no concrete `OperationValue` variant for)
+            // must unwrap into a real `Value::Record` with field access,
+            // not the opaque `Value::Op` a script cannot look inside.
+            OperationValue::Record { name, fields } => Self::Record {
+                name,
+                fields: fields
+                    .into_iter()
+                    .map(|(field, value)| (field, Value::from_operation(value)))
+                    .collect(),
+            },
             other => Self::Op(other),
         }
     }
@@ -1466,6 +1478,13 @@ pub struct SimulatedOperations {
     /// `(module, operation)` to the declared return type, e.g.
     /// `Result<PublishReport,ModerationError>`.
     returns: BTreeMap<(String, String), String>,
+    /// A declared `record`'s name to its fields, so a simulated result for a
+    /// return type this crate has no built-in `OperationValue` variant for
+    /// (any module-specific record a NIP module or a third party's own
+    /// module declares) can still be a plausible, field-complete value
+    /// instead of the bare placeholder text every other unknown type gets.
+    /// Empty unless constructed with [`Self::with_types`].
+    types: BTreeMap<String, Vec<nscript_modules::SchemaField>>,
     /// Operations made to fail, to exercise a script's error handling.
     failing: BTreeSet<(String, String)>,
     pub calls: Vec<SimulatedCall>,
@@ -1477,6 +1496,27 @@ impl SimulatedOperations {
         Self {
             fake: crate::FakeOperationHost::default(),
             returns,
+            types: BTreeMap::new(),
+            failing: BTreeSet::new(),
+            calls: Vec::new(),
+        }
+    }
+
+    /// [`Self::new`], additionally given the resolved module graph's own
+    /// declared `record` shapes (name to fields), so [`Self::simulated_result`]
+    /// can synthesise a field-complete placeholder for a return type that is
+    /// a declared record this crate has no built-in `OperationValue` variant
+    /// for, rather than the generic placeholder text every other unknown
+    /// type gets.
+    #[must_use]
+    pub fn with_types(
+        returns: BTreeMap<(String, String), String>,
+        types: BTreeMap<String, Vec<nscript_modules::SchemaField>>,
+    ) -> Self {
+        Self {
+            fake: crate::FakeOperationHost::default(),
+            returns,
+            types,
             failing: BTreeSet::new(),
             calls: Vec::new(),
         }
@@ -1510,7 +1550,58 @@ impl SimulatedOperations {
                 }],
             }),
             "Int" => OperationValue::Integer(0),
-            _ => OperationValue::Text("simulated".to_owned()),
+            other => self.simulated_field_value(other, 0),
+        }
+    }
+
+    /// A benign placeholder value for a declared type name, recursing into
+    /// `self.types` for a record this crate has no built-in
+    /// `OperationValue` variant for, so [`Self::simulated_result`] can
+    /// return a field-complete value instead of bare placeholder text for
+    /// any module's own declared record — not just the ones this crate
+    /// special-cases. Falls back to placeholder text for anything it
+    /// cannot resolve, including a reference cycle (bounded by `depth`,
+    /// since a record's fields are declared by other modules this crate
+    /// does not otherwise validate for cycles at this layer).
+    fn simulated_field_value(&self, type_name: &str, depth: usize) -> OperationValue {
+        let text = || OperationValue::Text("simulated".to_owned());
+        if depth > 8 {
+            return text();
+        }
+        let bare = type_name.trim();
+        if let Some(inner) = bare
+            .strip_prefix("Option<")
+            .and_then(|rest| rest.strip_suffix('>'))
+        {
+            return self.simulated_field_value(inner, depth + 1);
+        }
+        if let Some(inner) = bare
+            .strip_prefix("List<")
+            .and_then(|rest| rest.strip_suffix('>'))
+        {
+            let _ = inner;
+            return OperationValue::List(Vec::new());
+        }
+        match bare {
+            "Text" => text(),
+            "PubKey" => OperationValue::PubKey("simulated".to_owned()),
+            "Int" | "Integer" => OperationValue::Integer(0),
+            "Bool" => OperationValue::Bool(false),
+            other => self
+                .types
+                .get(other)
+                .map_or_else(text, |fields| OperationValue::Record {
+                    name: other.to_owned(),
+                    fields: fields
+                        .iter()
+                        .map(|field| {
+                            (
+                                field.name.clone(),
+                                self.simulated_field_value(&field.type_name, depth + 1),
+                            )
+                        })
+                        .collect(),
+                }),
         }
     }
 }
@@ -2080,6 +2171,64 @@ mod tests {
         )
         .unwrap();
         assert_eq!(host.printed, ["no inputs needed"]);
+    }
+
+    #[test]
+    fn simulated_operations_with_types_fakes_a_declared_record_field_by_field() {
+        // `PackageListing` is not one of this crate's hardcoded simulated
+        // shapes (unlike `PublishReport`); a third party's own module
+        // operation must still get a field-complete fake value, not the
+        // bare placeholder text every other unknown type gets.
+        let mut returns = BTreeMap::new();
+        returns.insert(
+            ("evermore_packages".to_owned(), "list_installed".to_owned()),
+            "Result<PackageListing,PackagesError>".to_owned(),
+        );
+        let mut types = BTreeMap::new();
+        types.insert(
+            "PackageListing".to_owned(),
+            vec![nscript_modules::SchemaField {
+                name: "count".to_owned(),
+                type_name: "Int".to_owned(),
+                default: None,
+            }],
+        );
+        let mut operations = SimulatedOperations::with_types(returns, types);
+        match operations
+            .call(1, "evermore_packages", "list_installed", &[])
+            .expect("simulated call succeeds")
+        {
+            OperationValue::Record { name, fields } => {
+                assert_eq!(name, "PackageListing");
+                assert_eq!(
+                    fields,
+                    vec![("count".to_owned(), OperationValue::Integer(0))]
+                );
+            }
+            other => panic!("expected a simulated record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_operation_unwraps_a_generic_record_with_accessible_fields() {
+        // Regression: this used to fall through to the catch-all `Self::Op`
+        // wrapper for any `OperationValue::Record` not specifically named
+        // here (only `PublishReport` was), so a script could `print` a
+        // custom module's result but never read a field out of it — even
+        // though `Value::to_operation` already turns an arbitrary
+        // `Value::Record` into a generic `OperationValue::Record` on the
+        // way out. This is that conversion's missing other half.
+        let value = Value::from_operation(OperationValue::Record {
+            name: "PackageListing".to_owned(),
+            fields: vec![("count".to_owned(), OperationValue::Integer(7))],
+        });
+        assert_eq!(
+            value,
+            Value::Record {
+                name: "PackageListing".to_owned(),
+                fields: vec![("count".to_owned(), Value::Int(7))],
+            }
+        );
     }
 
     #[test]

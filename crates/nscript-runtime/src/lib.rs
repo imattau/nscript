@@ -6987,7 +6987,46 @@ impl ProcessOperationHost {
                     })
                     .collect::<Result<Vec<_>, _>>()?,
             }),
-            _ => return Err(fail()),
+            // Any other declared type (including none at all): infer a
+            // generic `Record` from the response's own JSON shape instead
+            // of refusing it. This is what lets a host answer a module
+            // this crate does not ship a concrete `OperationValue` variant
+            // for — the same way `encode` already turns an arbitrary
+            // `OperationValue::Record` into JSON on the way in, `decode`
+            // now turns arbitrary JSON into an `OperationValue::Record` on
+            // the way out, named by the declared type when known.
+            _ => Self::decode_generic(ok_type.unwrap_or("Record"), value).ok_or_else(fail)?,
+        })
+    }
+
+    /// A generic, type-name-agnostic decode for any JSON value this host
+    /// has no concrete shape for: a scalar maps to the matching
+    /// [`OperationValue`] scalar, an array maps to [`OperationValue::List`],
+    /// and an object maps to [`OperationValue::Record`] named `name` (a
+    /// nested object has no declared name of its own, so it is named
+    /// `"Record"` generically). `None` for anything a module operation
+    /// cannot return at all (`null`, for one).
+    fn decode_generic(name: &str, value: &serde_json::Value) -> Option<OperationValue> {
+        Some(match value {
+            serde_json::Value::String(text) => OperationValue::Text(text.clone()),
+            serde_json::Value::Bool(flag) => OperationValue::Bool(*flag),
+            serde_json::Value::Number(number) => OperationValue::Integer(number.as_i64()?),
+            serde_json::Value::Array(items) => OperationValue::List(
+                items
+                    .iter()
+                    .map(|item| Self::decode_generic("Record", item))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            serde_json::Value::Object(object) => OperationValue::Record {
+                name: name.to_owned(),
+                fields: object
+                    .iter()
+                    .map(|(field, field_value)| {
+                        Some((field.clone(), Self::decode_generic("Record", field_value)?))
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            },
+            serde_json::Value::Null => return None,
         })
     }
 }
@@ -15345,6 +15384,47 @@ mod tests {
                 assert!(report.outcomes[0].accepted);
             }
             other => panic!("expected a publish report, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "real-hosts")]
+    fn process_operation_host_decodes_an_unregistered_record_type_generically() {
+        // `PackageListing` is not one of this crate's hardcoded return
+        // shapes (unlike `PublishReport`); a real backend answering a
+        // custom, third-party module's operation must not be refused just
+        // because this crate has no concrete Rust type for its result.
+        let script =
+            process_host_fixture("generic", r#"{"ok": {"count": 7, "items": ["a", "b"]}}"#);
+        let mut returns = BTreeMap::new();
+        returns.insert(
+            ("evermore_packages".to_owned(), "list_installed".to_owned()),
+            "Result<PackageListing,PackagesError>".to_owned(),
+        );
+        let mut host = ProcessOperationHost::new(script.to_string_lossy().into_owned(), returns);
+        let result = host.call(1, "evermore_packages", "list_installed", &[]);
+        let _ = std::fs::remove_file(&script);
+        match result.expect("call succeeds") {
+            OperationValue::Record { name, fields } => {
+                assert_eq!(name, "PackageListing");
+                let count = fields
+                    .iter()
+                    .find(|(field, _)| field == "count")
+                    .map(|(_, value)| value.clone());
+                assert_eq!(count, Some(OperationValue::Integer(7)));
+                let items = fields
+                    .iter()
+                    .find(|(field, _)| field == "items")
+                    .map(|(_, value)| value.clone());
+                assert_eq!(
+                    items,
+                    Some(OperationValue::List(vec![
+                        OperationValue::Text("a".to_owned()),
+                        OperationValue::Text("b".to_owned()),
+                    ]))
+                );
+            }
+            other => panic!("expected a generic record, got {other:?}"),
         }
     }
 
