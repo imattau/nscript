@@ -169,14 +169,36 @@ pub fn lex(source: &str) -> Vec<Token> {
             }
             '"' => {
                 column += 1;
-                let value_start = start + 1;
-                let mut value_end = value_start;
-                let mut escaped = false;
-                for (offset, next) in chars.by_ref() {
-                    if !escaped && next == '"' {
-                        value_end = offset;
+                let mut value = String::new();
+                let mut pending_backslash = false;
+                for (_, next) in chars.by_ref() {
+                    if pending_backslash {
+                        pending_backslash = false;
+                        match next {
+                            'n' => value.push('\n'),
+                            't' => value.push('\t'),
+                            'r' => value.push('\r'),
+                            '0' => value.push('\0'),
+                            '"' | '\\' => value.push(next),
+                            // An unrecognised escape keeps both characters
+                            // literally rather than silently dropping the
+                            // backslash or refusing the whole program.
+                            other => {
+                                value.push('\\');
+                                value.push(other);
+                            }
+                        }
+                        column += 1;
+                        continue;
+                    }
+                    if next == '"' {
                         column += 1;
                         break;
+                    }
+                    if next == '\\' {
+                        pending_backslash = true;
+                        column += 1;
+                        continue;
                     }
                     if next == '\n' {
                         line += 1;
@@ -184,15 +206,17 @@ pub fn lex(source: &str) -> Vec<Token> {
                     } else {
                         column += 1;
                     }
-                    value_end = offset + next.len_utf8();
-                    escaped = !escaped && next == '\\';
-                    if next != '\\' {
-                        escaped = false;
-                    }
+                    value.push(next);
+                }
+                // An unterminated string ending on a trailing lone
+                // backslash still produces a token for what was consumed;
+                // the parser reports the missing closing quote.
+                if pending_backslash {
+                    value.push('\\');
                 }
                 let end = chars.peek().map_or(source.len(), |(offset, _)| *offset);
                 tokens.push(Token {
-                    kind: TokenKind::String(source[value_start..value_end].to_owned()),
+                    kind: TokenKind::String(value),
                     span: Span {
                         start,
                         end,
@@ -521,6 +545,44 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(identifiers, ["let", "café", "let", "東京", "café"]);
+    }
+
+    fn lex_one_string(source: &str) -> String {
+        let tokens = lex(source);
+        let strings: Vec<&str> = tokens
+            .iter()
+            .filter_map(|token| match &token.kind {
+                TokenKind::String(value) => Some(value.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            strings.len(),
+            1,
+            "expected exactly one string token: {tokens:?}"
+        );
+        strings[0].to_owned()
+    }
+
+    #[test]
+    fn string_literals_interpret_the_common_escapes() {
+        assert_eq!(
+            lex_one_string(r#""line one\nline two""#),
+            "line one\nline two"
+        );
+        assert_eq!(lex_one_string(r#""a\tb""#), "a\tb");
+        assert_eq!(lex_one_string(r#""a\"b""#), "a\"b");
+        assert_eq!(lex_one_string(r#""a\\b""#), "a\\b");
+    }
+
+    #[test]
+    fn an_unrecognised_escape_keeps_both_characters_literally() {
+        assert_eq!(lex_one_string(r#""a\qb""#), "a\\qb");
+    }
+
+    #[test]
+    fn a_literal_embedded_newline_still_lexes_as_before() {
+        assert_eq!(lex_one_string("\"a\nb\""), "a\nb");
     }
 
     #[test]
