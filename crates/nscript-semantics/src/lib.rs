@@ -155,6 +155,9 @@ pub struct CheckedProgram {
     pub handlers: Vec<CheckedHandler>,
     /// `key` declarations: name to the label the host provisions it under.
     pub keys: BTreeMap<String, String>,
+    /// `input` declarations: name to the declared type's name. The host
+    /// must supply a value of that type for each before the program runs.
+    pub inputs: BTreeMap<String, String>,
     /// Every event type the program or its imported modules declares, by
     /// name. `infer` resolves the program's own `event` declarations;
     /// [`bind_module_events`] adds the imported modules' `event`
@@ -424,7 +427,26 @@ fn program_locals(program: &Program) -> BTreeSet<String> {
             | Item::Relay(declaration)
             | Item::RelaySet(declaration)
             | Item::Key(declaration) => Some(declaration.name.value.clone()),
+            Item::Input(declaration) => Some(declaration.name.value.clone()),
             _ => None,
+        })
+        .collect()
+}
+
+/// `input name: Type` declarations: name to the declared type's name.
+fn declared_inputs(program: &Program) -> BTreeMap<String, String> {
+    program
+        .ast
+        .items
+        .iter()
+        .filter_map(|item| {
+            let Item::Input(declaration) = item else {
+                return None;
+            };
+            Some((
+                declaration.name.value.clone(),
+                declaration.type_ref.name.clone(),
+            ))
         })
         .collect()
 }
@@ -887,6 +909,9 @@ fn validate_item_types(item: &Item, known: &BTreeSet<String>, diagnostics: &mut 
             }
             validate_type(&item.value_type, known, diagnostics);
         }
+        Item::Input(item) => {
+            validate_type(&item.type_ref, known, diagnostics);
+        }
         Item::Permissions(block) => {
             for permission in &block.value {
                 match permission {
@@ -979,6 +1004,7 @@ pub fn infer(program: &Program) -> (CheckedProgram, Vec<Diagnostic>) {
             schedules: checker.schedules,
             handlers: checker.handlers,
             keys: declared_keys(program),
+            inputs: declared_inputs(program),
             events: program_events(program),
         },
         checker.diagnostics,
@@ -2064,6 +2090,40 @@ mod tests {
             "literal scalars and literal lists pair up; `content`, the bookkeeping \
              fields and computed values are not wire tags"
         );
+    }
+
+    #[test]
+    fn input_declarations_populate_checked_inputs() {
+        let source = "permissions {\n    log\n    clock\n}\n\ninput publisher: Text\ninput retries: Int\n\nevery 1d {\n    print(publisher)\n}\n";
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (checked, diagnostics) = check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("checks");
+        assert_eq!(
+            checked.inputs.get("publisher").map(String::as_str),
+            Some("Text")
+        );
+        assert_eq!(
+            checked.inputs.get("retries").map(String::as_str),
+            Some("Int")
+        );
+    }
+
+    #[test]
+    fn an_input_of_an_unknown_type_is_a_diagnostic() {
+        let source = "permissions {\n    log\n}\n\ninput publisher: NotARealType\n";
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let registry = ModuleRegistry::with_builtins();
+        let graph = registry
+            .resolve(&[])
+            .expect("empty dependency list resolves");
+        let codes: Vec<&str> = analyze_with_modules(&program, &graph)
+            .into_iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect();
+        assert_eq!(codes, ["E1101"], "{codes:?}");
     }
 
     #[test]

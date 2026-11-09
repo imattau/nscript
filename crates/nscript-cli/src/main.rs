@@ -52,7 +52,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>]\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--input <name>=<value>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -584,20 +584,23 @@ struct RunOptions {
     principal: Option<String>,
     /// `(module, operation)` pairs the simulator should make fail.
     failing: Vec<(String, String)>,
+    /// `(name, raw value)` pairs for declared `input`s, resolved against the
+    /// checked program's declared types by [`resolve_inputs`].
+    inputs: Vec<(String, String)>,
 }
 
-/// Separates `--event <json>`, `--events <file>`, `--as <key>` and
-/// `--fail <module.operation>` from the compiler arguments. `--events` reads one
-/// JSON event per line, or a single JSON array of events. `--fail` makes the
-/// simulator answer that operation with a recoverable error, so a script's error
-/// handling can be exercised.
+/// Separates `--event <json>`, `--events <file>`, `--as <key>`,
+/// `--fail <module.operation>` and `--input <name>=<value>` from the compiler
+/// arguments. `--events` reads one JSON event per line, or a single JSON
+/// array of events. `--fail` makes the simulator answer that operation with
+/// a recoverable error, so a script's error handling can be exercised.
 fn take_run_options(arguments: &[String]) -> Result<(Vec<String>, RunOptions), String> {
     let mut rest = Vec::new();
     let mut options = RunOptions::default();
     let mut index = 0;
     while index < arguments.len() {
         let flag = arguments[index].as_str();
-        if !matches!(flag, "--event" | "--events" | "--as" | "--fail") {
+        if !matches!(flag, "--event" | "--events" | "--as" | "--fail" | "--input") {
             rest.push(arguments[index].clone());
             index += 1;
             continue;
@@ -637,11 +640,70 @@ fn take_run_options(arguments: &[String]) -> Result<(Vec<String>, RunOptions), S
                     .failing
                     .push((module.to_owned(), operation.to_owned()));
             }
+            "--input" => {
+                let Some((name, raw)) = value.split_once('=') else {
+                    return Err(format!("--input expects <name>=<value>, found {value}"));
+                };
+                options.inputs.push((name.to_owned(), raw.to_owned()));
+            }
             _ => options.principal = Some(value.clone()),
         }
         index += 2;
     }
     Ok((rest, options))
+}
+
+/// Resolves `--input name=value` pairs against the checked program's
+/// declared `input`s, parsing each raw CLI string into the declared type.
+///
+/// Only the scalar types a CLI flag can unambiguously carry are supported:
+/// `Text`, `Integer`/`Int`, `Bool`, `PubKey`. A declared `input` of any other
+/// type, a missing required input, an unknown `--input` name, or a value
+/// that does not parse as its declared type is refused rather than guessed
+/// at.
+fn resolve_inputs(
+    raw: &[(String, String)],
+    checked: &nscript_semantics::CheckedProgram,
+) -> Result<std::collections::BTreeMap<String, nscript_runtime::eval::Value>, String> {
+    use nscript_runtime::eval::Value;
+    let supplied: std::collections::BTreeMap<&str, &str> = raw
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    for name in supplied.keys() {
+        if !checked.inputs.contains_key(*name) {
+            return Err(format!(
+                "--input {name}=... does not match a declared `input`"
+            ));
+        }
+    }
+    checked
+        .inputs
+        .iter()
+        .map(|(name, type_name)| {
+            let raw = supplied
+                .get(name.as_str())
+                .ok_or_else(|| format!("missing --input {name}=<value> ({type_name})"))?;
+            let value = match type_name.as_str() {
+                "Text" => Value::Text((*raw).to_owned()),
+                "Integer" | "Int" => Value::Int(
+                    raw.parse()
+                        .map_err(|_| format!("--input {name} expects an integer, found {raw}"))?,
+                ),
+                "Bool" => Value::Bool(
+                    raw.parse()
+                        .map_err(|_| format!("--input {name} expects true or false, found {raw}"))?,
+                ),
+                "PubKey" => Value::PubKey((*raw).to_owned()),
+                other => {
+                    return Err(format!(
+                        "input `{name}` declares type `{other}`, which no CLI flag can supply (only Text, Integer, Bool, and PubKey can)"
+                    ));
+                }
+            };
+            Ok((name.clone(), value))
+        })
+        .collect()
 }
 
 /// `(module, operation)` to declared return type, for simulating operations no
@@ -793,6 +855,7 @@ fn run_startup_sequential<R, S, C, A, O>(
     policy: &nscript_runtime::OperationPolicy,
     operations: &mut O,
     principal: Option<&str>,
+    inputs: &std::collections::BTreeMap<String, nscript_runtime::eval::Value>,
 ) -> Result<(), ExitCode>
 where
     R: nscript_runtime::RelayHost,
@@ -848,10 +911,11 @@ where
         operation_index,
         publication_index,
     };
-    match nscript_runtime::eval::run_schedule_bodies(
+    match nscript_runtime::eval::run_schedule_bodies_with_inputs(
         program,
         &mut traced,
         nscript_runtime::eval::EvalLimits::default(),
+        inputs,
     ) {
         Ok(()) => Ok(()),
         Err(error) => {
@@ -1001,6 +1065,13 @@ fn run_program(arguments: &[String]) -> ExitCode {
         |policy, call| policy.allow(&call.module, &call.operation),
     );
     let mut operation_host = simulated_operations(&graph, &options.failing);
+    let inputs = match resolve_inputs(&options.inputs, &checked) {
+        Ok(inputs) => inputs,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
     if let Err(code) = run_startup_sequential(
         &mut runtime,
         &program,
@@ -1008,6 +1079,7 @@ fn run_program(arguments: &[String]) -> ExitCode {
         &operation_policy,
         &mut operation_host,
         options.principal.as_deref(),
+        &inputs,
     ) {
         return code;
     }
@@ -1035,11 +1107,13 @@ struct DeployOptions {
     /// (see [`nscript_runtime::ProcessOperationHost`]), in place of the
     /// built-in simulator `deploy` otherwise always uses for them.
     operation_command: Option<String>,
+    /// `(name, raw value)` pairs for declared `input`s; see [`resolve_inputs`].
+    inputs: Vec<(String, String)>,
 }
 
-/// Separates `--relay`, `--signer`, `--as`, `--poll-interval`, `--cycles` and
-/// `--operation-command` from the compiler arguments, the same way
-/// [`take_run_options`] does for `run`'s own flags.
+/// Separates `--relay`, `--signer`, `--as`, `--poll-interval`, `--cycles`,
+/// `--operation-command` and `--input` from the compiler arguments, the same
+/// way [`take_run_options`] does for `run`'s own flags.
 fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptions), String> {
     let mut rest = Vec::new();
     let mut options = DeployOptions::default();
@@ -1054,6 +1128,7 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
                 | "--poll-interval"
                 | "--cycles"
                 | "--operation-command"
+                | "--input"
         ) {
             rest.push(arguments[index].clone());
             index += 1;
@@ -1085,6 +1160,12 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
                 );
             }
             "--operation-command" => options.operation_command = Some(value.clone()),
+            "--input" => {
+                let Some((name, raw)) = value.split_once('=') else {
+                    return Err(format!("--input expects <name>=<value>, found {value}"));
+                };
+                options.inputs.push((name.to_owned(), raw.to_owned()));
+            }
             _ => options.principal = Some(value.clone()),
         }
         index += 2;
@@ -1319,6 +1400,13 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
             ),
         }
     }
+    let inputs = match resolve_inputs(&options.inputs, &checked) {
+        Ok(inputs) => inputs,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
     if let Err(code) = run_startup_sequential(
         &mut runtime,
         &program,
@@ -1326,6 +1414,7 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
         &operation_policy,
         &mut operation_host,
         options.principal.as_deref(),
+        &inputs,
     ) {
         return code;
     }

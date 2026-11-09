@@ -933,6 +933,70 @@ fn run_source(name: &str, source: &str, extra: &[&str]) -> (bool, String, String
 
 const MODERATION_BOT: &str = include_str!("../../../examples/concord-moderation-bot.ns");
 
+const INPUT_SCHEDULE: &str = "permissions {\n    log\n    clock\n}\n\ninput publisher: Text\ninput retries: Int\n\nevery 1h {\n    print(publisher + \" x\" + text(retries))\n}\n";
+
+#[test]
+fn deploy_and_run_bind_declared_inputs_from_the_input_flag() {
+    let (ok, stdout, stderr) = run_source(
+        "input-ok",
+        INPUT_SCHEDULE,
+        &["--input", "publisher=acme", "--input", "retries=3"],
+    );
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("log info: acme x3"), "{stdout}");
+}
+
+#[test]
+fn run_refuses_a_missing_declared_input() {
+    let (ok, _, stderr) = run_source(
+        "input-missing",
+        INPUT_SCHEDULE,
+        &["--input", "publisher=acme"],
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("missing --input retries=<value>"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn run_refuses_an_input_flag_with_no_matching_declaration() {
+    let (ok, _, stderr) = run_source(
+        "input-unknown",
+        INPUT_SCHEDULE,
+        &[
+            "--input",
+            "publisher=acme",
+            "--input",
+            "retries=3",
+            "--input",
+            "bogus=1",
+        ],
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("does not match a declared `input`"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn run_refuses_an_input_value_that_does_not_parse_as_its_declared_type() {
+    let (ok, _, stderr) = run_source(
+        "input-bad-type",
+        INPUT_SCHEDULE,
+        &[
+            "--input",
+            "publisher=acme",
+            "--input",
+            "retries=not-a-number",
+        ],
+    );
+    assert!(!ok);
+    assert!(stderr.contains("expects an integer"), "{stderr}");
+}
+
 #[test]
 fn run_starts_a_handler_program_without_executing_its_handler_calls() {
     // Before handlers were evaluated, the handler's `kick event.author` ran once
