@@ -112,6 +112,10 @@ jobs:
           NOSTR_BLOSSOM_SERVERS: ${{ vars.NOSTR_BLOSSOM_SERVERS }}
         run: |
           test -n "$NOSTR_SECRET_KEY" || { echo "The release environment must define NOSTR_SECRET_KEY" >&2; exit 1; }
+          # Default project relays; set the NOSTR_RELAYS variable to override.
+          if [[ -z "${NOSTR_RELAYS//[[:space:]]/}" ]]; then
+            NOSTR_RELAYS=$'wss://relay.ditto.pub\nwss://nostr-01.yakihonne.com\nwss://relay.primal.net'
+          fi
           relay_args=()
           while IFS= read -r relay; do
             [[ -z "${relay//[[:space:]]/}" ]] && continue

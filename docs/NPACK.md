@@ -65,7 +65,8 @@ packaging/build-npk.sh 0.1.0 npub1... target/release/nscript "$(command -v npack
 Pushing a `v<version>` tag runs `.github/workflows/release.yml`, which builds
 and attests the package, creates a GitHub Release, and publishes to Nostr from
 the protected `release` environment. Configure the repository variables
-`NOSTR_PUBLISHER`, `NOSTR_RELAYS` and `NOSTR_BLOSSOM_SERVERS`, and the
-environment secret `NOSTR_SECRET_KEY` (a dedicated publisher key). The tag must
+`NOSTR_PUBLISHER` and `NOSTR_BLOSSOM_SERVERS`, and the
+environment secret `NOSTR_SECRET_KEY` (a dedicated publisher key). Relays default to `wss://relay.ditto.pub`, `wss://nostr-01.yakihonne.com` and
+`wss://relay.primal.net`; set `NOSTR_RELAYS` to override. The tag must
 match the workspace version in `Cargo.toml`. Running the workflow by hand
 rehearses the build without releasing.
