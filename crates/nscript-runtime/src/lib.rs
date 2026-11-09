@@ -547,6 +547,15 @@ pub enum RuntimeError {
     HandlerError {
         message: String,
     },
+    /// An [`OperationHost`] explicitly reported that an operation failed, with
+    /// a message the host considers safe to show the script and the user
+    /// (for example, [`ProcessOperationHost`] relaying its external command's
+    /// own `{"err": "..."}` response). Distinct from [`Self::OperationUnavailable`]
+    /// (the host has no answer at all) and from the fixed, non-custom messages
+    /// the other recoverable variants carry.
+    HostRejected {
+        message: String,
+    },
 }
 
 /// Decodes a dispatch payload supplied by a WASM operation import.
@@ -6741,6 +6750,300 @@ impl SubscriptionHost for RealRelayPool {
                 relayset: relay_name.clone(),
             })?
             .poll(invocation, &local)
+    }
+}
+
+/// An [`OperationHost`] that answers module operation calls by running an
+/// external command once per call, instead of a built-in simulator.
+///
+/// This is the real (non-simulated) counterpart to `nscript-cli`'s
+/// `simulated_operations`, for the one part of `deploy` that was still
+/// always simulated: module operation calls such as `nip51.publish_user_list`
+/// or `nip78.publish_app_data` (`deploy` already makes `publish`/`sign`/
+/// `relay` real through [`RealRelayPool`] and `Nip46SignerHost`). It is
+/// deliberately a process bridge rather than a Rust trait object a CLI flag
+/// could select, because the whole point is letting a host-specific backend
+/// (a package manager's trust store, a settings daemon, anything with its
+/// own grant model) answer these calls without forking `nscript` or adding
+/// per-backend Rust code to this crate.
+///
+/// # Protocol
+///
+/// For a call to `module.operation(args...)`, the command runs as
+/// `<command> <module> <operation>` with one JSON array of encoded
+/// arguments written to its stdin, and must write exactly one JSON value to
+/// its stdout before exiting 0:
+///
+/// - `{"ok": <value>}` — the operation's result, encoded as below.
+/// - `{"err": "<message>"}` — the operation failed; `<message>` becomes
+///   [`RuntimeError::HostRejected`], which [`crate::eval`]'s `recoverable`
+///   turns into the operation's declared error value when it declares
+///   `Result<T,E>`, same as a built-in recoverable failure.
+///
+/// A non-zero exit, a missing/malformed response, or a value this host does
+/// not know how to encode or decode is reported as
+/// [`RuntimeError::OperationUnavailable`] rather than guessed at.
+///
+/// ## Value encoding
+///
+/// Only the structural scalars and the record shapes shared across NIP
+/// modules are supported; anything else fails closed rather than silently
+/// dropping fields a real backend might rely on:
+///
+/// | [`OperationValue`] | JSON |
+/// | :-- | :-- |
+/// | `Text`/`PubKey`/`EncryptedText`/`GiftWrap` | `{"type":"<kind>","value":"..."}` |
+/// | `Integer` | `{"type":"integer","value":N}` |
+/// | `Bool` | `{"type":"bool","value":true\|false}` |
+/// | `List` | `{"type":"list","value":[...]}` |
+/// | `Record{name,fields}` | `{"type":"record","name":"...","fields":{"k":...}}` |
+/// | `UserList` (NIP-51) | `{"type":"user_list","identifier":"...","members":[...]}` |
+/// | `AppData` (NIP-78) | `{"type":"app_data","identifier":"...","content":"..."}` |
+/// | `HttpAuthRequest`/`AuthenticatedRequest` (NIP-98) | `{"type":"http_auth_request"\|"authenticated_request","url":"...","method":"..."}` |
+/// | `CalendarEvent` (NIP-52) | `{"type":"calendar_event","title":"...","start":N,"end":N,"location":"..."}` |
+/// | `PublishReport` | `{"type":"publish_report","outcomes":[{"relay":"...","accepted":bool,"detail":"..."}]}` |
+///
+/// Decoding a result uses the operation's declared return type (threaded in
+/// at construction from the same `(module, operation) -> return type` map
+/// `nscript-cli`'s `declared_returns` already builds) to pick which of the
+/// above shapes to expect; a `Result<T,E>` declaration decodes `T`.
+#[cfg(feature = "real-hosts")]
+#[derive(Debug, Clone)]
+pub struct ProcessOperationHost {
+    command: String,
+    declared_returns: BTreeMap<(String, String), String>,
+}
+
+#[cfg(feature = "real-hosts")]
+impl ProcessOperationHost {
+    #[must_use]
+    pub fn new(
+        command: impl Into<String>,
+        declared_returns: BTreeMap<(String, String), String>,
+    ) -> Self {
+        Self {
+            command: command.into(),
+            declared_returns,
+        }
+    }
+
+    fn ok_type(&self, module: &str, operation: &str) -> Option<String> {
+        let declared = self
+            .declared_returns
+            .get(&(module.to_owned(), operation.to_owned()))?;
+        let inner = declared.strip_prefix("Result<")?.strip_suffix('>')?;
+        let mut depth = 0_usize;
+        for (index, character) in inner.char_indices() {
+            match character {
+                '<' => depth += 1,
+                '>' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => return Some(inner[..index].trim().to_owned()),
+                _ => {}
+            }
+        }
+        Some(inner.trim().to_owned())
+    }
+
+    fn unavailable(module: &str, operation: &str) -> RuntimeError {
+        RuntimeError::OperationUnavailable {
+            module: module.to_owned(),
+            operation: operation.to_owned(),
+        }
+    }
+
+    fn encode(
+        module: &str,
+        operation: &str,
+        value: &OperationValue,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        use serde_json::json;
+        let fail = || Self::unavailable(module, operation);
+        Ok(match value {
+            OperationValue::Text(text) => json!({"type": "text", "value": text}),
+            OperationValue::PubKey(key) => json!({"type": "pubkey", "value": key}),
+            OperationValue::EncryptedText(text) => {
+                json!({"type": "encrypted_text", "value": text})
+            }
+            OperationValue::GiftWrap(text) => json!({"type": "gift_wrap", "value": text}),
+            OperationValue::Integer(number) => json!({"type": "integer", "value": number}),
+            OperationValue::Bool(flag) => json!({"type": "bool", "value": flag}),
+            OperationValue::List(items) => {
+                let encoded = items
+                    .iter()
+                    .map(|item| Self::encode(module, operation, item))
+                    .collect::<Result<Vec<_>, _>>()?;
+                json!({"type": "list", "value": encoded})
+            }
+            OperationValue::Record { name, fields } => {
+                let mut encoded = serde_json::Map::new();
+                for (key, field) in fields {
+                    encoded.insert(key.clone(), Self::encode(module, operation, field)?);
+                }
+                json!({"type": "record", "name": name, "fields": encoded})
+            }
+            OperationValue::UserList(list) => json!({
+                "type": "user_list",
+                "identifier": list.identifier,
+                "members": list.members,
+            }),
+            OperationValue::AppData(data) => json!({
+                "type": "app_data",
+                "identifier": data.identifier,
+                "content": data.content,
+            }),
+            OperationValue::HttpAuthRequest(request) => json!({
+                "type": "http_auth_request",
+                "url": request.url,
+                "method": request.method,
+            }),
+            OperationValue::AuthenticatedRequest(request) => json!({
+                "type": "authenticated_request",
+                "url": request.url,
+                "method": request.method,
+            }),
+            OperationValue::CalendarEvent(event) => json!({
+                "type": "calendar_event",
+                "title": event.title,
+                "start": event.start,
+                "end": event.end,
+                "location": event.location,
+            }),
+            OperationValue::PublishReport(report) => json!({
+                "type": "publish_report",
+                "outcomes": report
+                    .outcomes
+                    .iter()
+                    .map(|outcome| json!({
+                        "relay": outcome.relay,
+                        "accepted": outcome.accepted,
+                        "detail": outcome.detail,
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            _ => return Err(fail()),
+        })
+    }
+
+    fn decode(
+        module: &str,
+        operation: &str,
+        ok_type: Option<&str>,
+        value: &serde_json::Value,
+    ) -> Result<OperationValue, RuntimeError> {
+        let fail = || Self::unavailable(module, operation);
+        let text = |key: &str| -> Result<String, RuntimeError> {
+            value
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(fail)
+        };
+        Ok(match ok_type.unwrap_or_default() {
+            "Text" => OperationValue::Text(value.as_str().ok_or_else(fail)?.to_owned()),
+            "PubKey" => OperationValue::PubKey(value.as_str().ok_or_else(fail)?.to_owned()),
+            "Bool" => OperationValue::Bool(value.as_bool().ok_or_else(fail)?),
+            "Integer" => OperationValue::Integer(value.as_i64().ok_or_else(fail)?),
+            "UserList" => OperationValue::UserList(UserList {
+                identifier: text("identifier")?,
+                members: value
+                    .get("members")
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or_else(fail)?
+                    .iter()
+                    .map(|member| member.as_str().map(str::to_owned).ok_or_else(fail))
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
+            "AppData" => OperationValue::AppData(AppData {
+                identifier: text("identifier")?,
+                content: text("content")?,
+            }),
+            "AuthenticatedRequest" => OperationValue::AuthenticatedRequest(AuthenticatedRequest {
+                url: text("url")?,
+                method: text("method")?,
+            }),
+            "PublishReport" => OperationValue::PublishReport(PublishReport {
+                outcomes: value
+                    .get("outcomes")
+                    .and_then(serde_json::Value::as_array)
+                    .ok_or_else(fail)?
+                    .iter()
+                    .map(|outcome| -> Result<RelayOutcome, RuntimeError> {
+                        Ok(RelayOutcome {
+                            relay: outcome
+                                .get("relay")
+                                .and_then(serde_json::Value::as_str)
+                                .ok_or_else(fail)?
+                                .to_owned(),
+                            accepted: outcome
+                                .get("accepted")
+                                .and_then(serde_json::Value::as_bool)
+                                .ok_or_else(fail)?,
+                            detail: outcome
+                                .get("detail")
+                                .and_then(serde_json::Value::as_str)
+                                .ok_or_else(fail)?
+                                .to_owned(),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            }),
+            _ => return Err(fail()),
+        })
+    }
+}
+
+#[cfg(feature = "real-hosts")]
+impl OperationHost for ProcessOperationHost {
+    fn call(
+        &mut self,
+        _invocation: InvocationId,
+        module: &str,
+        operation: &str,
+        arguments: &[OperationValue],
+    ) -> Result<OperationValue, RuntimeError> {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let encoded_arguments = arguments
+            .iter()
+            .map(|argument| Self::encode(module, operation, argument))
+            .collect::<Result<Vec<_>, _>>()?;
+        let fail = || Self::unavailable(module, operation);
+
+        let mut child = Command::new(&self.command)
+            .arg(module)
+            .arg(operation)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|_| fail())?;
+        {
+            let stdin = child.stdin.as_mut().ok_or_else(fail)?;
+            let payload = serde_json::Value::Array(encoded_arguments);
+            stdin
+                .write_all(payload.to_string().as_bytes())
+                .map_err(|_| fail())?;
+        }
+        let output = child.wait_with_output().map_err(|_| fail())?;
+        if !output.status.success() {
+            return Err(fail());
+        }
+        let response: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|_| fail())?;
+        if let Some(message) = response.get("err") {
+            let message = message.as_str().ok_or_else(fail)?.to_owned();
+            return Err(RuntimeError::HostRejected { message });
+        }
+        let ok_value = response.get("ok").ok_or_else(fail)?;
+        let ok_type = self.ok_type(module, operation);
+        Self::decode(module, operation, ok_type.as_deref(), ok_value)
+    }
+
+    fn declared_return(&self, module: &str, operation: &str) -> Option<String> {
+        self.declared_returns
+            .get(&(module.to_owned(), operation.to_owned()))
+            .cloned()
     }
 }
 
@@ -14987,6 +15290,111 @@ mod tests {
         assert!(matches!(
             pool.subscribe(1, &request),
             Err(RuntimeError::RelayUnavailable { relayset }) if relayset == "public"
+        ));
+    }
+
+    /// Writes a `#!/bin/sh` fixture that ignores its stdin and prints
+    /// `response` to stdout, for [`ProcessOperationHost`] tests that need a
+    /// real (if trivial) child process rather than network access.
+    #[cfg(feature = "real-hosts")]
+    fn process_host_fixture(name: &str, response: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!(
+            "nscript-process-host-{name}-{}.sh",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\ncat >/dev/null\nprintf '%s' '{response}'\n"),
+        )
+        .expect("writes fixture script");
+        let mut permissions = std::fs::metadata(&path)
+            .expect("reads fixture metadata")
+            .permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&path, permissions).expect("sets fixture executable");
+        path
+    }
+
+    #[test]
+    #[cfg(feature = "real-hosts")]
+    fn process_operation_host_decodes_a_successful_call() {
+        let script = process_host_fixture(
+            "ok",
+            r#"{"ok": {"type": "publish_report", "outcomes": [{"relay": "wss://r", "accepted": true, "detail": ""}]}}"#,
+        );
+        let mut returns = BTreeMap::new();
+        returns.insert(
+            ("nip51".to_owned(), "publish_user_list".to_owned()),
+            "Result<PublishReport,ListError>".to_owned(),
+        );
+        let mut host = ProcessOperationHost::new(script.to_string_lossy().into_owned(), returns);
+        let result = host.call(
+            1,
+            "nip51",
+            "publish_user_list",
+            &[OperationValue::UserList(UserList {
+                identifier: "evermore:trusted-publishers".to_owned(),
+                members: vec!["abc".to_owned()],
+            })],
+        );
+        let _ = std::fs::remove_file(&script);
+        match result.expect("call succeeds") {
+            OperationValue::PublishReport(report) => {
+                assert_eq!(report.outcomes.len(), 1);
+                assert!(report.outcomes[0].accepted);
+            }
+            other => panic!("expected a publish report, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "real-hosts")]
+    fn process_operation_host_maps_an_err_response_to_host_rejected() {
+        let script = process_host_fixture("err", r#"{"err": "publisher not trusted"}"#);
+        let mut host =
+            ProcessOperationHost::new(script.to_string_lossy().into_owned(), BTreeMap::new());
+        let result = host.call(
+            1,
+            "nip51",
+            "publish_user_list",
+            &[OperationValue::UserList(UserList {
+                identifier: "x".to_owned(),
+                members: vec![],
+            })],
+        );
+        let _ = std::fs::remove_file(&script);
+        assert!(matches!(
+            result,
+            Err(RuntimeError::HostRejected { message }) if message == "publisher not trusted"
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "real-hosts")]
+    fn process_operation_host_refuses_to_encode_an_unsupported_argument() {
+        // No process is ever spawned: encoding fails closed before the
+        // command runs, for a value shape this host does not model.
+        let mut host = ProcessOperationHost::new("/does/not/exist".to_owned(), BTreeMap::new());
+        let result = host.call(
+            1,
+            "concord04",
+            "kick_member",
+            &[OperationValue::P2POrder(Box::new(P2POrder {
+                identifier: "o1".to_owned(),
+                order_type: "sell".to_owned(),
+                currency: "USD".to_owned(),
+                status: "open".to_owned(),
+                amount_sats: 0,
+                fiat_amount: "0".to_owned(),
+                payment_method: "cash".to_owned(),
+                premium: 0,
+            }))],
+        );
+        assert!(matches!(
+            result,
+            Err(RuntimeError::OperationUnavailable { module, operation })
+                if module == "concord04" && operation == "kick_member"
         ));
     }
 

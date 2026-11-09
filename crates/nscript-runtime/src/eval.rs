@@ -1127,6 +1127,7 @@ fn recoverable(error: &RuntimeError, error_type: &str) -> Option<Value> {
         RuntimeError::PaymentLimitExceeded { amount, limit } => {
             format!("payment of {amount} exceeds the limit of {limit}")
         }
+        RuntimeError::HostRejected { message } => message.clone(),
         _ => return None,
     };
     Some(Value::Record {

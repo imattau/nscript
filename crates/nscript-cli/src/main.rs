@@ -52,7 +52,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>]\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>]\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -786,12 +786,12 @@ impl<H: nscript_runtime::eval::EvalHost> nscript_runtime::eval::EvalHost for Sta
 ///
 /// Returns the exit code for the first unhandled failure the sequence hits.
 #[allow(clippy::too_many_arguments)]
-fn run_startup_sequential<R, S, C, A>(
+fn run_startup_sequential<R, S, C, A, O>(
     runtime: &mut nscript_runtime::Runtime<R, S, C, A>,
     program: &Program,
     checked: &nscript_semantics::CheckedProgram,
     policy: &nscript_runtime::OperationPolicy,
-    operations: &mut nscript_runtime::eval::SimulatedOperations,
+    operations: &mut O,
     principal: Option<&str>,
 ) -> Result<(), ExitCode>
 where
@@ -799,6 +799,7 @@ where
     S: nscript_runtime::SignerHost,
     C: nscript_runtime::ClockHost,
     A: nscript_runtime::AuditHost,
+    O: nscript_runtime::OperationHost,
 {
     let mut startup = checked.clone();
     startup.operation_calls =
@@ -891,6 +892,48 @@ fn simulated_operations(
         operations.fail_operation(module, operation);
     }
     operations
+}
+
+/// `deploy`'s module-operation backend: the simulator by default, or a real
+/// [`nscript_runtime::ProcessOperationHost`] when `--operation-command` is
+/// given. One concrete type is needed because `deploy_program` is not
+/// itself generic over the operation host, so this just forwards each
+/// [`nscript_runtime::OperationHost`] method to whichever variant is active.
+enum DeployOperationHost {
+    Simulated(nscript_runtime::eval::SimulatedOperations),
+    Process(nscript_runtime::ProcessOperationHost),
+}
+
+impl nscript_runtime::OperationHost for DeployOperationHost {
+    fn host_key(
+        &mut self,
+        label: &str,
+    ) -> Result<nscript_runtime::DerivedKey, nscript_runtime::RuntimeError> {
+        match self {
+            Self::Simulated(host) => host.host_key(label),
+            Self::Process(host) => host.host_key(label),
+        }
+    }
+
+    fn call(
+        &mut self,
+        invocation: nscript_runtime::InvocationId,
+        module: &str,
+        operation: &str,
+        arguments: &[nscript_runtime::OperationValue],
+    ) -> Result<nscript_runtime::OperationValue, nscript_runtime::RuntimeError> {
+        match self {
+            Self::Simulated(host) => host.call(invocation, module, operation, arguments),
+            Self::Process(host) => host.call(invocation, module, operation, arguments),
+        }
+    }
+
+    fn declared_return(&self, module: &str, operation: &str) -> Option<String> {
+        match self {
+            Self::Simulated(host) => host.declared_return(module, operation),
+            Self::Process(host) => host.declared_return(module, operation),
+        }
+    }
 }
 
 fn run_program(arguments: &[String]) -> ExitCode {
@@ -988,11 +1031,15 @@ struct DeployOptions {
     /// Stop after this many poll cycles, instead of running until
     /// interrupted. Mainly for tests and for trying a deployment briefly.
     cycles: Option<u64>,
+    /// An external command that answers module operation calls for real
+    /// (see [`nscript_runtime::ProcessOperationHost`]), in place of the
+    /// built-in simulator `deploy` otherwise always uses for them.
+    operation_command: Option<String>,
 }
 
-/// Separates `--relay`, `--signer`, `--as`, `--poll-interval` and `--cycles`
-/// from the compiler arguments, the same way [`take_run_options`] does for
-/// `run`'s own flags.
+/// Separates `--relay`, `--signer`, `--as`, `--poll-interval`, `--cycles` and
+/// `--operation-command` from the compiler arguments, the same way
+/// [`take_run_options`] does for `run`'s own flags.
 fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptions), String> {
     let mut rest = Vec::new();
     let mut options = DeployOptions::default();
@@ -1001,7 +1048,12 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
         let flag = arguments[index].as_str();
         if !matches!(
             flag,
-            "--relay" | "--signer" | "--as" | "--poll-interval" | "--cycles"
+            "--relay"
+                | "--signer"
+                | "--as"
+                | "--poll-interval"
+                | "--cycles"
+                | "--operation-command"
         ) {
             rest.push(arguments[index].clone());
             index += 1;
@@ -1032,6 +1084,7 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
                         .map_err(|_| format!("--cycles expects a whole number, found {value}"))?,
                 );
             }
+            "--operation-command" => options.operation_command = Some(value.clone()),
             _ => options.principal = Some(value.clone()),
         }
         index += 2;
@@ -1057,11 +1110,15 @@ fn event_kind(graph: &nscript_modules::ResolvedModuleGraph, name: &str) -> Optio
 /// `--signer name=bunker://...`, a real NIP-46 remote signer
 /// (`Nip46SignerHost<RealNip46Transport>`) — unlike `run`, which always
 /// simulates both, by design. Module operation calls
-/// (`nip56.publish_report(...)`, `kick`, ...) still go through the same
-/// simulator `run`/`test-event` use: this closes the gap between "a script
-/// checks and runs against fakes" and "it is actually watching a relay and
+/// (`nip56.publish_report(...)`, `kick`, ...) go through the same simulator
+/// `run`/`test-event` use by default, unless `--operation-command <path>`
+/// names an external command to answer them for real instead
+/// (`ProcessOperationHost`): this closes the gap between "a script checks
+/// and runs against fakes" and "it is actually watching a relay and
 /// actually publishing," not the separate, larger gap of making every one of
-/// the ~75 NIP modules' operations real.
+/// the ~75 NIP modules' operations real against a *built-in* host — that
+/// part stays out of scope for this crate; `--operation-command` is the
+/// extension point for a real backend of your own instead.
 ///
 /// After the program's own top-level publications run (for real), this
 /// polls every declared handler's subscription in a loop — subscribe, wait
@@ -1247,11 +1304,20 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
         nscript_runtime::OperationPolicy::default(),
         |policy, call| policy.allow(&call.module, &call.operation),
     );
-    let mut operation_host = simulated_operations(&graph, &[]);
+    let mut operation_host = match &options.operation_command {
+        Some(command) => DeployOperationHost::Process(nscript_runtime::ProcessOperationHost::new(
+            command.clone(),
+            declared_returns(&graph),
+        )),
+        None => DeployOperationHost::Simulated(simulated_operations(&graph, &[])),
+    };
     if !checked.operation_calls.is_empty() {
-        println!(
-            "note: module operation calls (kick, react, publish_report, ...) are still simulated here; only publish/sign/relay are real"
-        );
+        match &options.operation_command {
+            Some(command) => println!("note: module operation calls run through `{command}`"),
+            None => println!(
+                "note: module operation calls (kick, react, publish_report, ...) are still simulated here; only publish/sign/relay are real"
+            ),
+        }
     }
     if let Err(code) = run_startup_sequential(
         &mut runtime,
