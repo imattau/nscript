@@ -218,7 +218,7 @@ mod tests {
                 Err(RuntimeError::AuthorityDenied { .. })
             ));
         }
-        assert!(host.issued.is_empty());
+        assert_eq!(host.issued.len(), 0);
     }
 
     #[test]

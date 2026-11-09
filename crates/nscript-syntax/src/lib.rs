@@ -533,7 +533,7 @@ defaults { signer: account; relays: public }
 publish Note { content: "hello" }
 "#;
         let (program, diagnostics) = parse_program(source);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, [] as [crate::Diagnostic; 0]);
         assert_eq!(program.profile, RuntimeProfile::HardenedAgent);
         assert_eq!(program.defaults.signer.as_ref().unwrap().0, "account");
         assert_eq!(program.defaults.relays.as_ref().unwrap().0, "public");
@@ -544,14 +544,14 @@ publish Note { content: "hello" }
     fn does_not_treat_permission_as_publication() {
         let source = "permissions { publish Note to public }\n";
         let (program, diagnostics) = parse_program(source);
-        assert!(diagnostics.is_empty());
-        assert!(program.publishes.is_empty());
+        assert_eq!(diagnostics, [] as [crate::Diagnostic; 0]);
+        assert_eq!(program.publishes, [] as [crate::PublishSite; 0]);
     }
 
     #[test]
     fn parses_qualified_versioned_imports() {
         let (program, diagnostics) = parse_program("use community::moderation @ \"^2\"\n");
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, [] as [crate::Diagnostic; 0]);
         assert_eq!(program.imports[0].path, "community::moderation");
         assert_eq!(program.imports[0].requirement.as_deref(), Some("^2"));
     }
@@ -904,7 +904,7 @@ publish Note { content: "hello" }
     fn a_continuation_line_that_starts_with_an_operator_is_an_error_not_a_silent_join() {
         // The arm ended at its line, so `+ 2` cannot continue it.
         let (_, diagnostics) = parse_program("let r = match s {\n_ => 1\n + 2\n}\n");
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, [] as [crate::Diagnostic; 0]);
     }
 
     #[test]

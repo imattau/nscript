@@ -600,7 +600,7 @@ mod tests {
         );
 
         let none = decode_fragment(&encode_fragment(&token, &[]).unwrap()).unwrap();
-        assert!(none.relays.is_empty());
+        assert_eq!(none.relays.len(), 0);
         let four_custom: Vec<String> = (0..4).map(|i| format!("wss://r{i}")).collect();
         assert!(
             encode_fragment(&token, &four_custom).is_err(),

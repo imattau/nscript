@@ -307,7 +307,7 @@ fn bans_the_actor_may_not_make_publish_nothing() {
         call(&mut keyless, "ban_member", &SPAMMER),
         Err(RuntimeError::CapabilityDenied { .. })
     ));
-    assert!(c.published().is_empty());
+    assert_eq!(c.published().len(), 0);
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn kicks_the_actor_may_not_make_publish_nothing() {
         call(&mut moderator, "can_ban", &SPAMMER).unwrap(),
         OperationValue::Integer(0)
     );
-    assert!(c.published().is_empty());
+    assert_eq!(c.published().len(), 0);
 }
 
 #[test]
@@ -394,7 +394,7 @@ fn the_runtime_policy_gate_still_applies_first() {
         matches!(denied, Err(RuntimeError::CapabilityDenied { .. })),
         "an admin identity does not widen the script's grant"
     );
-    assert!(c.published().is_empty());
+    assert_eq!(c.published().len(), 0);
 }
 
 #[test]
@@ -431,7 +431,7 @@ fn a_demoted_actor_cannot_ban_and_its_stale_grant_is_not_cited() {
         call(&mut host, "ban_member", &SPAMMER),
         Err(RuntimeError::AuthorityDenied { .. })
     ));
-    assert!(c.published().is_empty());
+    assert_eq!(c.published().len(), 0);
     let _ = Vac {
         grant_eid: eid,
         version: 1,
