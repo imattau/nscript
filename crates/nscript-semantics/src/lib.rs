@@ -2422,7 +2422,7 @@ log\n}\nstream posts = select Note from public\non posts where author == \"some-
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let handler = &checked.as_ref().expect("checks").handlers[0];
         assert_eq!(handler.author.as_deref(), Some("some-pubkey"));
-        assert!(handler.tag_equals.is_empty());
+        assert_eq!(handler.tag_equals, [] as [(String, String); 0]);
         let mention = &checked.as_ref().expect("checks").handlers[1];
         assert_eq!(mention.tag_equals_principal, ["p".to_owned()]);
         let scoped = &checked.as_ref().expect("checks").handlers[2];
