@@ -3,6 +3,7 @@ use std::{
     io::{self, BufRead, Read, Write},
     path::PathBuf,
     process::{Command, Stdio},
+    sync::mpsc,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -24,7 +25,6 @@ fn main() -> io::Result<()> {
     if env::args().any(|argument| argument == "--http") {
         return serve_http();
     }
-    use std::sync::mpsc;
     let (input_tx, input_rx) = mpsc::channel::<io::Result<String>>();
     let (output_tx, output_rx) = mpsc::channel::<(String, Option<Value>)>();
     thread::spawn(move || {
@@ -46,17 +46,17 @@ fn main() -> io::Result<()> {
                     Err(error) => {
                         write_message(
                             &mut stdout,
-                            json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":format!("Parse error: {error}")}}),
+                            &json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":format!("Parse error: {error}")}}),
                         )?;
                         continue;
                     }
                 };
                 if request.get("method").and_then(Value::as_str) == Some("notifications/cancelled")
                 {
-                    if let Some(key) = request.pointer("/params/requestId").map(id_key) {
-                        if let Some(cancel) = active.get(&key) {
-                            cancel.store(true, Ordering::Relaxed);
-                        }
+                    if let Some(key) = request.pointer("/params/requestId").map(id_key)
+                        && let Some(cancel) = active.get(&key)
+                    {
+                        cancel.store(true, Ordering::Relaxed);
                     }
                     continue;
                 }
@@ -68,19 +68,18 @@ fn main() -> io::Result<()> {
                 active.insert(key.clone(), Arc::clone(&cancelled));
                 let sender = output_tx.clone();
                 thread::spawn(move || {
-                    let response = handle(request, cancelled);
+                    let response = handle(&request, &cancelled);
                     let _ = sender.send((key, response));
                 });
             }
             Ok(Err(error)) => return Err(error),
-            Ok(Ok(_)) => {}
             Err(mpsc::TryRecvError::Disconnected) => input_closed = true,
-            Err(mpsc::TryRecvError::Empty) => {}
+            Ok(Ok(_)) | Err(mpsc::TryRecvError::Empty) => {}
         }
         while let Ok((key, response)) = output_rx.try_recv() {
             active.remove(&key);
             if let Some(response) = response {
-                write_message(&mut stdout, response)?;
+                write_message(&mut stdout, &response)?;
             }
         }
         if input_closed && active.is_empty() {
@@ -95,13 +94,13 @@ fn id_key(id: &Value) -> String {
     serde_json::to_string(id).unwrap_or_else(|_| "null".to_owned())
 }
 
-fn write_message(output: &mut impl Write, value: Value) -> io::Result<()> {
-    serde_json::to_writer(&mut *output, &value)?;
+fn write_message(output: &mut impl Write, value: &Value) -> io::Result<()> {
+    serde_json::to_writer(&mut *output, value)?;
     output.write_all(b"\n")?;
     output.flush()
 }
 
-fn handle(request: Value, cancelled: Arc<AtomicBool>) -> Option<Value> {
+fn handle(request: &Value, cancelled: &Arc<AtomicBool>) -> Option<Value> {
     let id = request.get("id")?.clone();
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
     let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
@@ -116,7 +115,7 @@ fn handle(request: Value, cancelled: Arc<AtomicBool>) -> Option<Value> {
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({"tools": tool_definitions()})),
-        "tools/call" => call_tool(&params, &cancelled),
+        "tools/call" => call_tool(&params, cancelled),
         _ => {
             return Some(json!({
                 "jsonrpc": "2.0",
@@ -167,6 +166,7 @@ fn tool_definitions() -> Value {
     ])
 }
 
+#[allow(clippy::too_many_lines)]
 fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64, String)> {
     let name = params
         .get("name")
@@ -332,9 +332,7 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
     let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
     // Drop the temporary source before returning the tool result.
     temp.remove();
-    let structured = if name == "nscript_test_event" {
-        payload.clone()
-    } else if format_json && !is_error {
+    let structured = if name == "nscript_test_event" || (format_json && !is_error) {
         payload.clone()
     } else {
         json!({"success": !is_error, "exit_code": output.status.code(), "output": stdout, "stderr": stderr})
@@ -462,8 +460,7 @@ fn run_cli(
         let timeout = env::var("NSCRIPT_MCP_TIMEOUT_SECS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
-            .map(Duration::from_secs)
-            .unwrap_or(DEFAULT_CLI_TIMEOUT);
+            .map_or(DEFAULT_CLI_TIMEOUT, Duration::from_secs);
         if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
@@ -494,8 +491,8 @@ fn serve_http() -> io::Result<()> {
     HTTP_MODE.store(true, Ordering::Relaxed);
     if env::var("NSCRIPT_MCP_BEARER_TOKEN")
         .ok()
-        .filter(|token| !token.is_empty())
-        .is_none()
+        .as_ref()
+        .is_none_or(String::is_empty)
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -518,6 +515,7 @@ fn serve_http() -> io::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn serve_http_connection(mut stream: std::net::TcpStream) -> io::Result<()> {
     use std::net::Shutdown;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -556,7 +554,7 @@ fn serve_http_connection(mut stream: std::net::TcpStream) -> io::Result<()> {
             headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_owned());
         }
     }
-    if !host_allowed(headers.get("host").map(String::as_str).unwrap_or("")) {
+    if !host_allowed(headers.get("host").map_or("", String::as_str)) {
         return http_error(&mut stream, 403, "Host is not allowed");
     }
     if let Some(origin) = headers.get("origin") {
@@ -570,7 +568,7 @@ fn serve_http_connection(mut stream: std::net::TcpStream) -> io::Result<()> {
         }
     }
     if method == "OPTIONS" {
-        let origin = headers.get("origin").map(String::as_str).unwrap_or("");
+        let origin = headers.get("origin").map_or("", String::as_str);
         if origin.is_empty() {
             return http_error(&mut stream, 403, "Origin is required for preflight");
         }
@@ -580,7 +578,7 @@ fn serve_http_connection(mut stream: std::net::TcpStream) -> io::Result<()> {
         )?;
         return Ok(());
     }
-    let accept = headers.get("accept").map(String::as_str).unwrap_or("");
+    let accept = headers.get("accept").map_or("", String::as_str);
     if !accept.contains("application/json") || !accept.contains("text/event-stream") {
         return http_error(
             &mut stream,
@@ -589,17 +587,11 @@ fn serve_http_connection(mut stream: std::net::TcpStream) -> io::Result<()> {
         );
     }
     let expected = env::var("NSCRIPT_MCP_BEARER_TOKEN").unwrap_or_default();
-    let auth = headers
-        .get("authorization")
-        .map(String::as_str)
-        .unwrap_or("");
+    let auth = headers.get("authorization").map_or("", String::as_str);
     if auth.strip_prefix("Bearer ") != Some(expected.as_str()) {
         return http_error(&mut stream, 401, "invalid bearer token");
     }
-    let content_type = headers
-        .get("content-type")
-        .map(String::as_str)
-        .unwrap_or("");
+    let content_type = headers.get("content-type").map_or("", String::as_str);
     if !content_type
         .to_ascii_lowercase()
         .starts_with("application/json")
@@ -639,25 +631,17 @@ fn serve_http_connection(mut stream: std::net::TcpStream) -> io::Result<()> {
         let mut probe = [0_u8; 1];
         while !monitor_done.load(Ordering::Relaxed) {
             match peer.peek(&mut probe) {
-                Ok(0) => {
-                    monitor_cancelled.store(true, Ordering::Relaxed);
-                    break;
-                }
-                Ok(_) => {
-                    monitor_cancelled.store(true, Ordering::Relaxed);
-                    break;
-                }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(25))
+                    thread::sleep(Duration::from_millis(25));
                 }
-                Err(_) => {
+                Ok(0 | _) | Err(_) => {
                     monitor_cancelled.store(true, Ordering::Relaxed);
                     break;
                 }
             }
         }
     });
-    let response = handle(request, Arc::clone(&cancelled));
+    let response = handle(&request, &cancelled);
     done.store(true, Ordering::Relaxed);
     let _ = monitor.join();
     if cancelled.load(Ordering::Relaxed) {
@@ -772,7 +756,7 @@ impl TempSource {
                         .map_err(|error| format!("cannot write temporary source: {error}"))?;
                     return Ok(Self { path });
                 }
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => return Err(format!("cannot create temporary source: {error}")),
             }
         }
