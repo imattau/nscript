@@ -35,11 +35,17 @@ Example MCP client configuration:
 ## Tools
 
 - **`nscript_check`** accepts source and returns compiler diagnostics with a
-  success or failure status.
+  success or failure status. Optional `module_dirs` supplies custom module
+  directories, passed to the CLI with `-M`.
 - **`nscript_inspect`** accepts source and returns the structured manifest,
   including effects, resolved modules, operation calls, and publication trace.
+  Optional `module_dirs` supplies custom module directories.
 - **`nscript_simulate_event`** accepts source and a JSON event, then delivers
-  that event to matching handlers using `nscript run`'s simulator.
+  that event to matching handlers using `nscript run`'s simulator. Optional
+  `principal` supplies the program's `me` value (`--as`); `inputs` supplies
+  declared `Text`, `Integer`/`Int`, `Bool`, or `PubKey` inputs as JSON strings,
+  integers, or booleans. Optional `module_dirs` supplies custom module
+  directories.
 
 Simulation is explicitly dry: it does not connect to relays, publish events,
 or access signer keys. Operations without a simulator implementation are
@@ -47,9 +53,10 @@ recorded and answered with declared placeholder values, as in the CLI. A tool
 result reports CLI failures with MCP's `isError` field.
 
 The server accepts source up to 1 MB and event JSON up to 256 KB. It creates a
-temporary `.ns` file for each request and removes it after the CLI command.
-Custom module directories are not currently configurable through these tools;
-the built-in module registry is available by default.
+temporary `.ns` file with owner-only permissions on Unix, removes it after the
+CLI command, and redacts the temporary path from diagnostics. CLI execution
+has a 30-second timeout. Custom module directories are explicit local paths
+provided by the caller; the built-in module registry is always available.
 
 ## Scope
 
