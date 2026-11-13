@@ -52,6 +52,12 @@ and return types are mandatory at public module boundaries; local types MAY be
 inferred. There are no truthy conversions and no null value. Exhaustive matching
 is required for enums, `Option`, and `Result`.
 
+Interpolated text uses the form `$"hello {name}"`. Each expression inside
+braces is converted with `text(value)` and concatenated with the surrounding
+literal text; `{{` and `}}` produce literal braces. Interpolation is evaluated
+at run time in handlers. A top-level publish cannot execute computed tag fields
+during startup and reports E2403; use literal tag fields there.
+
 ## 3. Events and tags
 
 An event declaration describes author-controlled fields and its Nostr lowering:
@@ -163,7 +169,7 @@ MAY run locally only when its remote superset is bounded by an explicit `limit`,
 
 ```nostr
 let notes = select Note
-    where author == alice and tags.t contains "nostr"
+    where author == "<pubkey>" and tags.t contains "nostr"
     since 24h
     limit 100
     from public
@@ -178,12 +184,20 @@ bounded relay queries followed by local intersection; they MUST NOT be placed as
 multiple filters in one `REQ`, because filters within a request are alternatives.
 
 A `stream` is an unbounded subscription. `on` registers a handler and does not
-block top-level registration of later handlers.
+block top-level registration of later handlers. Handler `where` predicates are
+pushed into the remote subscription only for these shapes: `author == "<pubkey>"`,
+`author == me`, `tags.<name> contains "<literal>"`, and
+`tags.<name> contains me`, joined with `and`. Identifier names such as
+`author == alice`, `or`, and other expressions are rejected with E2402; they
+never become an unrestricted subscription. `me` is resolved from the configured
+principal when the subscription is created. A body check can express other
+filters when appropriate, for example `event.pubkey == me` or
+`event.tags contains "p=" + text(me)`.
 
 ```nostr
-stream mentions = select Note where tags.p contains me from public
+stream notes = select Note from public
 
-on mentions {
+on notes where tags.p contains me {
     print(event.content)
 }
 ```

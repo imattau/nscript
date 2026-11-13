@@ -14,6 +14,9 @@ against deterministic host fakes.
 | Declarative NIP modules | `modules/valid/nip10.nsm` | `modules/invalid/dynamic-wire-name.nsm` | `vectors/module-descriptors.json` |
 | Secret-key isolation | `secret-with-capability.ns` | `secret-without-capability.ns` | Secret redaction |
 | Query lowering and bounds | `mentions.ns` | `unbounded-local-filter.ns` | Inspect filter lowering trace |
+| Handler predicate safety | `mentions.ns` | semantics/runtime unsupported predicate tests | Principal-resolved filter trace |
+| Module-defined wire tags | `scenarios/clawstr-tagged-post.ns` | — | `I` tag in publication IR |
+| Read-side tag values | `read-tag-value.ns` | — | `starts_with` / `strip_prefix` handler run |
 | Pattern exhaustiveness | `exhaustive-match.ns` | `non-exhaustive-match.ns`, `unreachable-pattern.ns` | — |
 | At-least-once handlers | `idempotent-handler.ns` | `dispatch_event` runtime test | Duplicate delivery |
 | Store transactions | `idempotent-handler.ns` | `dispatch_event_transactional` runtime test | Transaction rollback |

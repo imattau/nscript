@@ -1,0 +1,19 @@
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+stream notes = select Note from public
+
+on notes {
+    for tag in event.tags {
+        if starts_with(tag, "I=") {
+            print(strip_prefix(tag, "I="))
+        }
+    }
+}

@@ -283,8 +283,8 @@ on Locator where tags.d contains "peer-relay" {
 // Reader: an NCC-09 grant received from someone else naming this
 // operator as the delegate — the other direction from the principal
 // section above.
-on AuthorityGrant where tags.p contains service_pubkey() {
-    if ncc09.grant_is_valid(event.tags, event.created_at) {
+on AuthorityGrant {
+    if event.tags contains "p=" + service_pubkey() and ncc09.grant_is_valid(event.tags, event.created_at) {
         print("received a grant for " + ncc09.service(event.tags) + ": scopes " + text(ncc09.scopes(event.tags)))
     } else {
         print("received grant rejected: revoked, expired, not yet valid, or incomplete")

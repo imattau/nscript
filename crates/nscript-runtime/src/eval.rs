@@ -109,6 +109,17 @@ pub trait EvalHost {
         })
     }
 
+    /// Lower a nested nominal tag record using the resolved event schema.
+    fn lower_typed_tag(
+        &self,
+        _event_type: &str,
+        _field: &str,
+        _tag_type: &str,
+        _values: &BTreeMap<String, String>,
+    ) -> Option<(String, String)> {
+        None
+    }
+
     /// Whether `module.function` is a pure fold query (RFC 0002 §3), so the
     /// evaluator runs it via [`Self::call_pure_function`] instead of the
     /// gated [`Self::call_operation`]: no permission, no effect, no
@@ -853,6 +864,37 @@ impl<H: EvalHost> Interpreter<'_, H> {
                             tags.push(publish_tag_pair(&field, item)?);
                         }
                     }
+                    Value::Record {
+                        name: tag_type,
+                        fields,
+                    } => {
+                        let values = fields
+                            .into_iter()
+                            .map(|(name, value)| {
+                                let rendered = match value {
+                                    Value::Text(value) | Value::PubKey(value) => value,
+                                    Value::Int(value) => value.to_string(),
+                                    Value::Bool(value) => value.to_string(),
+                                    Value::Unit => String::new(),
+                                    other => {
+                                        return Err(fail(format!(
+                                            "tag slot `{name}` must be scalar, found a {}",
+                                            other.kind()
+                                        )));
+                                    }
+                                };
+                                Ok((name, rendered))
+                            })
+                            .collect::<Result<BTreeMap<_, _>, Stop>>()?;
+                        let Some((wire, value)) =
+                            self.host.lower_typed_tag(&name, &field, &tag_type, &values)
+                        else {
+                            return Err(fail(format!(
+                                "`{field}` has no tag schema for `{tag_type}` in event `{name}`"
+                            )));
+                        };
+                        tags.push((wire, value));
+                    }
                     other => tags.push(publish_tag_pair(&field, other)?),
                 },
             }
@@ -960,6 +1002,21 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 };
                 Ok(Value::Text(value.display()))
             }
+            ExprKind::Identifier(name) if name == "starts_with" => match arguments.as_slice() {
+                [Value::Text(value), Value::Text(prefix)] => {
+                    Ok(Value::Bool(value.starts_with(prefix)))
+                }
+                _ => Err(fail("`starts_with` takes two text values")),
+            },
+            ExprKind::Identifier(name) if name == "strip_prefix" => match arguments.as_slice() {
+                [Value::Text(value), Value::Text(prefix)] => value
+                    .strip_prefix(prefix)
+                    .map(|stripped| Value::Text(stripped.to_owned()))
+                    .ok_or_else(|| {
+                        fail("`strip_prefix` input does not start with the given prefix")
+                    }),
+                _ => Err(fail("`strip_prefix` takes two text values")),
+            },
             ExprKind::Identifier(name) if name == "len" => match arguments.as_slice() {
                 [Value::List(items)] => {
                     Ok(Value::Int(i64::try_from(items.len()).unwrap_or(i64::MAX)))
@@ -1332,6 +1389,23 @@ where
 
     fn principal(&self) -> Option<String> {
         self.principal.clone()
+    }
+
+    fn lower_typed_tag(
+        &self,
+        event_type: &str,
+        field: &str,
+        tag_type: &str,
+        values: &BTreeMap<String, String>,
+    ) -> Option<(String, String)> {
+        let (expected, definition) = self.events.get(event_type)?.tag_fields.get(field)?;
+        if expected != tag_type {
+            return None;
+        }
+        Some((
+            definition.wire_name.clone(),
+            nscript_semantics::lower_typed_tag_values(definition, values)?,
+        ))
     }
 
     fn call_operation(
@@ -1815,7 +1889,15 @@ where
         limits: EvalLimits,
         mut idempotency_host: Option<&mut dyn IdempotencyHost>,
     ) -> Vec<HandlerOutcome> {
-        let requests = Self::handler_subscriptions(checked, None);
+        let requests = match Self::handler_subscriptions(checked, None, principal) {
+            Ok(requests) => requests,
+            Err(error) => {
+                return vec![HandlerOutcome {
+                    handler: "subscription".to_owned(),
+                    result: Err(error),
+                }];
+            }
+        };
         let mut outcomes = Vec::new();
         for (handler, request) in checked.handlers.iter().zip(&requests) {
             if !Self::matches_subscription(request, event) {
@@ -1996,7 +2078,7 @@ where
         O: OperationHost,
     {
         let policy = policy_for(checked);
-        let requests = Self::handler_subscriptions(checked, relayset);
+        let requests = Self::handler_subscriptions(checked, relayset, principal)?;
         let mut report = CycleReport::default();
         for (index, (handler, request)) in checked.handlers.iter().zip(&requests).enumerate() {
             let handle = self.subscribe(subscription_host, request)?;
@@ -2804,6 +2886,69 @@ mod tests {
         assert_eq!(runtime.signer.signed[0].unsigned.content, "reply: hi");
         assert_eq!(runtime.relay.published.len(), 1);
         assert_eq!(runtime.relay.published[0].unsigned.content, "reply: hi");
+    }
+
+    #[test]
+    fn a_handler_publishes_module_typed_tag_records_as_wire_tags() {
+        let source = "use nip01\nuse nip46\nsigner account = nip46()\nrelayset public = configured\npermissions {\n read Note from public\n publish Note to public\n sign Note with account\n relay public\n log\n}\non Note where tags.t contains \"trigger\" { publish Note { content: \"reply\", root: WebRoot { url: event.content } } to public with account }";
+        let (program, mut checked) = checked(source);
+        checked.events.insert(
+            "Note".to_owned(),
+            nscript_semantics::CheckedEvent {
+                kind: 1,
+                mode: nscript_semantics::CheckedEventMode::Regular,
+                parameter: None,
+                tag_fields: BTreeMap::from([(
+                    "root".to_owned(),
+                    (
+                        "WebRoot".to_owned(),
+                        nscript_semantics::CheckedTagDefinition {
+                            wire_name: "I".to_owned(),
+                            slots: vec![nscript_semantics::CheckedTagSlot::Field {
+                                name: "url".to_owned(),
+                                position: 1,
+                            }],
+                        },
+                    ),
+                )]),
+            },
+        );
+        let policy = policy_for(&checked);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = Runtime::new(
+            FakeRelayHost {
+                relays: [("fake://public".to_owned(), true)].into_iter().collect(),
+                ..FakeRelayHost::default()
+            },
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let hit = event_from_json(
+            &serde_json::json!({"content":"https://clawstr.com/c/nostr","tags":[["t","trigger"]]}),
+        )
+        .unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &hit,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        assert_eq!(runtime.relay.published.len(), 1);
+        assert!(
+            runtime.relay.published[0]
+                .unsigned
+                .tags
+                .contains(&("I".to_owned(), "https://clawstr.com/c/nostr".to_owned()))
+        );
     }
 
     #[test]

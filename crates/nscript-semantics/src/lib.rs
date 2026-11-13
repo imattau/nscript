@@ -32,9 +32,36 @@ pub struct CheckedPublication {
     /// is lowered live from its evaluated record instead (see
     /// `nscript-runtime`'s interpreter).
     pub tags: Vec<(String, String)>,
+    /// Literal author fields preserved until module event schemas are bound.
+    pub tag_values: Vec<CheckedPublicationTag>,
     pub signer: String,
     pub relayset: String,
     pub span: Span,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CheckedPublicationTag {
+    Scalar {
+        field: String,
+        value: String,
+    },
+    Typed {
+        field: String,
+        tag_type: String,
+        values: BTreeMap<String, String>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckedTagDefinition {
+    pub wire_name: String,
+    pub slots: Vec<CheckedTagSlot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CheckedTagSlot {
+    Field { name: String, position: u16 },
+    Literal { value: String, position: u16 },
 }
 
 /// The storage mode an event's kind range implies for replacement.
@@ -59,6 +86,8 @@ pub struct CheckedEvent {
     /// that lowers to the event's single `d` tag. Module events name their
     /// own `d` field like any other author field.
     pub parameter: Option<String>,
+    /// Event author fields whose nominal type is a module-declared Nostr tag.
+    pub tag_fields: BTreeMap<String, (String, CheckedTagDefinition)>,
 }
 
 impl CheckedEvent {
@@ -140,7 +169,9 @@ pub struct CheckedHandler {
     pub event_type: String,
     pub has_predicate: bool,
     pub author: Option<String>,
+    pub author_is_principal: bool,
     pub tag_equals: Vec<(String, String)>,
+    pub tag_equals_principal: Vec<String>,
     pub body_items: usize,
     pub body: Vec<Item>,
     pub span: Span,
@@ -959,26 +990,66 @@ fn schedule_value(expression: &Expr, every: bool) -> Option<u64> {
     }
 }
 
-fn handler_predicate_filters(expression: Option<&Expr>) -> (Option<String>, Vec<(String, String)>) {
-    let Some(expression) = expression else {
-        return (None, Vec::new());
-    };
+fn handler_predicate_filters(
+    expression: &Expr,
+    author: &mut Option<String>,
+    author_is_principal: &mut bool,
+    tag_equals: &mut Vec<(String, String)>,
+    tag_equals_principal: &mut Vec<String>,
+) -> bool {
     let ExprKind::Binary {
         operator,
         left,
         right,
     } = &expression.value
     else {
-        return (None, Vec::new());
+        return false;
     };
+    if operator == "and" {
+        return handler_predicate_filters(
+            left,
+            author,
+            author_is_principal,
+            tag_equals,
+            tag_equals_principal,
+        ) && handler_predicate_filters(
+            right,
+            author,
+            author_is_principal,
+            tag_equals,
+            tag_equals_principal,
+        );
+    }
     match (operator.as_str(), &left.value, &right.value) {
-        ("==", ExprKind::Identifier(name), ExprKind::Identifier(value)) if name == "author" => {
-            (Some(value.clone()), Vec::new())
+        ("==", ExprKind::Identifier(name), ExprKind::Text(value)) if name == "author" => {
+            if author.as_ref().is_some_and(|previous| previous != value) {
+                return false;
+            }
+            *author = Some(value.clone());
+            true
         }
-        ("contains", ExprKind::Member { value, name }, ExprKind::Text(text)) if matches!(&value.value, ExprKind::Identifier(base) if base == "tags") => {
-            (None, vec![(name.value.clone(), text.clone())])
+        ("==", ExprKind::Identifier(name), ExprKind::Identifier(value))
+            if name == "author" && value == "me" =>
+        {
+            if author.is_some() || *author_is_principal {
+                return false;
+            }
+            *author_is_principal = true;
+            true
         }
-        _ => (None, Vec::new()),
+        ("contains", ExprKind::Member { value, name }, ExprKind::Text(text)) if matches!(&value.value, ExprKind::Identifier(base) if base == "tags") =>
+        {
+            tag_equals.push((name.value.clone(), text.clone()));
+            true
+        }
+        ("contains", ExprKind::Member { value, name }, ExprKind::Identifier(principal))
+            if principal == "me"
+                && matches!(&value.value, ExprKind::Identifier(base) if base == "tags") =>
+        {
+            tag_equals_principal.push(name.value.clone());
+            true
+        }
+        _ => false,
     }
 }
 
@@ -1048,6 +1119,7 @@ fn program_events(program: &Program) -> BTreeMap<String, CheckedEvent> {
                             }
                         },
                         parameter,
+                        tag_fields: BTreeMap::new(),
                     },
                 ))
             }
@@ -1068,8 +1140,52 @@ fn program_events(program: &Program) -> BTreeMap<String, CheckedEvent> {
 pub fn bind_module_events(graph: &ResolvedModuleGraph, checked: &mut CheckedProgram) {
     for module in graph.modules.values() {
         for event in &module.descriptor.events {
-            checked.events.entry(event.name.clone()).or_insert_with(|| {
-                CheckedEvent {
+            let mut tag_fields = BTreeMap::new();
+            for field in &event.fields {
+                if let Some(tag) = module
+                    .descriptor
+                    .tags
+                    .iter()
+                    .find(|tag| tag.name == field.type_name)
+                {
+                    let mut slots = tag
+                        .slots
+                        .iter()
+                        .map(|slot| match slot {
+                            nscript_modules::TagSlot::Field { name, position, .. } => {
+                                CheckedTagSlot::Field {
+                                    name: name.clone(),
+                                    position: *position,
+                                }
+                            }
+                            nscript_modules::TagSlot::Literal { value, position } => {
+                                CheckedTagSlot::Literal {
+                                    value: value.clone(),
+                                    position: *position,
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    slots.sort_by_key(|slot| match slot {
+                        CheckedTagSlot::Field { position, .. }
+                        | CheckedTagSlot::Literal { position, .. } => *position,
+                    });
+                    tag_fields.insert(
+                        field.name.clone(),
+                        (
+                            field.type_name.clone(),
+                            CheckedTagDefinition {
+                                wire_name: tag.wire_name.clone(),
+                                slots,
+                            },
+                        ),
+                    );
+                }
+            }
+            checked
+                .events
+                .entry(event.name.clone())
+                .or_insert_with(|| CheckedEvent {
                     kind: event.kind,
                     mode: match event.mode {
                         nscript_modules::EventMode::Regular => CheckedEventMode::Regular,
@@ -1077,14 +1193,67 @@ pub fn bind_module_events(graph: &ResolvedModuleGraph, checked: &mut CheckedProg
                         nscript_modules::EventMode::Addressable => CheckedEventMode::Addressable,
                         nscript_modules::EventMode::Ephemeral => CheckedEventMode::Ephemeral,
                     },
-                    // Module events carry no identifier parameter: an
-                    // addressable module event authors its `d` tag as an
-                    // ordinary field, and `lower_tags` leaves it alone.
                     parameter: None,
-                }
-            });
+                    tag_fields,
+                });
         }
     }
+    for publication in &mut checked.publications {
+        let Some(event) = checked.events.get(&publication.event) else {
+            continue;
+        };
+        for tag in &publication.tag_values {
+            match tag {
+                CheckedPublicationTag::Scalar { .. } => {}
+                CheckedPublicationTag::Typed {
+                    field,
+                    tag_type,
+                    values,
+                } => {
+                    let Some((expected_type, definition)) = event.tag_fields.get(field) else {
+                        continue;
+                    };
+                    if expected_type != tag_type {
+                        continue;
+                    }
+                    if let Some(value) = lower_typed_tag_values(definition, values) {
+                        publication.tags.push((definition.wire_name.clone(), value));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[must_use]
+pub fn lower_typed_tag_values(
+    definition: &CheckedTagDefinition,
+    values: &BTreeMap<String, String>,
+) -> Option<String> {
+    let max_position = definition
+        .slots
+        .iter()
+        .map(|slot| match slot {
+            CheckedTagSlot::Field { position, .. } | CheckedTagSlot::Literal { position, .. } => {
+                *position as usize
+            }
+        })
+        .max()
+        .unwrap_or(0);
+    let mut columns = vec![String::new(); max_position];
+    for slot in &definition.slots {
+        match slot {
+            CheckedTagSlot::Field { name, position } => {
+                if let Some(value) = values.get(name) {
+                    columns[*position as usize - 1].clone_from(value);
+                }
+            }
+            CheckedTagSlot::Literal { value, position } => {
+                columns[*position as usize - 1].clone_from(value);
+            }
+        }
+    }
+    Some(columns.join("\u{1f}"))
 }
 
 /// The inferred capability footprint of a program, grouped into the categories
@@ -1398,6 +1567,7 @@ struct Checker<'a> {
     handlers: Vec<CheckedHandler>,
     diagnostics: Vec<Diagnostic>,
     event_bindings: BTreeSet<String>,
+    handler_depth: usize,
 }
 
 impl<'a> Checker<'a> {
@@ -1414,6 +1584,7 @@ impl<'a> Checker<'a> {
             handlers: Vec::new(),
             diagnostics: Vec::new(),
             event_bindings: BTreeSet::new(),
+            handler_depth: 0,
         };
         checker.collect_permissions();
         checker
@@ -1574,12 +1745,32 @@ impl<'a> Checker<'a> {
                     self.check_expr(predicate, locals);
                 }
                 if let Some(event_type) = events::handler_event_type(source, self.program) {
-                    let (author, tag_equals) = handler_predicate_filters(predicate.as_ref());
+                    let mut author = None;
+                    let mut author_is_principal = false;
+                    let mut tag_equals = Vec::new();
+                    let mut tag_equals_principal = Vec::new();
+                    if let Some(predicate) = predicate
+                        && !handler_predicate_filters(
+                            predicate,
+                            &mut author,
+                            &mut author_is_principal,
+                            &mut tag_equals,
+                            &mut tag_equals_principal,
+                        )
+                    {
+                        self.diagnostics.push(Diagnostic {
+                            code: "E2402",
+                            message: "handler predicate cannot be safely lowered; use `author == \"<pubkey>\"`, `author == me`, `tags.<name> contains \"<literal>\"`, or `tags.<name> contains me`, joined with `and`".to_owned(),
+                            span: predicate.span,
+                        });
+                    }
                     self.handlers.push(CheckedHandler {
                         event_type,
                         has_predicate: predicate.is_some(),
                         author,
+                        author_is_principal,
                         tag_equals,
+                        tag_equals_principal,
                         body_items: body.len(),
                         body: body.clone(),
                         span,
@@ -1604,7 +1795,9 @@ impl<'a> Checker<'a> {
                         span,
                     },
                 );
+                self.handler_depth += 1;
                 self.check_items(body, &mut handler);
+                self.handler_depth -= 1;
             }
             StatementKind::Once { key, body } => {
                 self.effects.insert(Effect::Storage);
@@ -1642,7 +1835,9 @@ impl<'a> Checker<'a> {
                         span: duration.span,
                     });
                 }
+                self.handler_depth += 1;
                 self.check_items(body, &mut locals.clone());
+                self.handler_depth -= 1;
             }
             StatementKind::Send { value, signer } => {
                 self.check_expr(value, locals);
@@ -1839,20 +2034,62 @@ impl<'a> Checker<'a> {
                 }),
             _ => None,
         };
+        self.check_top_level_tag_values(value);
         // Author fields as literal wire pairs. Only literals can be carried
         // this way: a top-level `publish` runs from this checked snapshot,
         // and top-level statements (so any computed field) do not run at
         // startup. A handler's own `publish` lowers its evaluated record
         // live instead, so it is not limited to literals.
-        let tags = literal_publication_tags(value);
+        let tag_values = literal_publication_tag_values(value);
+        let tags = tag_values
+            .iter()
+            .filter_map(|tag| match tag {
+                CheckedPublicationTag::Scalar { field, value } => {
+                    Some((field.clone(), value.clone()))
+                }
+                CheckedPublicationTag::Typed { .. } => None,
+            })
+            .collect();
         self.publications.push(CheckedPublication {
             event,
             content,
             tags,
+            tag_values,
             signer: signer_name,
             relayset,
             span,
         });
+    }
+
+    fn check_top_level_tag_values(&mut self, value: &Expr) {
+        if self.handler_depth != 0 {
+            return;
+        }
+        let ExprKind::Construct { fields, .. } = &value.value else {
+            return;
+        };
+        for (name, field) in fields {
+            if name.value == "content"
+                || name.value == "tags"
+                || EVENT_BOOKKEEPING_FIELDS.contains(&name.value.as_str())
+            {
+                continue;
+            }
+            let computable = match &field.value {
+                ExprKind::List(items) => items.iter().all(|item| literal_wire_text(item).is_some()),
+                ExprKind::Construct { fields, .. } => fields
+                    .iter()
+                    .all(|(_, item)| literal_wire_text(item).is_some()),
+                _ => literal_wire_text(field).is_some(),
+            };
+            if !computable {
+                self.diagnostics.push(Diagnostic {
+                    code: "E2403",
+                    message: format!("top-level tag field `{}` must be a literal; computed tag values are not executed at startup", name.value),
+                    span: field.span,
+                });
+            }
+        }
     }
 
     fn check_match(&mut self, span: Span, value: &Expr, arms: &[nscript_syntax::ast::MatchArm]) {
@@ -1997,7 +2234,7 @@ fn literal_wire_text(expression: &Expr) -> Option<String> {
 /// `List` field contributes one pair per element but only when every
 /// element is literal (a computed element would publish a silently
 /// partial tag set). A non-record expression has no author fields.
-fn literal_publication_tags(value: &Expr) -> Vec<(String, String)> {
+fn literal_publication_tag_values(value: &Expr) -> Vec<CheckedPublicationTag> {
     let mut tags = Vec::new();
     if let ExprKind::Construct { fields, .. } = &value.value {
         for (name, field) in fields {
@@ -2014,16 +2251,38 @@ fn literal_publication_tags(value: &Expr) -> Vec<(String, String)> {
                         .map(literal_wire_text)
                         .collect::<Option<Vec<_>>>();
                     if let Some(rendered) = rendered {
-                        tags.extend(
-                            rendered
-                                .into_iter()
-                                .map(|value| (name.value.clone(), value)),
-                        );
+                        tags.extend(rendered.into_iter().map(|value| {
+                            CheckedPublicationTag::Scalar {
+                                field: name.value.clone(),
+                                value,
+                            }
+                        }));
                     }
                 }
                 _ => {
                     if let Some(text) = literal_wire_text(field) {
-                        tags.push((name.value.clone(), text));
+                        tags.push(CheckedPublicationTag::Scalar {
+                            field: name.value.clone(),
+                            value: text,
+                        });
+                    } else if let ExprKind::Construct {
+                        name: type_name,
+                        fields,
+                    } = &field.value
+                    {
+                        let values = fields
+                            .iter()
+                            .filter_map(|(slot, value)| {
+                                literal_wire_text(value).map(|text| (slot.value.clone(), text))
+                            })
+                            .collect::<BTreeMap<_, _>>();
+                        if values.len() == fields.len() {
+                            tags.push(CheckedPublicationTag::Typed {
+                                field: name.value.clone(),
+                                tag_type: type_name.value.clone(),
+                                values,
+                            });
+                        }
                     }
                 }
             }
@@ -2037,6 +2296,7 @@ mod tests {
     use nscript_modules::{ModuleDependency, ModuleOrigin, ModuleRegistry, parse_module};
     use nscript_syntax::parse_program;
     use semver::VersionReq;
+    use std::collections::BTreeMap;
 
     use super::{
         CheckedEvent, CheckedEventMode, analyze, analyze_with_modules, bind_module_events, check,
@@ -2071,7 +2331,7 @@ mod tests {
 
     #[test]
     fn a_literal_publish_carries_its_literal_fields_as_wire_pairs() {
-        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    publish Note to public\n    sign Note with account\n    relay public\n}\n\npublish Note {\n    content: \"hello\",\n    t: [\"a\", \"b\"],\n    k: 7,\n    id: \"not-a-tag\",\n    kind: 1,\n    computed: 1 + 1\n} to public with account\n";
+        let source = "use nip01\nuse nip46\n\nsigner account = nip46()\nrelayset public = configured\n\npermissions {\n    publish Note to public\n    sign Note with account\n    relay public\n}\n\npublish Note {\n    content: \"hello\",\n    t: [\"a\", \"b\"],\n    k: 7,\n    id: \"not-a-tag\",\n    kind: 1,\n} to public with account\n";
         let (program, diagnostics) = parse_program(source);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         let (checked, diagnostics) = check(&program);
@@ -2093,6 +2353,30 @@ mod tests {
     }
 
     #[test]
+    fn computed_top_level_tags_are_rejected() {
+        let source = r#"use nip01
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions {
+    publish Note to public
+    sign Note with account
+    relay public
+}
+publish Note { content: "x", t: $"tag-{1 + 1}" } to public with account
+"#;
+        let (program, parse_diagnostics) = parse_program(source);
+        assert!(parse_diagnostics.is_empty(), "{parse_diagnostics:?}");
+        let (_, diagnostics) = check(&program);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "E2403"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn input_declarations_populate_checked_inputs() {
         let source = "permissions {\n    log\n    clock\n}\n\ninput publisher: Text\ninput retries: Int\n\nevery 1d {\n    print(publisher)\n}\n";
         let (program, diagnostics) = parse_program(source);
@@ -2107,6 +2391,44 @@ mod tests {
         assert_eq!(
             checked.inputs.get("retries").map(String::as_str),
             Some("Int")
+        );
+    }
+
+    #[test]
+    fn unsafe_handler_predicates_are_rejected_instead_of_dropped() {
+        let source = "use nip01\nrelayset public = configured\npermissions { read Note from public
+relay public
+log\n}\nstream mentions = select Note from public
+on mentions where author == alice { print(event.content) }\n";
+        let (program, parse_diagnostics) = parse_program(source);
+        assert!(parse_diagnostics.is_empty(), "{parse_diagnostics:?}");
+        let (_, diagnostics) = check(&program);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "E2402"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn safe_handler_predicates_lower_literal_tags_and_authors() {
+        let source = "use nip01\nrelayset public = configured\npermissions { read Note from public
+relay public
+log\n}\nstream posts = select Note from public\non posts where author == \"some-pubkey\" { print(event.content) }\non posts where tags.p contains me { print(event.content) }\non posts where tags.I contains \"https://clawstr.com/c/nostr\" { print(event.content) }\n";
+        let (program, parse_diagnostics) = parse_program(source);
+        assert!(parse_diagnostics.is_empty(), "{parse_diagnostics:?}");
+        let (checked, diagnostics) = check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let handler = &checked.as_ref().expect("checks").handlers[0];
+        assert_eq!(handler.author.as_deref(), Some("some-pubkey"));
+        assert_eq!(handler.tag_equals, [] as [(String, String); 0]);
+        let mention = &checked.as_ref().expect("checks").handlers[1];
+        assert_eq!(mention.tag_equals_principal, ["p".to_owned()]);
+        let scoped = &checked.as_ref().expect("checks").handlers[2];
+        assert_eq!(
+            scoped.tag_equals,
+            [("I".to_owned(), "https://clawstr.com/c/nostr".to_owned())]
         );
     }
 
@@ -2132,6 +2454,7 @@ mod tests {
             kind: 30_717,
             mode: CheckedEventMode::Addressable,
             parameter: Some("thread".to_owned()),
+            tag_fields: BTreeMap::new(),
         };
         assert_eq!(
             reply
@@ -2170,6 +2493,7 @@ mod tests {
             kind: 1,
             mode: CheckedEventMode::Regular,
             parameter: None,
+            tag_fields: BTreeMap::new(),
         };
         assert_eq!(
             plain
@@ -2236,6 +2560,61 @@ mod tests {
                 .get("Reply")
                 .and_then(|event| event.parameter.as_deref()),
             Some("thread")
+        );
+    }
+
+    #[test]
+    fn module_tag_typed_event_fields_lower_to_wire_tags() {
+        let module_source = r#"module clawstr @ 0.1.0
+language ">=0.1.0 <0.2.0"
+tag WebRoot {
+    wire: "I"
+    field url: Text at 1
+}
+event ClawstrPost {
+    kind: 1111
+    mode: regular
+    content: Text as text
+    field root: WebRoot
+}
+"#;
+        let (descriptor, diagnostics) = parse_module(module_source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut registry = ModuleRegistry::with_builtins();
+        registry
+            .register(
+                descriptor.expect("module descriptor"),
+                ModuleOrigin::File("clawstr.nsm".into()),
+            )
+            .expect("register");
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "clawstr".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .expect("resolve module");
+        let (program, parse_diagnostics) = parse_program("");
+        assert!(parse_diagnostics.is_empty(), "{parse_diagnostics:?}");
+        let (checked, diagnostics) = check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut checked = checked.expect("checked");
+        checked.publications.push(super::CheckedPublication {
+            event: "ClawstrPost".to_owned(),
+            content: Some("hello".to_owned()),
+            tags: Vec::new(),
+            tag_values: vec![super::CheckedPublicationTag::Typed {
+                field: "root".to_owned(),
+                tag_type: "WebRoot".to_owned(),
+                values: [("url".to_owned(), "https://clawstr.com/c/nostr".to_owned())].into(),
+            }],
+            signer: "account".to_owned(),
+            relayset: "public".to_owned(),
+            span: nscript_syntax::Span::default(),
+        });
+        bind_module_events(&graph, &mut checked);
+        assert_eq!(
+            checked.publications[0].tags,
+            [("I".to_owned(), "https://clawstr.com/c/nostr".to_owned())]
         );
     }
 

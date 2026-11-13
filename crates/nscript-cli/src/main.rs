@@ -423,6 +423,7 @@ fn check_program(arguments: &[String]) -> ExitCode {
     finish(&path, diagnostics)
 }
 
+#[allow(clippy::too_many_lines)]
 fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
     let Ok((path, program, graph, mut diagnostics)) = load_program(arguments) else {
         return ExitCode::from(2);
@@ -476,11 +477,15 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
             "handlers": checked.handlers.iter().map(|handler| serde_json::json!({
                 "event": handler.event_type,
                 "author": handler.author,
+                "author_is_principal": handler.author_is_principal,
                 "tags": handler.tag_equals,
+                "tag_equals_principal": handler.tag_equals_principal,
                 "filter_trace": {
                     "event": handler.event_type,
                     "author": handler.author,
-                    "tags": handler.tag_equals
+                    "author_is_principal": handler.author_is_principal,
+                    "tags": handler.tag_equals,
+                    "tag_equals_principal": handler.tag_equals_principal
                 }
             })).collect::<Vec<_>>(),
             "footprint": nscript_semantics::footprint(&program, &checked, &graph, &[]),
@@ -1075,12 +1080,17 @@ fn run_program(arguments: &[String]) -> ExitCode {
     for timer in &timers.schedules {
         println!("timer {} at {}", timer.name, timer.next_at);
     }
-    let subscriptions = nscript_runtime::Runtime::<
-        nscript_runtime::FakeRelayHost,
-        nscript_runtime::FakeSignerHost,
-        nscript_runtime::FakeClock,
-        nscript_runtime::RecordingAudit,
-    >::handler_subscriptions(&checked, Some("public"));
+    let subscriptions =
+        nscript_runtime::Runtime::<
+            nscript_runtime::FakeRelayHost,
+            nscript_runtime::FakeSignerHost,
+            nscript_runtime::FakeClock,
+            nscript_runtime::RecordingAudit,
+        >::handler_subscriptions(&checked, Some("public"), options.principal.as_deref())
+        .unwrap_or_else(|error| {
+            eprintln!("error[R1004]: {error:?}");
+            std::process::exit(1)
+        });
     for subscription in &subscriptions {
         println!("subscription {}", subscription.event_type);
     }
@@ -1467,7 +1477,11 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
         nscript_runtime::Nip46SignerHost<nscript_host_crypto::nip46::RealNip46Transport>,
         nscript_runtime::RealClock,
         nscript_runtime::RecordingAudit,
-    >::handler_subscriptions(&checked, None);
+    >::handler_subscriptions(&checked, None, options.principal.as_deref())
+    .unwrap_or_else(|error| {
+        eprintln!("error[R1004]: {error:?}");
+        std::process::exit(1)
+    });
     for (handler, request) in checked.handlers.iter().zip(&mut requests) {
         let declared = checked
             .events

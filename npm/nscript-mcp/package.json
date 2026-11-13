@@ -1,6 +1,6 @@
 {
   "name": "nscript-mcp",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "MCP server for checking, inspecting, and simulating NScript programs",
   "license": "MIT",
   "repository": {

@@ -9,9 +9,8 @@ permissions {
 }
 
 stream mentions = select Note
-    where tags.p contains me
     from public
 
-on mentions {
+on mentions where tags.p contains me {
     print(event.content)
 }

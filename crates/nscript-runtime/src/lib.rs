@@ -502,6 +502,7 @@ impl PublishReport {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeError {
+    MissingPrincipal,
     CapabilityDenied {
         capability: String,
     },
@@ -2424,6 +2425,7 @@ where
             event: event_type.to_owned(),
             content,
             tags,
+            tag_values: Vec::new(),
             signer: signer.to_owned(),
             relayset: relayset.to_owned(),
             span: nscript_syntax::Span::default(),
@@ -2711,23 +2713,48 @@ where
     }
 
     /// Lower checked `on` handlers into typed subscription requests.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::MissingPrincipal`] when a handler filter uses `me`
+    /// but no principal is configured.
     pub fn handler_subscriptions(
         checked: &CheckedProgram,
         relayset: Option<&str>,
-    ) -> Vec<SubscriptionRequest> {
+        principal: Option<&str>,
+    ) -> Result<Vec<SubscriptionRequest>, RuntimeError> {
         checked
             .handlers
             .iter()
-            .map(|handler| SubscriptionRequest {
-                event_type: handler.event_type.clone(),
-                relayset: relayset.map(str::to_owned),
-                kinds: Vec::new(),
-                tag_equals: handler.tag_equals.clone(),
-                cursor: None,
-                author: handler.author.clone(),
-                since: None,
-                limit: None,
+            .map(|handler| {
+                if (handler.author_is_principal || !handler.tag_equals_principal.is_empty())
+                    && principal.is_none()
+                {
+                    return Err(RuntimeError::MissingPrincipal);
+                }
+                let mut tag_equals = handler.tag_equals.clone();
+                if let Some(principal) = principal {
+                    tag_equals.extend(
+                        handler
+                            .tag_equals_principal
+                            .iter()
+                            .map(|name| (name.clone(), principal.to_owned())),
+                    );
+                }
+                Ok(SubscriptionRequest {
+                    event_type: handler.event_type.clone(),
+                    relayset: relayset.map(str::to_owned),
+                    kinds: Vec::new(),
+                    tag_equals,
+                    cursor: None,
+                    author: if handler.author_is_principal {
+                        principal.map(str::to_owned)
+                    } else {
+                        handler.author.clone()
+                    },
+                    since: None,
+                    limit: None,
+                })
             })
             .collect()
     }
@@ -2927,7 +2954,7 @@ where
             &mut StorageTransaction,
         ) -> Result<(), RuntimeError>,
     {
-        let subscriptions = Self::handler_subscriptions(checked, relayset);
+        let subscriptions = Self::handler_subscriptions(checked, relayset, None)?;
         let mut dispatched = 0;
         for (handler, request) in checked.handlers.iter().zip(subscriptions.iter()) {
             let handle = self.subscribe(subscription_host, request)?;
@@ -2983,7 +3010,7 @@ where
         T: TransactionalStorageHost,
         L: LogHost,
     {
-        let subscriptions = Self::handler_subscriptions(checked, relayset);
+        let subscriptions = Self::handler_subscriptions(checked, relayset, None)?;
         let mut dispatched = 0;
         for (handler, request) in checked.handlers.iter().zip(subscriptions.iter()) {
             let handle = self.subscribe(subscription_host, request)?;
@@ -10530,7 +10557,7 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
             FakeClock { now: 1_700_000_000 },
             RecordingAudit::default(),
         );
-        let subscriptions = Self::handler_subscriptions(checked, Some("public"));
+        let subscriptions = Self::handler_subscriptions(checked, Some("public"), principal)?;
         for handle in 1..=subscriptions.len() {
             relay
                 .queued_events
@@ -14248,6 +14275,7 @@ mod tests {
                 event: "Note".to_owned(),
                 content: Some("hello".to_owned()),
                 tags: Vec::new(),
+                tag_values: Vec::new(),
                 signer: "account".to_owned(),
                 relayset: "public".to_owned(),
                 span: Span::default(),
@@ -14283,6 +14311,7 @@ mod tests {
                     ("thread".to_owned(), "abc".to_owned()),
                     ("t".to_owned(), "op".to_owned()),
                 ],
+                tag_values: Vec::new(),
                 signer: "account".to_owned(),
                 relayset: "public".to_owned(),
                 span: Span::default(),
@@ -14293,6 +14322,7 @@ mod tests {
                     kind: 30_717,
                     mode: CheckedEventMode::Addressable,
                     parameter: Some("thread".to_owned()),
+                    tag_fields: BTreeMap::new(),
                 },
             )]),
             ..CheckedProgram::default()
@@ -14420,6 +14450,7 @@ mod tests {
                 event: "Note".to_owned(),
                 content: Some("hello".to_owned()),
                 tags: Vec::new(),
+                tag_values: Vec::new(),
                 signer: "account".to_owned(),
                 relayset: "public".to_owned(),
                 span: Span::default(),
@@ -14782,13 +14813,30 @@ mod tests {
         let subscriptions = Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::handler_subscriptions(
             &checked,
             Some("public"),
-        );
+            None,
+        ).expect("no principal-dependent filters");
         assert_eq!(subscriptions.len(), 1);
         assert_eq!(subscriptions[0].event_type, "Note");
         assert_eq!(subscriptions[0].relayset.as_deref(), Some("public"));
         assert_eq!(
             subscriptions[0].tag_equals,
             vec![("t".to_owned(), "nostrhost".to_owned())]
+        );
+    }
+
+    #[test]
+    fn principal_predicates_resolve_at_subscription_time() {
+        let source = "permissions {\n    read Note from public\n    relay public\n    log\n}\nstream notes = select Note from public\non notes where author == me { print(\"author\") }\non notes where tags.p contains me { print(\"mention\") }";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        assert!(Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::handler_subscriptions(&checked, Some("public"), None).is_err());
+        let subscriptions = Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::handler_subscriptions(&checked, Some("public"), Some("deadbeef")).expect("principal is resolved");
+        assert_eq!(subscriptions[0].author.as_deref(), Some("deadbeef"));
+        assert_eq!(
+            subscriptions[1].tag_equals,
+            [("p".to_owned(), "deadbeef".to_owned())]
         );
     }
 

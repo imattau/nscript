@@ -207,6 +207,7 @@ pub enum IrOperation {
         event: String,
         kind: u16,
         content: Option<String>,
+        tags: Vec<(String, String)>,
         created_at: &'static str,
     },
     SignEvent {
@@ -257,11 +258,17 @@ pub fn lower(program: &Program, checked: &CheckedProgram, graph: &ResolvedModule
             .map(|event| event.kind)
             .or_else(|| event_kind(graph, &publication.event))
             .unwrap_or(1);
+        let tags = checked
+            .events
+            .get(&publication.event)
+            .and_then(|event| event.lower_tags(&publication.tags).ok())
+            .unwrap_or_else(|| publication.tags.clone());
         operations.push(IrOperation::CreateEvent {
             result: unsigned.clone(),
             event: publication.event.clone(),
             kind,
             content: publication.content.clone(),
+            tags,
             created_at: "host",
         });
         operations.push(IrOperation::SignEvent {
@@ -276,7 +283,7 @@ pub fn lower(program: &Program, checked: &CheckedProgram, graph: &ResolvedModule
         });
     }
     NostrIr {
-        schema: "nscript-ir/0.1",
+        schema: "nscript-ir/0.2",
         profile: match program.profile {
             RuntimeProfile::Standard => "standard",
             RuntimeProfile::HardenedAgent => "hardened-agent",
@@ -384,7 +391,7 @@ mod tests {
     #[test]
     fn wasm_artifact_is_valid_container_with_capability_metadata() {
         let ir = NostrIr {
-            schema: "nscript-ir/0.1",
+            schema: "nscript-ir/0.2",
             profile: "standard",
             modules: Vec::new(),
             capabilities: vec![super::IrCapability {
