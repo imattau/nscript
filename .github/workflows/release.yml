@@ -95,7 +95,7 @@ jobs:
 
   macos-arm64:
     name: Build macOS arm64 MCP bundle
-    runs-on: macos-14
+    runs-on: macos-latest
     permissions:
       contents: read
       id-token: write
