@@ -111,6 +111,7 @@ jobs:
         env:
           VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-ci.{0}', github.run_number) }}
         run: |
+          VERSION="${VERSION#v}"
           bundle="nscript-mcp-${VERSION}-darwin-arm64"
           mkdir -p "$RUNNER_TEMP/$bundle/share/doc/nscript" package-output
           install -m 0755 target/aarch64-apple-darwin/release/nscript target/aarch64-apple-darwin/release/nscript-mcp "$RUNNER_TEMP/$bundle/"
