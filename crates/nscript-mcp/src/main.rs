@@ -308,9 +308,15 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
         let traces = handlers.iter().enumerate().map(|(index, handler)| {
             let event_type = handler.get("event").and_then(Value::as_str).unwrap_or("");
             let actual_type = event.get("event_type").and_then(Value::as_str).unwrap_or("Note");
-            let expected_author = handler.get("author").and_then(Value::as_str);
+            let principal = args.windows(2).find(|pair| pair[0] == "--as").map_or("alice", |pair| pair[1].as_str());
+            let principal = arguments.get("principal").and_then(Value::as_str).unwrap_or(principal);
+            let expected_author = if handler.get("author_is_principal").and_then(Value::as_bool) == Some(true) { Some(principal) } else { handler.get("author").and_then(Value::as_str) };
             let actual_author = event.get("signer").and_then(Value::as_str).unwrap_or("alice");
-            let tag_checks: Vec<Value> = handler.get("tags").and_then(Value::as_array).into_iter().flatten().map(|predicate| {
+            let mut predicates = handler.get("tags").and_then(Value::as_array).cloned().unwrap_or_default();
+            if let Some(principal_tags) = handler.get("tag_equals_principal").and_then(Value::as_array) {
+                predicates.extend(principal_tags.iter().map(|name| json!([name, principal])));
+            }
+            let tag_checks: Vec<Value> = predicates.iter().map(|predicate| {
                 let name = predicate.get(0).and_then(Value::as_str).unwrap_or("");
                 let expected = predicate.get(1).and_then(Value::as_str).unwrap_or("");
                 let found = event.get("tags").and_then(Value::as_array).into_iter().flatten().any(|tag| tag.get(0).and_then(Value::as_str) == Some(name) && tag.get(1).and_then(Value::as_str) == Some(expected));

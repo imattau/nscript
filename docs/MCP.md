@@ -23,14 +23,14 @@ The default transport is stdio. The server finds `nscript` beside its own execut
 }
 ```
 
-Install the published npm bundle on Linux x86_64 or macOS Apple Silicon with `npx -y nscript-mcp`. It bundles both the MCP server and CLI. The `nscript-mcp` command uses stdio by default.
+Install the published npm bundle on Linux x86_64 or macOS Apple Silicon with `npx -y nscript-mcp@0.3.5`. It bundles both the MCP server and CLI. The `nscript-mcp` command uses stdio by default.
 
 ## Tools
 
 - **`nscript_check`** parses and statically checks source, returning compiler diagnostics and a success status.
 - **`nscript_inspect`** returns a structured manifest with effects, resolved modules, operation calls, and publication trace.
 - **`nscript_simulate_event`** sends a JSON event to the CLI simulator. It accepts optional `principal` (`--as`), declared scalar `inputs`, and `module_dirs`.
-- **`nscript_test_event`** simulates an event and reports the dispatched handler count and per-handler event type, author, and tag filter trace. Use it to diagnose events that match zero handlers. It accepts `principal` and `module_dirs`.
+- **`nscript_test_event`** simulates an event and reports the dispatched handler count and per-handler event type, author, and tag filter trace. Principal-based predicates are resolved against its `principal` argument. Use it to diagnose events that match zero handlers. Unsupported handler predicate shapes fail checking with E2402, so they cannot silently widen a subscription. It accepts `principal` and `module_dirs`.
 
 Simulation is dry: it does not connect to relays, publish events, or access signer keys. Operations without a simulator implementation are recorded and answered with declared placeholder values.
 

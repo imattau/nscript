@@ -1,5 +1,5 @@
 {
-  "schema": "nscript-ir/0.1",
+  "schema": "nscript-ir/0.2",
   "profile": "hardened-agent",
   "modules": [
     {
@@ -35,6 +35,7 @@
       "event": "Note",
       "kind": 1,
       "content": "Hello from a constrained agent",
+      "tags": [],
       "created_at": "host"
     },
     {

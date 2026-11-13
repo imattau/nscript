@@ -1,6 +1,6 @@
 # nscript-mcp
 
-Install the NScript MCP server with npx -y nscript-mcp or add it as a project
+Install the NScript MCP server with npx -y nscript-mcp@0.3.5 or add it as a project
 dependency. The package includes the NScript CLI and MCP server for Linux
 x86_64 and macOS Apple Silicon.
 

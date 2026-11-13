@@ -23,6 +23,8 @@ language major version.
 | E2203 | missing-default-signer | Bare unsigned publication has no declared signer default |
 | E2204 | missing-default-relays | Publication without `to` has no declared relay-set default |
 | E2401 | unbounded-local-filter | A non-lowerable query predicate lacks a finite remote bound |
+| E2402 | unsafe-handler-predicate | A handler predicate cannot be safely lowered to its subscription filter
+| E2403 | computed-startup-tag | A top-level publish contains a computed tag value that cannot be lowered at startup |
 | E3001 | missing-permission | A reachable inferred effect is not covered by the manifest |
 | E3002 | unavailable-capability | The host cannot provision a declared mandatory capability |
 | E3101 | high-risk-consent-required | Secret, filesystem, or payment authority lacks distinct consent |

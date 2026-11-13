@@ -775,6 +775,18 @@ and exposes the security-relevant analysis it will render.
   ESM and are exercised in node (`studio/tests/core.test.mjs`) without a
   browser; `npm run build` produces the deployable static site.
 
+## Clawstr release scope (0.3.5)
+
+- P0: reject unsafe handler predicates, resolve `me` at subscription time,
+  lower module-defined tag records, reject computed startup tags, expose lowered
+  tags in IR 0.2, and provide `starts_with` / `strip_prefix` for event tag values.
+- P1: predicate/interpolation documentation and custom tag conformance coverage
+  are included. Handler-visible inputs and the broader NIP-22/73/25/32 vectors
+  remain follow-up work; existing runtime coverage already exercises NIP-22,
+  NIP-25, and NIP-32 operation paths.
+- P2: full NIP-57 zap flow, Windows/Linux arm64 bundles, and public HTTP OAuth
+  remain deferred.
+
 ## Deferred
 
 Module operation dispatch, full handler/stream evaluation (a core evaluator now

@@ -382,11 +382,14 @@ fn handle_run(source: &str, modules: &[ModuleSource]) -> String {
         Ok(_) => None,
         Err(error) => Some(format!("{error:?}")),
     };
-    let subscriptions =
-        Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::handler_subscriptions(
-            &checked,
-            Some("public"),
-        );
+    let subscriptions = match Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::handler_subscriptions(
+        &checked,
+        Some("public"),
+        None,
+    ) {
+        Ok(subscriptions) => subscriptions,
+        Err(error) => return ok(json!({"diagnostics":[{"code":"R1004","severity":"error","message":format!("{error:?}"),"line":0,"column":0,"start":0,"end":0}],"executed":false,"trace":null})),
+    };
     let operation_policy = checked
         .operation_calls
         .iter()

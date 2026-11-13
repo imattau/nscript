@@ -509,6 +509,50 @@ fn the_idempotent_handler_fixture_actually_dedupes_when_run() {
 }
 
 #[test]
+fn module_typed_clawstr_tag_is_emitted_in_publication_ir() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["compile", "--emit", "ir"])
+        .arg(repository_path(
+            "conformance/scenarios/clawstr-tagged-post.ns",
+        ))
+        .arg("-M")
+        .arg(repository_path("conformance/modules/clawstrroot"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ir: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        ir["operations"][0]["tags"],
+        serde_json::json!([["I", "https://clawstr.com/c/nostr"]])
+    );
+}
+
+#[test]
+fn handler_can_extract_a_tag_value_with_string_helpers() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("conformance/valid/read-tag-value.ns"))
+        .args([
+            "--event",
+            r#"{"event_type":"Note","tags":[["I","https://clawstr.com/c/nostr"],["t","other"]]}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("log info: https://clawstr.com/c/nostr")
+    );
+}
+
+#[test]
 fn generates_npack_compatible_manifest() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args([
@@ -1133,6 +1177,27 @@ fn test_event_runs_a_handler_that_calls_a_module_operation() {
     let (ok, stdout) = run(r#"{"content":"hello"}"#);
     assert!(ok);
     assert!(!stdout.contains("operation "), "{stdout}");
+}
+
+#[test]
+fn test_event_resolves_me_predicates_before_counting_matches() {
+    let matching = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("test-event")
+        .arg(repository_path("conformance/valid/mentions.ns"))
+        .args([
+            "--as",
+            "deadbeef",
+            "--event",
+            r#"{"event_type":"Note","tags":[["p","deadbeef"]]}"#,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        matching.status.success(),
+        "{}",
+        String::from_utf8_lossy(&matching.stderr)
+    );
+    assert!(String::from_utf8_lossy(&matching.stdout).contains("matched: 1/1 handlers"));
 }
 
 #[test]
