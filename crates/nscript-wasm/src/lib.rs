@@ -163,7 +163,11 @@ fn process_request(request: &str) -> String {
         "inspect" => handle_inspect(source, &modules),
         "ir" => handle_ir(source, &modules),
         "compile" => handle_compile(source, &modules),
-        "run" => handle_run(source, &modules),
+        "run" => handle_run(
+            source,
+            &modules,
+            value.get("principal").and_then(Value::as_str),
+        ),
         "symbols" => handle_symbols(source, &modules),
         "completions" => handle_completions(source, &modules, &value),
         "hover" => handle_hover(source, &modules, &value),
@@ -293,11 +297,15 @@ fn handle_inspect(source: &str, modules: &[ModuleSource]) -> String {
             "handlers": inferred.handlers.iter().map(|handler| json!({
                 "event": handler.event_type,
                 "author": handler.author,
+                "author_is_principal": handler.author_is_principal,
                 "tags": handler.tag_equals,
+                "tag_equals_principal": handler.tag_equals_principal,
                 "filter_trace": {
                     "event": handler.event_type,
                     "author": handler.author,
-                    "tags": handler.tag_equals
+                    "author_is_principal": handler.author_is_principal,
+                    "tags": handler.tag_equals,
+                    "tag_equals_principal": handler.tag_equals_principal
                 }
             })).collect::<Vec<_>>(),
         })
@@ -347,7 +355,7 @@ fn handle_compile(source: &str, modules: &[ModuleSource]) -> String {
 
 #[must_use]
 #[allow(clippy::too_many_lines)]
-fn handle_run(source: &str, modules: &[ModuleSource]) -> String {
+fn handle_run(source: &str, modules: &[ModuleSource], principal: Option<&str>) -> String {
     let loaded = load(source, modules);
     if !loaded.diagnostics.is_empty() {
         return ok(json!({
@@ -385,7 +393,7 @@ fn handle_run(source: &str, modules: &[ModuleSource]) -> String {
     let subscriptions = match Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::handler_subscriptions(
         &checked,
         Some("public"),
-        None,
+        principal,
     ) {
         Ok(subscriptions) => subscriptions,
         Err(error) => return ok(json!({"diagnostics":[{"code":"R1004","severity":"error","message":format!("{error:?}"),"line":0,"column":0,"start":0,"end":0}],"executed":false,"trace":null})),

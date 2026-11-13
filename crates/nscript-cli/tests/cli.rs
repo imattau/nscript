@@ -473,6 +473,22 @@ fn run_reports_checked_handler_subscriptions() {
 }
 
 #[test]
+fn run_resolves_me_predicates_from_as() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("conformance/valid/mentions.ns"))
+        .args(["--as", "deadbeef"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("subscription Note"));
+}
+
+#[test]
 fn the_idempotent_handler_fixture_actually_dedupes_when_run() {
     // Every other test touching this fixture only checks or inspects it, or
     // runs it with no `--event` at all, so `once(event.id)` — the fixture's

@@ -1080,16 +1080,17 @@ fn run_program(arguments: &[String]) -> ExitCode {
     for timer in &timers.schedules {
         println!("timer {} at {}", timer.name, timer.next_at);
     }
-    let subscriptions = nscript_runtime::Runtime::<
-        nscript_runtime::FakeRelayHost,
-        nscript_runtime::FakeSignerHost,
-        nscript_runtime::FakeClock,
-        nscript_runtime::RecordingAudit,
-    >::handler_subscriptions(&checked, Some("public"), None)
-    .unwrap_or_else(|error| {
-        eprintln!("error[R1004]: {error:?}");
-        std::process::exit(1)
-    });
+    let subscriptions =
+        nscript_runtime::Runtime::<
+            nscript_runtime::FakeRelayHost,
+            nscript_runtime::FakeSignerHost,
+            nscript_runtime::FakeClock,
+            nscript_runtime::RecordingAudit,
+        >::handler_subscriptions(&checked, Some("public"), options.principal.as_deref())
+        .unwrap_or_else(|error| {
+            eprintln!("error[R1004]: {error:?}");
+            std::process::exit(1)
+        });
     for subscription in &subscriptions {
         println!("subscription {}", subscription.event_type);
     }
