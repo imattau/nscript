@@ -27,7 +27,7 @@ jobs:
         run: cargo install --git https://github.com/imattau/npack --tag "$NPACK_REF" --locked --root "$RUNNER_TEMP/npack" npack
 
       - name: Build nscript
-        run: cargo build --release --locked -p nscript-cli
+        run: cargo build --release --locked -p nscript-cli -p nscript-mcp
 
       - name: Determine release version
         id: release
@@ -60,6 +60,12 @@ jobs:
           fi
           mkdir -p package-output
           packaging/build-npk.sh "$VERSION" "$PUBLISHER" target/release/nscript "$RUNNER_TEMP/npack/bin/npack" package-output
+          bundle="nscript-mcp-${VERSION}-linux-x86_64"
+          mkdir -p "$RUNNER_TEMP/$bundle/share/doc/nscript"
+          install -m 0755 target/release/nscript target/release/nscript-mcp "$RUNNER_TEMP/$bundle/"
+          install -m 0644 README.md LICENSE docs/MCP.md "$RUNNER_TEMP/$bundle/share/doc/nscript/"
+          tar -C "$RUNNER_TEMP" -czf "package-output/$bundle.tar.gz" "$bundle"
+          (cd package-output && sha256sum "$bundle.tar.gz" >> SHA256SUMS)
 
       - name: Verify package output
         run: |
@@ -69,7 +75,7 @@ jobs:
       - name: Attest package provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: package-output/*.npk
+          subject-path: package-output/*.npk,package-output/*.tar.gz
 
       - uses: actions/upload-artifact@v4
         with:
@@ -84,6 +90,7 @@ jobs:
           files: |
             package-output/*.npk
             package-output/*.manifest.json
+            package-output/*.tar.gz
             package-output/SHA256SUMS
 
   nostr-handoff:

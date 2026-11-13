@@ -62,6 +62,10 @@ cargo run -p nscript-cli -- run conformance/valid/hello-note.ns
 More commands, and the technical details of how modules and hosts work, are in
 the [compiler, runtime and module reference](docs/COMPILER-RUNTIME-AND-MODULES.md).
 
+For MCP-compatible agents, build and configure the general-purpose NScript
+authoring server described in [`docs/MCP.md`](docs/MCP.md). It provides static
+checks, permission and effect inspection, and dry event simulation.
+
 ## Examples
 
 - [`examples/layer3-bot.ns`](examples/layer3-bot.ns) is a small bot that

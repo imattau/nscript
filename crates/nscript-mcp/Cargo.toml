@@ -1,0 +1,18 @@
+[package]
+name = "nscript-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "MCP server for checking, inspecting, and simulating NScript programs"
+
+[[bin]]
+name = "nscript-mcp"
+path = "src/main.rs"
+
+[dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

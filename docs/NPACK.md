@@ -55,7 +55,9 @@ committed lockfile.
 ## Releasing the nscript package
 
 `packaging/build-npk.sh` builds the `nscript` CLI into a deterministic
-`.npk` plus its manifest and `SHA256SUMS`:
+`.npk` plus its manifest and `SHA256SUMS`. A tagged GitHub release also
+includes a Linux x86_64 tarball containing `nscript`, `nscript-mcp`, and the
+MCP setup guide:
 
 ```bash
 cargo build --release --locked -p nscript-cli
@@ -63,7 +65,8 @@ packaging/build-npk.sh 0.1.0 npub1... target/release/nscript "$(command -v npack
 ```
 
 Pushing a `v<version>` tag runs `.github/workflows/release.yml`, which builds
-and attests the package, creates a GitHub Release, and publishes to Nostr from
+and attests the CLI package and MCP bundle, creates a GitHub Release, and
+publishes the `.npk` package to Nostr from
 the protected `release` environment. Configure the repository variables
 `NOSTR_PUBLISHER`, and the
 environment secret `NOSTR_SECRET_KEY` (a dedicated publisher key). Relays default to `wss://relay.ditto.pub`, `wss://nostr-01.yakihonne.com` and
