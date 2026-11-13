@@ -132,6 +132,244 @@ pub fn redact_sensitive(value: &str) -> String {
     }
 }
 
+/// One piece of a string literal containing `{...}` interpolation: literal
+/// text, or the raw, not-yet-lexed source of one interpolated expression.
+enum StringSegment {
+    Literal(String),
+    Expr(String),
+}
+
+/// Scans the raw source text of one `{...}` interpolation body, starting
+/// right after the opening `{` the caller already consumed. Tracks brace
+/// depth and a nested string literal's own quoting/escaping, so a `}` or
+/// `{` inside a nested string (or a nested record/match's own braces)
+/// does not end the scan early. Returns the raw text between the braces
+/// and whether a matching closing `}` was actually found before the
+/// characters ran out; the caller's cue to fall back to literal text
+/// (including the `{` itself) is `!closed`, exactly like this lexer
+/// already falls back to "just emit what was consumed" for an
+/// unterminated string.
+fn scan_interpolation_body<I>(chars: &mut I, line: &mut usize, column: &mut usize) -> (String, bool)
+where
+    I: Iterator<Item = (usize, char)>,
+{
+    let mut depth = 1u32;
+    let mut source = String::new();
+    let mut in_nested_string = false;
+    let mut nested_escape = false;
+    for (_, next) in chars {
+        if next == '\n' {
+            *line += 1;
+            *column = 1;
+        } else {
+            *column += 1;
+        }
+        if in_nested_string {
+            if nested_escape {
+                nested_escape = false;
+            } else if next == '\\' {
+                nested_escape = true;
+            } else if next == '"' {
+                in_nested_string = false;
+            }
+            source.push(next);
+            continue;
+        }
+        match next {
+            '"' => {
+                in_nested_string = true;
+                source.push(next);
+            }
+            '{' => {
+                depth += 1;
+                source.push(next);
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (source, true);
+                }
+                source.push(next);
+            }
+            _ => source.push(next),
+        }
+    }
+    (source, false)
+}
+
+/// Scans a string literal's body (after its opening quote has already
+/// been consumed) up to its closing `"`, handling the same backslash
+/// escapes either way. When `interpolate` is true (only for a `$"..."`
+/// literal), an unescaped `{...}` is additionally pulled out into its own
+/// [`StringSegment::Expr`] (see [`scan_interpolation_body`]), and `{{`/
+/// `}}` become a literal single brace; when it is false (every plain
+/// `"..."` literal), `{`/`}` are ordinary characters, byte-for-byte the
+/// same behaviour this lexer had before interpolation existed. Returns the
+/// trailing literal text, any `{...}` segments found before it, and
+/// whether interpolation actually triggered (always `false` when
+/// `interpolate` is `false`).
+fn lex_string_body(
+    chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+    line: &mut usize,
+    column: &mut usize,
+    interpolate: bool,
+) -> (String, Vec<StringSegment>, bool) {
+    let mut value = String::new();
+    let mut pending_backslash = false;
+    let mut segments: Vec<StringSegment> = Vec::new();
+    let mut has_interpolation = false;
+    while let Some((_, next)) = chars.next() {
+        if pending_backslash {
+            pending_backslash = false;
+            match next {
+                'n' => value.push('\n'),
+                't' => value.push('\t'),
+                'r' => value.push('\r'),
+                '0' => value.push('\0'),
+                '"' | '\\' => value.push(next),
+                // An unrecognised escape keeps both characters literally
+                // rather than silently dropping the backslash or
+                // refusing the whole program.
+                other => {
+                    value.push('\\');
+                    value.push(other);
+                }
+            }
+            *column += 1;
+            continue;
+        }
+        if next == '"' {
+            *column += 1;
+            break;
+        }
+        if next == '\\' {
+            pending_backslash = true;
+            *column += 1;
+            continue;
+        }
+        if interpolate && next == '{' && matches!(chars.peek(), Some((_, '{'))) {
+            chars.next();
+            *column += 2;
+            value.push('{');
+            continue;
+        }
+        if interpolate && next == '}' && matches!(chars.peek(), Some((_, '}'))) {
+            chars.next();
+            *column += 2;
+            value.push('}');
+            continue;
+        }
+        if interpolate && next == '{' {
+            *column += 1;
+            let (body, closed) = scan_interpolation_body(chars, line, column);
+            // An empty/whitespace-only `{}` or a `{` with no matching `}`
+            // before the string ends folds back into plain literal text
+            // (including the brace itself) rather than becoming a
+            // `text()` call with nothing to call it on, or an
+            // unterminated scan reaching past where the author meant it
+            // to.
+            if closed && !body.trim().is_empty() {
+                segments.push(StringSegment::Literal(std::mem::take(&mut value)));
+                segments.push(StringSegment::Expr(body));
+                has_interpolation = true;
+            } else {
+                value.push('{');
+                value.push_str(&body);
+                if closed {
+                    value.push('}');
+                }
+            }
+            continue;
+        }
+        if next == '\n' {
+            *line += 1;
+            *column = 1;
+        } else {
+            *column += 1;
+        }
+        value.push(next);
+    }
+    // An unterminated string ending on a trailing lone backslash still
+    // produces a token for what was consumed; the parser reports the
+    // missing closing quote.
+    if pending_backslash {
+        value.push('\\');
+    }
+    (value, segments, has_interpolation)
+}
+
+/// Desugars one interpolated string literal into exactly the token
+/// sequence a script would get by hand-writing `"lit" + text(expr) +
+/// "lit"` — nothing downstream (the parser, module canonicalisation,
+/// semantics, the evaluator, the IR compiler) needs to know interpolation
+/// syntax exists; they only ever see ordinary `String`/`Symbol('+')`/
+/// `Identifier("text")` tokens, exactly as if a script had been written
+/// that way by hand. Each `{...}` body is lexed by recursively calling
+/// [`lex`] on its own raw source — which is also how nested interpolation
+/// (a string inside a `{...}` that itself contains `{...}`) falls out for
+/// free, with no special-casing.
+///
+/// Every synthesized token (the literal segments, the `+`/`text`/`(`/`)`
+/// tokens, and the ones recursively lexed from each `{...}` body) shares
+/// the whole string literal's own `span`. A diagnostic that lands inside
+/// an interpolated expression therefore points at the string literal as a
+/// whole rather than the exact character — a known limitation of this
+/// first version, not a correctness issue for parsing or evaluation.
+fn push_interpolated_string(tokens: &mut Vec<Token>, segments: Vec<StringSegment>, span: Span) {
+    let mut terms: Vec<Vec<Token>> = Vec::new();
+    for segment in segments {
+        match segment {
+            StringSegment::Literal(text) => {
+                if !text.is_empty() {
+                    terms.push(vec![Token {
+                        kind: TokenKind::String(text),
+                        span,
+                    }]);
+                }
+            }
+            StringSegment::Expr(source) => {
+                let mut call = Vec::with_capacity(4);
+                call.push(Token {
+                    kind: TokenKind::Identifier("text".to_owned()),
+                    span,
+                });
+                call.push(Token {
+                    kind: TokenKind::Symbol('('),
+                    span,
+                });
+                call.extend(lex(&source).into_iter().map(|mut token| {
+                    token.span = span;
+                    token
+                }));
+                call.push(Token {
+                    kind: TokenKind::Symbol(')'),
+                    span,
+                });
+                terms.push(call);
+            }
+        }
+    }
+    if terms.is_empty() {
+        // The whole literal was interpolation with nothing in it, e.g.
+        // a string that was just `"{{"` un-doubled to nothing -- keep
+        // emitting a token rather than silently producing none.
+        tokens.push(Token {
+            kind: TokenKind::String(String::new()),
+            span,
+        });
+        return;
+    }
+    for (index, term) in terms.into_iter().enumerate() {
+        if index > 0 {
+            tokens.push(Token {
+                kind: TokenKind::Symbol('+'),
+                span,
+            });
+        }
+        tokens.extend(term);
+    }
+}
+
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn lex(source: &str) -> Vec<Token> {
@@ -169,51 +407,8 @@ pub fn lex(source: &str) -> Vec<Token> {
             }
             '"' => {
                 column += 1;
-                let mut value = String::new();
-                let mut pending_backslash = false;
-                for (_, next) in chars.by_ref() {
-                    if pending_backslash {
-                        pending_backslash = false;
-                        match next {
-                            'n' => value.push('\n'),
-                            't' => value.push('\t'),
-                            'r' => value.push('\r'),
-                            '0' => value.push('\0'),
-                            '"' | '\\' => value.push(next),
-                            // An unrecognised escape keeps both characters
-                            // literally rather than silently dropping the
-                            // backslash or refusing the whole program.
-                            other => {
-                                value.push('\\');
-                                value.push(other);
-                            }
-                        }
-                        column += 1;
-                        continue;
-                    }
-                    if next == '"' {
-                        column += 1;
-                        break;
-                    }
-                    if next == '\\' {
-                        pending_backslash = true;
-                        column += 1;
-                        continue;
-                    }
-                    if next == '\n' {
-                        line += 1;
-                        column = 1;
-                    } else {
-                        column += 1;
-                    }
-                    value.push(next);
-                }
-                // An unterminated string ending on a trailing lone
-                // backslash still produces a token for what was consumed;
-                // the parser reports the missing closing quote.
-                if pending_backslash {
-                    value.push('\\');
-                }
+                let (value, _segments, _has_interpolation) =
+                    lex_string_body(&mut chars, &mut line, &mut column, false);
                 let end = chars.peek().map_or(source.len(), |(offset, _)| *offset);
                 tokens.push(Token {
                     kind: TokenKind::String(value),
@@ -224,6 +419,38 @@ pub fn lex(source: &str) -> Vec<Token> {
                         column: start_column,
                     },
                 });
+            }
+            // `$"..."` is an interpolated string (`$` immediately
+            // against the opening quote, no space — mirroring C#'s
+            // `$"..."`). A plain `"..."` is deliberately left
+            // untouched by interpolation: real scripts already put a
+            // literal, unescaped `{` in an ordinary string (embedded
+            // JSON, for one — `conformance/valid/nip72-community.ns`
+            // does exactly this), so reinterpreting every string's
+            // braces would have been a silent, real compatibility
+            // break. Opting in with `$` costs existing scripts nothing
+            // and needs no retroactive `{{`/`}}` escaping anywhere.
+            '$' if matches!(chars.peek(), Some((_, '"'))) => {
+                chars.next();
+                column += 2;
+                let (value, mut segments, has_interpolation) =
+                    lex_string_body(&mut chars, &mut line, &mut column, true);
+                let end = chars.peek().map_or(source.len(), |(offset, _)| *offset);
+                let span = Span {
+                    start,
+                    end,
+                    line,
+                    column: start_column,
+                };
+                if has_interpolation {
+                    segments.push(StringSegment::Literal(value));
+                    push_interpolated_string(&mut tokens, segments, span);
+                } else {
+                    tokens.push(Token {
+                        kind: TokenKind::String(value),
+                        span,
+                    });
+                }
             }
             character if character == '_' || is_xid_start(character) => {
                 column += 1;
@@ -573,6 +800,109 @@ mod tests {
         assert_eq!(lex_one_string(r#""a\tb""#), "a\tb");
         assert_eq!(lex_one_string(r#""a\"b""#), "a\"b");
         assert_eq!(lex_one_string(r#""a\\b""#), "a\\b");
+    }
+
+    #[test]
+    fn a_plain_string_with_an_unescaped_brace_is_left_alone() {
+        // The real regression this design avoids: a plain `"..."` string
+        // already carries a literal, unescaped `{` in real scripts (the
+        // `nip72-community.ns` conformance fixture embeds raw JSON this
+        // way) -- interpolation only ever activates for `$"..."`.
+        assert_eq!(
+            lex_one_string(r#""{\"kind\":1111,\"content\":\"hello\"}""#),
+            r#"{"kind":1111,"content":"hello"}"#
+        );
+    }
+
+    #[test]
+    fn interpolated_strings_desugar_into_plus_and_text_tokens() {
+        // `$"count: {value}, done"` must tokenize exactly as a script
+        // would get by hand-writing `"count: " + text(value) + ", done"`
+        // -- the whole point is that nothing downstream needs to know
+        // `$"..."` syntax exists.
+        let tokens = lex(r#"$"count: {value}, done""#);
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|token| &token.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                &TokenKind::String("count: ".to_owned()),
+                &TokenKind::Symbol('+'),
+                &TokenKind::Identifier("text".to_owned()),
+                &TokenKind::Symbol('('),
+                &TokenKind::Identifier("value".to_owned()),
+                &TokenKind::Symbol(')'),
+                &TokenKind::Symbol('+'),
+                &TokenKind::String(", done".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_pure_interpolation_with_no_surrounding_text_is_just_a_text_call() {
+        // No literal segments at all means no `+` is needed either --
+        // `$"{value}"` is just `text(value)`, renderable through the
+        // existing `render()` helper without falling into its `Debug`
+        // catch-all (which would otherwise embed exact byte spans and
+        // make the assertion brittle).
+        assert_eq!(lowered(r#"$"{value}""#), "text(value)");
+    }
+
+    #[test]
+    fn doubled_braces_in_an_interpolated_string_are_literal() {
+        assert_eq!(
+            lex_one_string(r#"$"{{not interpolated}}""#),
+            "{not interpolated}"
+        );
+    }
+
+    #[test]
+    fn an_empty_interpolation_body_is_left_as_literal_braces() {
+        // `{}` with nothing (or only whitespace) inside folds back to
+        // literal text rather than becoming `text()` with no argument.
+        assert_eq!(lex_one_string(r#"$"a{}b""#), "a{}b");
+    }
+
+    #[test]
+    fn an_unterminated_interpolation_falls_back_to_literal_text() {
+        // No matching `}` anywhere, running clean off the end of input
+        // (no closing quote either): the stray `{` and everything after
+        // it degrade to literal text, the same way an unterminated
+        // string already degrades rather than panicking. A `"` inside an
+        // unmatched `{...}` is a different, genuinely ambiguous case --
+        // it's read as starting a nested string, same as it would be if
+        // the brace really did have a matching close later on, so this
+        // case deliberately has no quote at all to stay unambiguous.
+        assert_eq!(lex_one_string(r#"$"a{bc"#), "a{bc");
+    }
+
+    #[test]
+    fn a_nested_string_inside_an_interpolation_keeps_its_own_braces_private() {
+        // The nested string argument's own `{` must not count toward the
+        // interpolation's brace depth, and must not end it early.
+        let tokens = lex(r#"$"n: {len("a{b")}""#);
+        let kinds: Vec<&TokenKind> = tokens.iter().map(|token| &token.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                &TokenKind::String("n: ".to_owned()),
+                &TokenKind::Symbol('+'),
+                &TokenKind::Identifier("text".to_owned()),
+                &TokenKind::Symbol('('),
+                &TokenKind::Identifier("len".to_owned()),
+                &TokenKind::Symbol('('),
+                &TokenKind::String("a{b".to_owned()),
+                &TokenKind::Symbol(')'),
+                &TokenKind::Symbol(')'),
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_interpolation_works_through_the_recursive_lex_call() {
+        // A `$"..."` nested inside another `$"..."`'s `{...}` is lexed by
+        // recursively calling `lex` on the body's own raw text, so this
+        // falls out for free with no special-casing.
+        assert_eq!(lowered(r#"$"{$"{value}"}""#), "text(text(value))");
     }
 
     #[test]
