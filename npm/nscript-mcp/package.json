@@ -1,0 +1,28 @@
+{
+  "name": "nscript-mcp",
+  "version": "0.3.3",
+  "description": "MCP server for checking, inspecting, and simulating NScript programs",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/imattau/nscript.git"
+  },
+  "bin": {
+    "nscript-mcp": "bin/nscript-mcp.js"
+  },
+  "files": [
+    "bin/nscript-mcp.js",
+    "bin/linux-x64/nscript",
+    "bin/linux-x64/nscript-mcp",
+    "bin/darwin-arm64/nscript",
+    "bin/darwin-arm64/nscript-mcp",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
