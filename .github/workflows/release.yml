@@ -93,6 +93,102 @@ jobs:
             package-output/*.tar.gz
             package-output/SHA256SUMS
 
+  macos-arm64:
+    name: Build macOS arm64 MCP bundle
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Build binaries
+        run: cargo build --release --locked --target aarch64-apple-darwin -p nscript-cli -p nscript-mcp
+      - name: Package macOS binaries
+        env:
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-ci.{0}', github.run_number) }}
+        run: |
+          bundle="nscript-mcp-${VERSION}-darwin-arm64"
+          mkdir -p "$RUNNER_TEMP/$bundle/share/doc/nscript" package-output
+          install -m 0755 target/aarch64-apple-darwin/release/nscript target/aarch64-apple-darwin/release/nscript-mcp "$RUNNER_TEMP/$bundle/"
+          install -m 0644 README.md LICENSE docs/MCP.md "$RUNNER_TEMP/$bundle/share/doc/nscript/"
+          tar -C "$RUNNER_TEMP" -czf "package-output/$bundle.tar.gz" "$bundle"
+          (cd package-output && shasum -a 256 "$bundle.tar.gz" > "$bundle.sha256")
+      - name: Attest macOS bundle provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: package-output/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nscript-mcp-darwin-arm64
+          path: package-output/*
+          if-no-files-found: error
+
+  publish-macos-release:
+    name: Attach macOS release bundle
+    needs: [package, macos-arm64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nscript-mcp-darwin-arm64
+          path: package-output
+      - name: Upload GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" package-output/* --clobber
+
+  publish-npm:
+    name: Publish npm package
+    needs: [package, macos-arm64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Update npm for trusted publishing
+        run: npm install --global npm@latest
+      - uses: actions/download-artifact@v4
+        with:
+          name: nscript-release-bundle
+          path: release-linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: nscript-mcp-darwin-arm64
+          path: release-macos
+      - name: Assemble npm package
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          staging="$RUNNER_TEMP/npm-package"
+          mkdir -p "$staging/bin/linux-x64" "$staging/bin/darwin-arm64"
+          cp npm/nscript-mcp/package.json npm/nscript-mcp/README.md "$staging/"
+          cp npm/nscript-mcp/bin/nscript-mcp.js "$staging/bin/"
+          cp LICENSE "$staging/"
+          tar -xzf "release-linux/nscript-mcp-${VERSION}-linux-x86_64.tar.gz" -C "$RUNNER_TEMP"
+          tar -xzf "release-macos/nscript-mcp-${VERSION}-darwin-arm64.tar.gz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-x86_64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-x86_64/nscript-mcp" "$staging/bin/linux-x64/"
+          cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-darwin-arm64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-darwin-arm64/nscript-mcp" "$staging/bin/darwin-arm64/"
+          chmod 0755 "$staging/bin/nscript-mcp.js" "$staging"/bin/*/*
+          node -e "const fs=require('fs'),p='$staging/package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\\n')"
+          cd "$staging"
+          npm pack --dry-run
+          npm publish --provenance --access public
+
   nostr-handoff:
     name: Publish to Nostr
     needs: package
