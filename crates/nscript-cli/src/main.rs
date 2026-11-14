@@ -317,7 +317,7 @@ fn resolve_lockfile(arguments: &[String]) -> Result<(String, serde_json::Value),
         return Err(());
     };
     if !diagnostics.is_empty() {
-        finish(source, diagnostics);
+        let _ = finish(source, diagnostics);
         return Err(());
     }
     let modules = graph
