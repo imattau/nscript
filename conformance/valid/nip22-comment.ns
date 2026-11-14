@@ -1,4 +1,5 @@
-// NIP-22 comments can target arbitrary event kinds.
+// NIP-22 carries distinct root scope and parent context. NIP-32 labels are
+// embedded on the comment event through the `labels` field.
 use nip22
 
 permissions {
@@ -6,6 +7,12 @@ permissions {
 }
 
 let result = nip22.publish_comment(Comment {
-    target: "event-to-comment-on";
+    root_tag: "E";
+    root: "root-event-id";
+    root_kind: 1;
+    parent_tag: "e";
+    target: "parent-event-id";
+    parent_kind: 1111;
     content: "A useful comment";
+    labels: [EmbeddedLabel { namespace: "moderation"; value: "helpful" }];
 })

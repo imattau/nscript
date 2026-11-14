@@ -28,6 +28,7 @@ applies inside a handler exactly as it does outside one.
 | text and list literals, records (`Name { field: value }`), indexing | |
 | `event.id`, `event.author`, `event.content`, `event.kind`, `event.created_at`, `event.tags` | `tags` iterates as `name=value` text |
 | `me` | the program's principal; an error if none is configured |
+| declared `input` values | host-provided values are bound in handlers and schedules |
 | `print(x)`, `len(x)`, `text(x)` | `text(x)` renders any value the same way `print` does, as `Text` — the explicit conversion `+` needs to concatenate a non-`Text` value, e.g. `"count: " + text(n)` |
 | `publish <record> [to <relayset>] [with <signer>]` | see below |
 | user `fn`s | recursion allowed; a function sees only its own parameters |
@@ -64,6 +65,7 @@ event sim-event (Note, kind 1)
 | `--event <json>` | deliver one event; repeatable |
 | `--events <file>` | one JSON event per line, or a single JSON array |
 | `--as <key>` | the value of `me`; a handler that uses `me` without it fails, and says so |
+| `--input <name>=<value>` | provide a declared scalar input to handlers and schedules; repeat for multiple inputs |
 
 An event is a JSON object; every field is optional. `event_type` (default
 must equal the handler's event type. For `on Note` that is `Note`; for a stream

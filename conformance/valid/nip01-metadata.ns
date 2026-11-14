@@ -1,0 +1,16 @@
+// NIP-01 profile metadata includes common extension fields, including
+// discoverability and Lightning payment addresses.
+use nip01
+
+let profile = MetadataContent {
+    name: "bot";
+    display_name: "Community Bot";
+    about: "Replies to community mentions";
+    picture: "https://example.com/avatar.png";
+    banner: "https://example.com/banner.png";
+    website: "https://example.com";
+    nip05: "bot@example.com";
+    lud06: "lnurl1example";
+    lud16: "bot@example.com";
+    bot: true;
+}

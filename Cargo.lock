@@ -39,6 +39,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -384,7 +390,7 @@ checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
 
 [[package]]
 name = "nscript-cli"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "nscript-host-crypto",
  "nscript-ir",
@@ -400,9 +406,9 @@ dependencies = [
 
 [[package]]
 name = "nscript-host-crypto"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "chacha20",
  "getrandom 0.3.4",
  "hkdf",
@@ -420,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-ir"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "nscript-modules",
  "nscript-semantics",
@@ -431,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-lang"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "nscript-modules",
  "nscript-semantics",
@@ -443,14 +449,14 @@ dependencies = [
 
 [[package]]
 name = "nscript-mcp"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "nscript-modules"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "nscript-syntax",
  "semver",
@@ -459,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-runtime"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "nscript-modules",
  "nscript-semantics",
@@ -469,12 +475,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "tungstenite",
+ "ureq",
  "wasmi",
 ]
 
 [[package]]
 name = "nscript-semantics"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "nscript-modules",
  "nscript-syntax",
@@ -484,14 +491,14 @@ dependencies = [
 
 [[package]]
 name = "nscript-syntax"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "nscript-wasm"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "nscript-ir",
  "nscript-lang",
@@ -529,6 +536,12 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "percent-encoding"
+version = "2.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "ppv-lite86"
@@ -614,10 +627,11 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -900,10 +914,44 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "ureq"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7be76686bdf7198002062423ca0d8cf9b75a27c8e1de804513b97e97b555d9d"
+dependencies = [
+ "base64 0.23.1",
+ "log",
+ "percent-encoding",
+ "rustls",
+ "rustls-pki-types",
+ "ureq-proto",
+ "utf8-zero",
+ "webpki-roots",
+]
+
+[[package]]
+name = "ureq-proto"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "622dce33c252115466d83f63e9744a18f12b4406aae51a01c15ad8fcf1185eb3"
+dependencies = [
+ "base64 0.23.1",
+ "http",
+ "httparse",
+ "log",
+]
+
+[[package]]
 name = "utf-8"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
+
+[[package]]
+name = "utf8-zero"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
 name = "version_check"
@@ -981,6 +1029,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5a015fe95f3504a94bb1462c717aae75253e39b9dd6c3fb1062c934535c64aa"
 dependencies = [
  "indexmap-nostd",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]

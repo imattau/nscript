@@ -775,17 +775,21 @@ and exposes the security-relevant analysis it will render.
   ESM and are exercised in node (`studio/tests/core.test.mjs`) without a
   browser; `npm run build` produces the deployable static site.
 
-## Clawstr release scope (0.3.5)
+## Clawstr follow-up scope (next release)
 
-- P0: reject unsafe handler predicates, resolve `me` at subscription time,
-  lower module-defined tag records, reject computed startup tags, expose lowered
-  tags in IR 0.2, and provide `starts_with` / `strip_prefix` for event tag values.
-- P1: predicate/interpolation documentation and custom tag conformance coverage
-  are included. Handler-visible inputs and the broader NIP-22/73/25/32 vectors
-  remain follow-up work; existing runtime coverage already exercises NIP-22,
-  NIP-25, and NIP-32 operation paths.
-- P2: full NIP-57 zap flow, Windows/Linux arm64 bundles, and public HTTP OAuth
-  remain deferred.
+- P1 complete in the current follow-up: handler-visible typed inputs work in
+  `run`, `deploy`, and `test-event`; NIP-22 comments carry root and parent
+  context plus embedded NIP-32 labels; NIP-25 reactions carry target author,
+  kind, and relay hints; and NIP-01 metadata includes common profile fields.
+  Conformance fixtures cover these shapes and the existing NIP-73 external
+  identifier example. Predicate/interpolation docs and custom tag coverage
+  shipped in 0.3.5.
+- P2 platform work: add Linux arm64 and Windows x64/arm64 release bundles to
+  the GitHub and npm publication workflow. macOS arm64 was already added in
+  0.3.5.
+- Remaining P2: the complete NIP-57 LNURL/invoice/receipt flow and OAuth for a
+  publicly hosted MCP still need separate host and service designs. HTTP/SSE
+  currently uses a shared bearer token and is intended for trusted deployments.
 
 ## Deferred
 

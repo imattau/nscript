@@ -279,6 +279,7 @@ impl Value {
                 name: name.clone(),
                 fields: fields
                     .iter()
+                    .filter(|(_, value)| !matches!(value, Self::Unit))
                     .map(|(field, value)| Ok((field.clone(), value.to_operation()?)))
                     .collect::<Result<_, Stop>>()?,
             }),
@@ -301,6 +302,22 @@ impl Value {
             OperationValue::PublishReport(report) => Self::Record {
                 name: "PublishReport".to_owned(),
                 fields: vec![("accepted".to_owned(), Self::Bool(report.accepted()))],
+            },
+            OperationValue::PaymentIntent(intent) => Self::Record {
+                name: "PaymentIntent".to_owned(),
+                fields: vec![
+                    ("recipient".to_owned(), Self::PubKey(intent.recipient)),
+                    ("amount".to_owned(), Self::Int(intent.amount)),
+                    ("invoice".to_owned(), Self::Text(intent.invoice)),
+                ],
+            },
+            OperationValue::PaymentResult(payment) => Self::Record {
+                name: "PaymentResult".to_owned(),
+                fields: vec![
+                    ("invoice".to_owned(), Self::Text(payment.invoice)),
+                    ("amount".to_owned(), Self::Int(payment.amount)),
+                    ("settled".to_owned(), Self::Bool(payment.settled)),
+                ],
             },
             // The generic counterpart to `Value::to_operation`'s own
             // generic `Record` case: a custom module's record (anything
@@ -422,19 +439,27 @@ pub fn run_handler<'a, H: EvalHost>(
     host: &'a mut H,
     limits: EvalLimits,
 ) -> Result<Value, RuntimeError> {
-    run_with_scope(
-        program,
-        body,
-        BTreeMap::from([("event".to_owned(), event)]),
-        host,
-        limits,
-    )
+    run_handler_with_inputs(program, body, event, &BTreeMap::new(), host, limits)
+}
+
+/// Runs a handler body with its delivered `event` and the program's declared
+/// host inputs in scope.
+pub fn run_handler_with_inputs<'a, H: EvalHost>(
+    program: &'a Program,
+    body: &'a [Item],
+    event: Value,
+    inputs: &BTreeMap<String, Value>,
+    host: &'a mut H,
+    limits: EvalLimits,
+) -> Result<Value, RuntimeError> {
+    let mut scope = inputs.clone();
+    scope.insert("event".to_owned(), event);
+    run_with_scope(program, body, scope, host, limits)
 }
 
 /// [`run_handler`]'s shared implementation, seeded with an arbitrary initial
 /// scope instead of always binding exactly `event`. [`run_schedule_bodies`]
-/// uses this to additionally bind declared `input`s, which a handler body
-/// never has.
+/// uses this to additionally bind declared `input`s.
 fn run_with_scope<'a, H: EvalHost>(
     program: &'a Program,
     body: &'a [Item],
@@ -844,6 +869,27 @@ impl<H: EvalHost> Interpreter<'_, H> {
             match field.as_str() {
                 "content" => match value {
                     Value::Text(text) => content = Some(text),
+                    Value::Record { fields, .. } => {
+                        let object = fields
+                            .into_iter()
+                            .filter_map(|(key, value)| match value {
+                                Value::Unit => None,
+                                Value::Bool(value) => Some((key, serde_json::json!(value))),
+                                Value::Int(value) => Some((key, serde_json::json!(value))),
+                                Value::Text(value) | Value::PubKey(value) => {
+                                    Some((key, serde_json::json!(value)))
+                                }
+                                Value::List(items) => Some((
+                                    key,
+                                    serde_json::Value::Array(
+                                        items.into_iter().map(runtime_value_json).collect(),
+                                    ),
+                                )),
+                                other => Some((key, runtime_value_json(other))),
+                            })
+                            .collect::<serde_json::Map<_, _>>();
+                        content = Some(serde_json::Value::Object(object).to_string());
+                    }
                     // NCC-05 locators (and any other `content: EncryptedText`
                     // event) publish the payload nip44 handed us whole: the
                     // wire content is that envelope's bytes, so lowering it
@@ -1149,6 +1195,32 @@ impl<H: EvalHost> Interpreter<'_, H> {
     }
 }
 
+fn runtime_value_json(value: Value) -> serde_json::Value {
+    match value {
+        Value::Unit => serde_json::Value::Null,
+        Value::Bool(value) => serde_json::json!(value),
+        Value::Int(value) => serde_json::json!(value),
+        Value::Text(value) | Value::PubKey(value) => serde_json::json!(value),
+        Value::List(items) => {
+            serde_json::Value::Array(items.into_iter().map(runtime_value_json).collect())
+        }
+        Value::Record { fields, .. } => serde_json::Value::Object(
+            fields
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    if matches!(value, Value::Unit) {
+                        None
+                    } else {
+                        Some((key, runtime_value_json(value)))
+                    }
+                })
+                .collect(),
+        ),
+        Value::ResultOk(value) => runtime_value_json(*value),
+        Value::ResultErr(_) | Value::Op(_) => serde_json::Value::Null,
+    }
+}
+
 /// Whether `value` fits `pattern`, collecting its bindings. Bindings from a
 /// failed attempt are discarded by the caller.
 fn pattern_matches(
@@ -1414,6 +1486,31 @@ where
         operation: &str,
         arguments: &[OperationValue],
     ) -> Result<OperationValue, RuntimeError> {
+        if module == "nip57"
+            && operation == "create_zap_request"
+            && self.operations.supports_live_nip57()
+        {
+            if !self.policy.permits(module, operation) {
+                return Err(RuntimeError::CapabilityDenied {
+                    capability: format!("{module}.{operation}"),
+                });
+            }
+            let [argument] = arguments else {
+                return Err(RuntimeError::InvalidOperationArguments {
+                    operation: "nip57.create_zap_request".to_owned(),
+                });
+            };
+            let normalized = crate::normalize_record(argument);
+            let OperationValue::ZapRequest(request) = &normalized else {
+                return Err(RuntimeError::InvalidOperationArguments {
+                    operation: "nip57.create_zap_request".to_owned(),
+                });
+            };
+            return self
+                .runtime
+                .create_zap_request(self.operations, request)
+                .map(OperationValue::PaymentIntent);
+        }
         self.runtime.invoke_authorized_operation(
             self.policy,
             self.operations,
@@ -1739,6 +1836,18 @@ pub struct WithReturns<'a, O: OperationHost> {
 }
 
 impl<O: OperationHost> OperationHost for WithReturns<'_, O> {
+    fn supports_live_nip57(&self) -> bool {
+        self.inner.supports_live_nip57()
+    }
+
+    fn http_get(
+        &mut self,
+        invocation: crate::InvocationId,
+        url: &str,
+    ) -> Result<crate::HttpResponse, RuntimeError> {
+        self.inner.http_get(invocation, url)
+    }
+
     fn host_key(&mut self, label: &str) -> Result<crate::DerivedKey, RuntimeError> {
         self.inner.host_key(label)
     }
@@ -1887,7 +1996,37 @@ where
         log: &mut L,
         principal: Option<&str>,
         limits: EvalLimits,
+        idempotency_host: Option<&mut dyn IdempotencyHost>,
+    ) -> Vec<HandlerOutcome> {
+        self.run_handlers_for_event_with_inputs(
+            program,
+            checked,
+            event,
+            policy,
+            operations,
+            log,
+            principal,
+            limits,
+            idempotency_host,
+            &BTreeMap::new(),
+        )
+    }
+
+    /// Like [`Runtime::run_handlers_for_event`], with declared `input` values
+    /// available to every matched handler alongside `event`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_handlers_for_event_with_inputs<O: OperationHost, L: LogHost>(
+        &mut self,
+        program: &Program,
+        checked: &nscript_semantics::CheckedProgram,
+        event: &crate::SignedEvent,
+        policy: &OperationPolicy,
+        operations: &mut O,
+        log: &mut L,
+        principal: Option<&str>,
+        limits: EvalLimits,
         mut idempotency_host: Option<&mut dyn IdempotencyHost>,
+        inputs: &BTreeMap<String, Value>,
     ) -> Vec<HandlerOutcome> {
         let requests = match Self::handler_subscriptions(checked, None, principal) {
             Ok(requests) => requests,
@@ -1916,10 +2055,11 @@ where
                 idempotency,
                 events: &checked.events,
             };
-            let result = settle(run_handler(
+            let result = settle(run_handler_with_inputs(
                 program,
                 &handler.body,
                 Value::from_event(event),
+                inputs,
                 &mut session,
                 limits,
             ));
@@ -1999,6 +2139,50 @@ where
         L: LogHost,
         O: OperationHost,
     {
+        self.dispatch_evaluated_with_inputs(
+            program,
+            request,
+            event,
+            handler_index,
+            handler,
+            policy,
+            events,
+            idempotency_host,
+            storage_host,
+            log_host,
+            operations,
+            principal,
+            limits,
+            &BTreeMap::new(),
+        )
+    }
+
+    /// Like [`Runtime::dispatch_evaluated`], with host-supplied program inputs
+    /// visible to the handler.
+    #[allow(clippy::too_many_arguments)]
+    pub fn dispatch_evaluated_with_inputs<I, T, L, O>(
+        &mut self,
+        program: &Program,
+        request: &SubscriptionRequest,
+        event: &crate::SignedEvent,
+        handler_index: usize,
+        handler: &nscript_semantics::CheckedHandler,
+        policy: &OperationPolicy,
+        events: &BTreeMap<String, nscript_semantics::CheckedEvent>,
+        idempotency_host: &mut I,
+        storage_host: &mut T,
+        log_host: &mut L,
+        operations: &mut O,
+        principal: Option<&str>,
+        limits: EvalLimits,
+        inputs: &BTreeMap<String, Value>,
+    ) -> Result<Option<Result<Value, RuntimeError>>, RuntimeError>
+    where
+        I: IdempotencyHost,
+        T: TransactionalStorageHost,
+        L: LogHost,
+        O: OperationHost,
+    {
         if !Self::matches_subscription(request, event) {
             return Ok(None);
         }
@@ -2022,10 +2206,11 @@ where
                 idempotency: Some(idempotency_host),
                 events,
             };
-            settle(run_handler(
+            settle(run_handler_with_inputs(
                 program,
                 &handler.body,
                 Value::from_event(event),
+                inputs,
                 &mut session,
                 limits,
             ))
@@ -2077,6 +2262,45 @@ where
         L: LogHost,
         O: OperationHost,
     {
+        self.run_evaluated_cycle_with_inputs(
+            program,
+            checked,
+            relayset,
+            subscription_host,
+            idempotency_host,
+            storage_host,
+            log_host,
+            operations,
+            principal,
+            limits,
+            &BTreeMap::new(),
+        )
+    }
+
+    /// Like [`Runtime::run_evaluated_cycle`], with declared program inputs
+    /// visible to every dispatched handler.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_evaluated_cycle_with_inputs<H, I, T, L, O>(
+        &mut self,
+        program: &Program,
+        checked: &nscript_semantics::CheckedProgram,
+        relayset: Option<&str>,
+        subscription_host: &mut H,
+        idempotency_host: &mut I,
+        storage_host: &mut T,
+        log_host: &mut L,
+        operations: &mut O,
+        principal: Option<&str>,
+        limits: EvalLimits,
+        inputs: &BTreeMap<String, Value>,
+    ) -> Result<CycleReport, RuntimeError>
+    where
+        H: SubscriptionHost,
+        I: IdempotencyHost,
+        T: TransactionalStorageHost,
+        L: LogHost,
+        O: OperationHost,
+    {
         let policy = policy_for(checked);
         let requests = Self::handler_subscriptions(checked, relayset, principal)?;
         let mut report = CycleReport::default();
@@ -2090,7 +2314,7 @@ where
                 }
             };
             for event in batch.events {
-                let outcome = self.dispatch_evaluated(
+                let outcome = self.dispatch_evaluated_with_inputs(
                     program,
                     request,
                     &event,
@@ -2104,6 +2328,7 @@ where
                     operations,
                     principal,
                     limits,
+                    inputs,
                 );
                 match outcome {
                     Ok(None) => {}

@@ -4,8 +4,15 @@ reference "https://github.com/nostr-protocol/nips/blob/master/01.md"
 
 record MetadataContent {
     field name: Option<Text>
+    field display_name: Option<Text>
     field about: Option<Text>
     field picture: Option<Text>
+    field banner: Option<Text>
+    field website: Option<Text>
+    field nip05: Option<Text>
+    field lud06: Option<Text>
+    field lud16: Option<Text>
+    field bot: Option<Bool>
 }
 
 event Note {

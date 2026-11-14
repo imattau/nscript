@@ -995,6 +995,8 @@ const MODERATION_BOT: &str = include_str!("../../../examples/concord-moderation-
 
 const INPUT_SCHEDULE: &str = "permissions {\n    log\n    clock\n}\n\ninput publisher: Text\ninput retries: Int\n\nevery 1h {\n    print(publisher + \" x\" + text(retries))\n}\n";
 
+const INPUT_HANDLER: &str = "permissions {\n    log\n}\n\ninput reply_prefix: Text\n\non Note {\n    print(reply_prefix + event.content)\n}\n";
+
 #[test]
 fn deploy_and_run_bind_declared_inputs_from_the_input_flag() {
     let (ok, stdout, stderr) = run_source(
@@ -1004,6 +1006,22 @@ fn deploy_and_run_bind_declared_inputs_from_the_input_flag() {
     );
     assert!(ok, "{stderr}");
     assert!(stdout.contains("log info: acme x3"), "{stdout}");
+}
+
+#[test]
+fn run_binds_declared_inputs_inside_event_handlers() {
+    let (ok, stdout, stderr) = run_source(
+        "handler-input",
+        INPUT_HANDLER,
+        &[
+            "--input",
+            "reply_prefix=echo: ",
+            "--event",
+            r#"{"event_type":"Note","content":"hello"}"#,
+        ],
+    );
+    assert!(ok, "{stderr}");
+    assert!(stdout.contains("log info: echo: hello"), "{stdout}");
 }
 
 #[test]

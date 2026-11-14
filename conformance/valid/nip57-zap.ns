@@ -1,0 +1,7 @@
+use nip57
+
+permissions {
+    zap
+}
+
+zap "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" to "alice@example.com" amount 21000 with account relays ["wss://relay.example"] message "Thanks for the post"

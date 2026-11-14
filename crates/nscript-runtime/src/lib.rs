@@ -815,8 +815,24 @@ pub struct Repost {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Comment {
+    pub root_tag: String,
+    pub root: String,
+    pub root_kind: i64,
+    pub root_author: Option<String>,
+    pub root_relay: Option<String>,
+    pub parent_tag: String,
     pub target: String,
+    pub parent_kind: i64,
+    pub parent_author: Option<String>,
+    pub parent_relay: Option<String>,
     pub content: String,
+    pub labels: Vec<EmbeddedLabel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmbeddedLabel {
+    pub namespace: String,
+    pub value: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1235,6 +1251,9 @@ pub struct FollowList {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reaction {
     pub target: String,
+    pub target_author: String,
+    pub target_kind: Option<i64>,
+    pub relay_hint: Option<String>,
     pub content: String,
 }
 
@@ -1253,8 +1272,14 @@ pub struct UserList {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ZapRequest {
     pub recipient: String,
+    pub lightning_address: String,
     pub amount: i64,
     pub message: String,
+    pub signer: String,
+    pub relays: Vec<String>,
+    pub target_event: Option<String>,
+    pub target_address: Option<String>,
+    pub target_kind: Option<i64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1792,6 +1817,29 @@ pub trait PureFunctionHost {
 }
 
 pub trait OperationHost {
+    /// Whether this host opts into live NIP-57 invoice negotiation. Simulators
+    /// leave this off so `run` and `test-event` never contact Lightning
+    /// services.
+    fn supports_live_nip57(&self) -> bool {
+        false
+    }
+
+    /// Perform the public HTTPS GET requests used by protocol operations such
+    /// as LNURL-pay discovery and callbacks. Hosts must enforce their own
+    /// network policy; the runtime only issues HTTPS URLs and rejects
+    /// redirects for payment negotiation.
+    fn http_get(
+        &mut self,
+        invocation: InvocationId,
+        url: &str,
+    ) -> Result<HttpResponse, RuntimeError> {
+        let _ = (invocation, url);
+        Err(RuntimeError::OperationUnavailable {
+            module: "http".to_owned(),
+            operation: "get".to_owned(),
+        })
+    }
+
     /// The key the host holds under `label`, for a script's `key name =
     /// host("label")`. The script receives an opaque handle, never the bytes as
     /// text. The default provisions nothing.
@@ -2370,6 +2418,201 @@ where
             seen_event_ids: BTreeSet::new(),
             max_subscription_batch: 1024,
         }
+    }
+
+    /// Resolve an LNURL-pay endpoint, create and sign its NIP-57 kind-9734
+    /// request, then return the invoice supplied by the callback. This does
+    /// not pay the invoice; payment remains a separate wallet operation.
+    pub fn create_zap_request<O: OperationHost>(
+        &mut self,
+        host: &mut O,
+        request: &ZapRequest,
+    ) -> Result<PaymentIntent, RuntimeError> {
+        let invocation = self.next_invocation;
+        self.next_invocation += 1;
+        let result = (|| {
+            if request.amount <= 0
+                || request.recipient.len() != 64
+                || !request
+                    .recipient
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+                || request.relays.is_empty()
+                || request
+                    .relays
+                    .iter()
+                    .any(|relay| !relay.starts_with("wss://") || relay.len() <= 6)
+                || request.signer.is_empty()
+                || request.target_event.as_ref().is_some_and(|event| {
+                    event.len() != 64 || !event.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+                || request
+                    .target_address
+                    .as_ref()
+                    .is_some_and(|address| !valid_event_coordinate(address))
+                || request
+                    .target_kind
+                    .is_some_and(|kind| !(0..=i64::from(u16::MAX)).contains(&kind))
+            {
+                return Err(RuntimeError::InvalidOperationArguments {
+                    operation: "nip57.create_zap_request".to_owned(),
+                });
+            }
+            let lnurl_url = lightning_address_url(&request.lightning_address)?;
+            let encoded_lnurl = encode_lnurl(&lnurl_url)?;
+            let discovery_response = host.http_get(invocation, &lnurl_url)?;
+            if discovery_response.status != 200 {
+                return Err(zap_error(format!(
+                    "LNURL discovery returned HTTP {}",
+                    discovery_response.status
+                )));
+            }
+            let metadata: serde_json::Value = serde_json::from_str(&discovery_response.body)
+                .map_err(|_| zap_error("LNURL discovery returned invalid JSON"))?;
+            if metadata.get("status").and_then(serde_json::Value::as_str) == Some("ERROR") {
+                return Err(zap_error(
+                    metadata
+                        .get("reason")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("LNURL provider rejected discovery"),
+                ));
+            }
+            if metadata
+                .get("allowsNostr")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+            {
+                return Err(zap_error(
+                    "recipient LNURL endpoint does not support NIP-57",
+                ));
+            }
+            let provider_key = metadata
+                .get("nostrPubkey")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| zap_error("LNURL response is missing nostrPubkey"))?;
+            if !provider_key.eq_ignore_ascii_case(&request.recipient) {
+                return Err(zap_error("LNURL nostrPubkey does not match the recipient"));
+            }
+            let minimum = metadata
+                .get("minSendable")
+                .and_then(serde_json::Value::as_i64)
+                .ok_or_else(|| zap_error("LNURL response has an invalid minSendable"))?;
+            let maximum = metadata
+                .get("maxSendable")
+                .and_then(serde_json::Value::as_i64)
+                .ok_or_else(|| zap_error("LNURL response has an invalid maxSendable"))?;
+            if request.amount < minimum || request.amount > maximum {
+                return Err(zap_error(format!(
+                    "zap amount {} msat is outside the LNURL range {minimum}..={maximum} msat",
+                    request.amount
+                )));
+            }
+            if minimum < 0 || maximum < minimum {
+                return Err(zap_error("LNURL response has an invalid amount range"));
+            }
+            let callback = metadata
+                .get("callback")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| zap_error("LNURL response is missing callback"))?;
+            validate_lnurl_https_url(callback)?;
+
+            let mut tags = vec![
+                (
+                    "relays".to_owned(),
+                    request.relays.join(&TAG_COLUMN_SEPARATOR.to_string()),
+                ),
+                ("amount".to_owned(), request.amount.to_string()),
+                ("lnurl".to_owned(), encoded_lnurl.clone()),
+                ("p".to_owned(), request.recipient.to_lowercase()),
+            ];
+            if let Some(target) = &request.target_event {
+                tags.push(("e".to_owned(), target.clone()));
+            }
+            if let Some(target) = &request.target_address {
+                tags.push(("a".to_owned(), target.clone()));
+            }
+            if let Some(kind) = request.target_kind {
+                tags.push(("k".to_owned(), kind.to_string()));
+            }
+            let unsigned = UnsignedEvent {
+                event_type: "ZapRequest".to_owned(),
+                kind: 9734,
+                content: request.message.clone(),
+                tags,
+                created_at: self.clock.now(),
+            };
+            let signed = self.signer.sign(invocation, unsigned, &request.signer)?;
+            self.audit.record(AuditEntry {
+                invocation,
+                operation: "sign_zap_request".to_owned(),
+                target: request.signer.clone(),
+                result: "ok".to_owned(),
+            });
+            if signed.signer.len() != 64
+                || !signed.signer.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(zap_error(
+                    "signer did not return a 32-byte Nostr public key",
+                ));
+            }
+            let event = serde_json::json!({
+                "id": signed.id,
+                "pubkey": signed.signer,
+                "created_at": signed.unsigned.created_at,
+                "kind": 9734,
+                "tags": signed.unsigned.wire_tags(),
+                "content": signed.unsigned.content,
+                "sig": signed.signature,
+            });
+            let event_json = serde_json::to_string(&event)
+                .map_err(|_| zap_error("could not encode signed zap request"))?;
+            let separator = if callback.contains('?') { '&' } else { '?' };
+            let callback_url = format!(
+                "{callback}{separator}amount={}&nostr={}&lnurl={}",
+                request.amount,
+                url_query_encode(&event_json),
+                url_query_encode(&encoded_lnurl),
+            );
+            let invoice_response = host.http_get(invocation, &callback_url)?;
+            if invoice_response.status != 200 {
+                return Err(zap_error(format!(
+                    "LNURL callback returned HTTP {}",
+                    invoice_response.status
+                )));
+            }
+            let response: serde_json::Value = serde_json::from_str(&invoice_response.body)
+                .map_err(|_| zap_error("LNURL callback returned invalid JSON"))?;
+            if response.get("status").and_then(serde_json::Value::as_str) == Some("ERROR") {
+                return Err(zap_error(
+                    response
+                        .get("reason")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("LNURL provider rejected the zap request"),
+                ));
+            }
+            let invoice = response
+                .get("pr")
+                .and_then(serde_json::Value::as_str)
+                .filter(|invoice| !invoice.is_empty())
+                .ok_or_else(|| zap_error("LNURL callback response is missing invoice `pr`"))?;
+            if bolt11_amount_msat(invoice) != Some(request.amount) {
+                return Err(zap_error(
+                    "returned BOLT11 invoice amount does not match the requested millisatoshis",
+                ));
+            }
+            Ok(PaymentIntent {
+                recipient: request.recipient.clone(),
+                amount: request.amount,
+                invoice: invoice.to_owned(),
+            })
+        })();
+        self.audit.record(AuditEntry {
+            invocation,
+            operation: "nip57.create_zap_request".to_owned(),
+            target: request.recipient.clone(),
+            result: if result.is_ok() { "invoice" } else { "error" }.to_owned(),
+        });
+        result
     }
 
     /// Execute the checked program's effectful publication operations.
@@ -6908,6 +7151,135 @@ impl ProcessOperationHost {
                 }
                 json!({"type": "record", "name": name, "fields": encoded})
             }
+            OperationValue::Comment(comment) => {
+                let mut fields = vec![
+                    (
+                        "root_tag".to_owned(),
+                        OperationValue::Text(comment.root_tag.clone()),
+                    ),
+                    (
+                        "root".to_owned(),
+                        OperationValue::Text(comment.root.clone()),
+                    ),
+                    (
+                        "root_kind".to_owned(),
+                        OperationValue::Integer(comment.root_kind),
+                    ),
+                    (
+                        "parent_tag".to_owned(),
+                        OperationValue::Text(comment.parent_tag.clone()),
+                    ),
+                    (
+                        "target".to_owned(),
+                        OperationValue::Text(comment.target.clone()),
+                    ),
+                    (
+                        "parent_kind".to_owned(),
+                        OperationValue::Integer(comment.parent_kind),
+                    ),
+                    (
+                        "content".to_owned(),
+                        OperationValue::Text(comment.content.clone()),
+                    ),
+                    (
+                        "labels".to_owned(),
+                        OperationValue::List(
+                            comment
+                                .labels
+                                .iter()
+                                .map(|label| OperationValue::Record {
+                                    name: "EmbeddedLabel".to_owned(),
+                                    fields: vec![
+                                        (
+                                            "namespace".to_owned(),
+                                            OperationValue::Text(label.namespace.clone()),
+                                        ),
+                                        (
+                                            "value".to_owned(),
+                                            OperationValue::Text(label.value.clone()),
+                                        ),
+                                    ],
+                                })
+                                .collect(),
+                        ),
+                    ),
+                ];
+                for (name, value) in [
+                    ("root_author", comment.root_author.as_ref()),
+                    ("parent_author", comment.parent_author.as_ref()),
+                ] {
+                    if let Some(value) = value {
+                        fields.push((name.to_owned(), OperationValue::PubKey(value.clone())));
+                    }
+                }
+                for (name, value) in [
+                    ("root_relay", comment.root_relay.as_ref()),
+                    ("parent_relay", comment.parent_relay.as_ref()),
+                ] {
+                    if let Some(value) = value {
+                        fields.push((name.to_owned(), OperationValue::Text(value.clone())));
+                    }
+                }
+                Self::encode(
+                    module,
+                    operation,
+                    &OperationValue::Record {
+                        name: "Comment".to_owned(),
+                        fields,
+                    },
+                )?
+            }
+            OperationValue::Reaction(reaction) => {
+                let mut fields = vec![
+                    (
+                        "target".to_owned(),
+                        OperationValue::Text(reaction.target.clone()),
+                    ),
+                    (
+                        "target_author".to_owned(),
+                        OperationValue::PubKey(reaction.target_author.clone()),
+                    ),
+                    (
+                        "content".to_owned(),
+                        OperationValue::Text(reaction.content.clone()),
+                    ),
+                ];
+                if let Some(kind) = reaction.target_kind {
+                    fields.push(("target_kind".to_owned(), OperationValue::Integer(kind)));
+                }
+                if let Some(relay) = &reaction.relay_hint {
+                    fields.push(("relay_hint".to_owned(), OperationValue::Text(relay.clone())));
+                }
+                Self::encode(
+                    module,
+                    operation,
+                    &OperationValue::Record {
+                        name: "Reaction".to_owned(),
+                        fields,
+                    },
+                )?
+            }
+            OperationValue::Label(label) => Self::encode(
+                module,
+                operation,
+                &OperationValue::Record {
+                    name: "Label".to_owned(),
+                    fields: vec![
+                        (
+                            "target".to_owned(),
+                            OperationValue::Text(label.target.clone()),
+                        ),
+                        (
+                            "namespace".to_owned(),
+                            OperationValue::Text(label.namespace.clone()),
+                        ),
+                        (
+                            "value".to_owned(),
+                            OperationValue::Text(label.value.clone()),
+                        ),
+                    ],
+                },
+            )?,
             OperationValue::UserList(list) => json!({
                 "type": "user_list",
                 "identifier": list.identifier,
@@ -7060,6 +7432,44 @@ impl ProcessOperationHost {
 
 #[cfg(feature = "real-hosts")]
 impl OperationHost for ProcessOperationHost {
+    fn supports_live_nip57(&self) -> bool {
+        true
+    }
+
+    fn http_get(
+        &mut self,
+        _invocation: InvocationId,
+        url: &str,
+    ) -> Result<HttpResponse, RuntimeError> {
+        if !url.starts_with("https://") {
+            return Err(RuntimeError::HostRejected {
+                message: "LNURL requests require HTTPS".to_owned(),
+            });
+        }
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(20)))
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .build()
+            .into();
+        let mut response = agent
+            .get(url)
+            .call()
+            .map_err(|error| RuntimeError::HostRejected {
+                message: format!("LNURL request failed: {error}"),
+            })?;
+        let status = response.status().as_u16();
+        let body = response
+            .body_mut()
+            .with_config()
+            .limit(1_048_576)
+            .read_to_string()
+            .map_err(|error| RuntimeError::HostRejected {
+                message: format!("could not read LNURL response: {error}"),
+            })?;
+        Ok(HttpResponse { status, body })
+    }
+
     fn call(
         &mut self,
         _invocation: InvocationId,
@@ -7507,6 +7917,151 @@ fn decode_npub(value: &str) -> Result<String, RuntimeError> {
         });
     }
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn zap_error(message: impl Into<String>) -> RuntimeError {
+    RuntimeError::HostRejected {
+        message: message.into(),
+    }
+}
+
+fn bolt11_amount_msat(invoice: &str) -> Option<i64> {
+    let (hrp, _) = bech32_decode(invoice)?;
+    let hrp = hrp.as_str();
+    let amount = if let Some(amount) = hrp.strip_prefix("lnbcrt") {
+        amount
+    } else if let Some(amount) = hrp.strip_prefix("lntbs") {
+        amount
+    } else if let Some(amount) = hrp.strip_prefix("lnbc") {
+        amount
+    } else if let Some(amount) = hrp.strip_prefix("lntb") {
+        amount
+    } else {
+        return None;
+    };
+    let (digits, unit) = match amount.as_bytes().last().copied() {
+        Some(b'm' | b'u' | b'n' | b'p') => (
+            &amount[..amount.len() - 1],
+            amount.as_bytes().last().copied()?,
+        ),
+        _ => (amount, 0),
+    };
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let value = digits.parse::<i128>().ok()?;
+    let millisatoshis = match unit {
+        0 => value.checked_mul(100_000_000_000)?, // BTC
+        b'm' => value.checked_mul(100_000_000)?,  // milli-BTC
+        b'u' => value.checked_mul(100_000)?,      // micro-BTC
+        b'n' => value.checked_mul(100)?,          // nano-BTC
+        b'p' if value % 10 == 0 => value / 10,    // pico-BTC
+        b'p' => return None,
+        _ => return None,
+    };
+    i64::try_from(millisatoshis).ok()
+}
+
+fn valid_event_coordinate(address: &str) -> bool {
+    let mut parts = address.splitn(3, ':');
+    let (Some(kind), Some(pubkey), Some(_identifier)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    kind.parse::<u16>().is_ok()
+        && pubkey.len() == 64
+        && pubkey.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn lightning_address_url(address: &str) -> Result<String, RuntimeError> {
+    let Some((user, domain)) = address.split_once('@') else {
+        return Err(RuntimeError::InvalidOperationArguments {
+            operation: "nip57.lightning_address".to_owned(),
+        });
+    };
+    if user.is_empty()
+        || domain.is_empty()
+        || !user
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._+-".contains(&byte))
+        || !domain
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b".-".contains(&byte))
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+        || domain.contains("..")
+        || !domain.contains('.')
+        || is_local_or_ip_host(domain)
+    {
+        return Err(RuntimeError::InvalidOperationArguments {
+            operation: "nip57.lightning_address".to_owned(),
+        });
+    }
+    Ok(format!(
+        "https://{}/.well-known/lnurlp/{}",
+        domain.to_ascii_lowercase(),
+        user
+    ))
+}
+
+fn validate_lnurl_https_url(url: &str) -> Result<(), RuntimeError> {
+    let Some(authority_and_path) = url.strip_prefix("https://") else {
+        return Err(zap_error("LNURL URL must use HTTPS"));
+    };
+    let authority = authority_and_path
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') || url.contains('#') {
+        return Err(zap_error("LNURL URL has an invalid authority or fragment"));
+    }
+    if authority.starts_with('[') {
+        return Err(zap_error("LNURL URLs cannot target IP hosts"));
+    }
+    let host = authority.split(':').next().unwrap_or_default();
+    if is_local_or_ip_host(host) {
+        return Err(zap_error("LNURL URLs cannot target local or IP hosts"));
+    }
+    Ok(())
+}
+
+fn is_local_or_ip_host(host: &str) -> bool {
+    host.parse::<std::net::IpAddr>().is_ok()
+        || host.eq_ignore_ascii_case("localhost")
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+        || host.ends_with(".internal")
+        || host.ends_with(".localdomain")
+        || host.ends_with(".lan")
+        || host.ends_with(".home")
+        || host.ends_with(".home.arpa")
+        || !host.contains('.')
+        || !host.bytes().any(|byte| byte.is_ascii_alphabetic())
+}
+
+fn encode_lnurl(url: &str) -> Result<String, RuntimeError> {
+    const CHARSET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+    let data =
+        convert_bits(url.as_bytes(), 8, 5, true).ok_or_else(|| zap_error("invalid LNURL"))?;
+    let checksum = bech32_checksum("lnurl", &data);
+    let mut encoded = String::from("lnurl1");
+    for value in data.into_iter().chain(checksum) {
+        encoded.push(CHARSET[usize::from(value)] as char);
+    }
+    Ok(encoded)
+}
+
+fn url_query_encode(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push_str(&format!("{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 fn encode_npub(value: &str) -> Result<String, RuntimeError> {
@@ -8002,7 +8557,14 @@ impl OperationHost for FakeOperationHost {
                         operation: operation.to_owned(),
                     });
                 };
-                if comment.target.is_empty() || comment.content.is_empty() {
+                if comment.root.is_empty()
+                    || comment.target.is_empty()
+                    || comment.content.is_empty()
+                    || !matches!(comment.root_tag.as_str(), "A" | "E" | "I")
+                    || !matches!(comment.parent_tag.as_str(), "a" | "e" | "i")
+                    || comment.root_kind < 0
+                    || comment.parent_kind < 0
+                {
                     return Err(RuntimeError::InvalidOperationArguments {
                         operation: operation.to_owned(),
                     });
@@ -9413,16 +9975,25 @@ impl OperationHost for FakeOperationHost {
                 }))
             }
             ("nip25", "publish_reaction") => {
-                let [OperationValue::Reaction(_reaction)] = arguments else {
+                let [OperationValue::Reaction(reaction)] = arguments else {
                     return Err(RuntimeError::InvalidOperationArguments {
                         operation: operation.to_owned(),
                     });
                 };
+                if reaction.target.is_empty()
+                    || reaction.target_author.is_empty()
+                    || reaction.content.is_empty()
+                    || reaction.target_kind.is_some_and(|kind| kind < 0)
+                {
+                    return Err(RuntimeError::InvalidOperationArguments {
+                        operation: operation.to_owned(),
+                    });
+                }
                 Ok(OperationValue::PublishReport(PublishReport {
                     outcomes: vec![RelayOutcome {
                         relay: "fake://reactions".to_owned(),
                         accepted: true,
-                        detail: "ok".to_owned(),
+                        detail: "reaction target tags lowered".to_owned(),
                     }],
                 }))
             }
@@ -9563,10 +10134,57 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             Some(target) => OperationValue::Repost(Repost { target }),
             _ => value.clone(),
         },
-        "Comment" => match (text("target"), text("content")) {
-            (Some(target), Some(content)) => OperationValue::Comment(Comment { target, content }),
-            _ => value.clone(),
-        },
+        "Comment" => {
+            let labels = if record_has_field(fields, "labels") {
+                let Some(labels) = record_embedded_labels(fields, "labels") else {
+                    return value.clone();
+                };
+                labels
+            } else {
+                Vec::new()
+            };
+            let (Some(root_author), Some(root_relay), Some(parent_author), Some(parent_relay)) = (
+                optional_record_pubkey(fields, "root_author"),
+                optional_record_text(fields, "root_relay"),
+                optional_record_pubkey(fields, "parent_author"),
+                optional_record_text(fields, "parent_relay"),
+            ) else {
+                return value.clone();
+            };
+            match (
+                text("root_tag"),
+                text("root"),
+                integer("root_kind"),
+                text("parent_tag"),
+                text("target"),
+                integer("parent_kind"),
+                text("content"),
+            ) {
+                (
+                    Some(root_tag),
+                    Some(root),
+                    Some(root_kind),
+                    Some(parent_tag),
+                    Some(target),
+                    Some(parent_kind),
+                    Some(content),
+                ) => OperationValue::Comment(Comment {
+                    root_tag,
+                    root,
+                    root_kind,
+                    root_author,
+                    root_relay,
+                    parent_tag,
+                    target,
+                    parent_kind,
+                    parent_author,
+                    parent_relay,
+                    content,
+                    labels,
+                }),
+                _ => value.clone(),
+            }
+        }
         "Article" => match (text("identifier"), text("title"), text("content")) {
             (Some(identifier), Some(title), Some(content)) => OperationValue::Article(Article {
                 identifier,
@@ -9715,24 +10333,71 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             }),
             _ => value.clone(),
         },
-        "Reaction" => match (text("content"), text("target")) {
-            (Some(content), Some(target)) => OperationValue::Reaction(Reaction { target, content }),
-            _ => value.clone(),
-        },
+        "Reaction" => {
+            let (Some(target_author), Some(target_kind), Some(relay_hint)) = (
+                record_pubkey(fields, "target_author"),
+                optional_record_integer(fields, "target_kind"),
+                optional_record_text(fields, "relay_hint"),
+            ) else {
+                return value.clone();
+            };
+            match (text("content"), text("target")) {
+                (Some(content), Some(target)) => OperationValue::Reaction(Reaction {
+                    target,
+                    target_author,
+                    target_kind,
+                    relay_hint,
+                    content,
+                }),
+                _ => value.clone(),
+            }
+        }
         "DeletionRequest" => match (text("target"), text("reason")) {
             (Some(target), Some(reason)) => {
                 OperationValue::DeletionRequest(DeletionRequest { target, reason })
             }
             _ => value.clone(),
         },
-        "ZapRequest" => match (pubkey("recipient"), integer("amount"), text("message")) {
-            (Some(recipient), Some(amount), Some(message)) => {
-                OperationValue::ZapRequest(ZapRequest {
-                    recipient,
-                    amount,
-                    message,
+        "ZapRequest" => match (
+            pubkey("recipient").or_else(|| {
+                text("recipient").filter(|key| {
+                    key.len() == 64 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
                 })
-            }
+            }),
+            optional_record_text(fields, "lightning_address"),
+            integer("amount"),
+            text("message"),
+            optional_record_text(fields, "signer"),
+            if record_has_field(fields, "relays") {
+                record_text_list(fields, "relays")
+            } else {
+                Some(Vec::new())
+            },
+            optional_record_text(fields, "target_event"),
+            optional_record_text(fields, "target_address"),
+            optional_record_integer(fields, "target_kind"),
+        ) {
+            (
+                Some(recipient),
+                Some(lightning_address),
+                Some(amount),
+                Some(message),
+                Some(signer),
+                Some(relays),
+                Some(target_event),
+                Some(target_address),
+                Some(target_kind),
+            ) => OperationValue::ZapRequest(ZapRequest {
+                recipient,
+                lightning_address: lightning_address.unwrap_or_default(),
+                amount,
+                message,
+                signer: signer.unwrap_or_default(),
+                relays,
+                target_event,
+                target_address,
+                target_kind,
+            }),
             _ => value.clone(),
         },
         "CalendarEvent" => match (
@@ -10319,6 +10984,80 @@ fn record_pubkey(fields: &[(String, OperationValue)], key: &str) -> Option<Strin
     })
 }
 
+fn record_embedded_labels(
+    fields: &[(String, OperationValue)],
+    key: &str,
+) -> Option<Vec<EmbeddedLabel>> {
+    let value = fields
+        .iter()
+        .find_map(|(field, value)| (field == key).then_some(value))?;
+    let OperationValue::List(values) = value else {
+        return None;
+    };
+    values
+        .iter()
+        .map(|value| {
+            let OperationValue::Record { name, fields } = value else {
+                return None;
+            };
+            if name != "EmbeddedLabel" {
+                return None;
+            }
+            Some(EmbeddedLabel {
+                namespace: record_text(fields, "namespace")?,
+                value: record_text(fields, "value")?,
+            })
+        })
+        .collect()
+}
+
+fn record_has_field(fields: &[(String, OperationValue)], key: &str) -> bool {
+    fields.iter().any(|(field, _)| field == key)
+}
+
+fn record_text_list(fields: &[(String, OperationValue)], key: &str) -> Option<Vec<String>> {
+    let OperationValue::List(values) = fields
+        .iter()
+        .find_map(|(field, value)| (field == key).then_some(value))?
+    else {
+        return None;
+    };
+    values
+        .iter()
+        .map(|value| match value {
+            OperationValue::Text(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn optional_record_text(fields: &[(String, OperationValue)], key: &str) -> Option<Option<String>> {
+    if !record_has_field(fields, key) {
+        Some(None)
+    } else {
+        record_text(fields, key).map(Some)
+    }
+}
+
+fn optional_record_integer(fields: &[(String, OperationValue)], key: &str) -> Option<Option<i64>> {
+    if !record_has_field(fields, key) {
+        Some(None)
+    } else {
+        record_integer(fields, key).map(Some)
+    }
+}
+
+fn optional_record_pubkey(
+    fields: &[(String, OperationValue)],
+    key: &str,
+) -> Option<Option<String>> {
+    if !record_has_field(fields, key) {
+        Some(None)
+    } else {
+        record_pubkey(fields, key).map(Some)
+    }
+}
+
 fn record_bool(fields: &[(String, OperationValue)], key: &str) -> Option<bool> {
     fields.iter().find_map(|(field, value)| {
         (field == key).then_some(match value {
@@ -10551,8 +11290,38 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
         principal: Option<&str>,
         event: &SignedEvent,
     ) -> Result<SimulationReport, RuntimeError> {
+        Self::simulate_event_with_inputs(
+            program,
+            checked,
+            relay,
+            storage,
+            log,
+            operations,
+            principal,
+            event,
+            &BTreeMap::new(),
+        )
+    }
+
+    /// Like [`Runtime::simulate_event`], with host-supplied inputs available to
+    /// each handler body.
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_event_with_inputs(
+        program: &nscript_syntax::Program,
+        checked: &CheckedProgram,
+        relay: &mut FakeRelayHost,
+        storage: &mut InMemoryStorage,
+        log: &mut FakeLogHost,
+        operations: &mut eval::SimulatedOperations,
+        principal: Option<&str>,
+        event: &SignedEvent,
+        inputs: &BTreeMap<String, eval::Value>,
+    ) -> Result<SimulationReport, RuntimeError> {
         let mut runtime = Self::new(
-            FakeRelayHost::default(),
+            FakeRelayHost {
+                relays: [("fake://public".to_owned(), true)].into_iter().collect(),
+                ..FakeRelayHost::default()
+            },
             FakeSignerHost::default(),
             FakeClock { now: 1_700_000_000 },
             RecordingAudit::default(),
@@ -10565,7 +11334,7 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
         }
         let mut claims = InMemoryStorage::default();
         let calls_before = operations.calls.len();
-        let cycle = runtime.run_evaluated_cycle(
+        let cycle = runtime.run_evaluated_cycle_with_inputs(
             program,
             checked,
             Some("public"),
@@ -10576,6 +11345,7 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
             operations,
             principal,
             eval::EvalLimits::default(),
+            inputs,
         )?;
         Ok(SimulationReport {
             dispatched: cycle.dispatched,
@@ -14360,6 +15130,64 @@ mod tests {
     }
 
     #[test]
+    fn clawstr_top_level_reply_emits_nip_tags_as_wire_arrays() {
+        use nscript_modules::{ModuleDependency, ModuleRegistry};
+        use semver::VersionReq;
+
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("conformance/modules/clawstrroot");
+        let mut registry = ModuleRegistry::with_builtins();
+        registry.load_root(&root).expect("Clawstr module loads");
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "clawstr".to_owned(),
+                requirement: VersionReq::parse("^0.1").expect("valid requirement"),
+            }])
+            .expect("Clawstr dependencies resolve");
+        let program = nscript_syntax::parse_program(include_str!(
+            "../../../conformance/scenarios/clawstr-reply-tags.ns"
+        ))
+        .0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut checked = checked.expect("reply example checks");
+        nscript_semantics::bind_module_events(&graph, &mut checked);
+
+        let relay = FakeRelayHost {
+            relays: [("fake://public".to_owned(), true)].into_iter().collect(),
+            ..FakeRelayHost::default()
+        };
+        let mut runtime = Runtime::new(
+            relay,
+            FakeSignerHost::default(),
+            FakeClock { now: 100 },
+            RecordingAudit::default(),
+        );
+        runtime
+            .run(&program, &checked)
+            .expect("top-level publish succeeds");
+        assert_eq!(runtime.relay.published.len(), 1);
+        assert_eq!(
+            runtime.relay.published[0].unsigned.wire_tags(),
+            vec![
+                vec!["I", "https://clawstr.com/c/nostr"],
+                vec!["K", "web"],
+                vec![
+                    "e",
+                    "1111111111111111111111111111111111111111111111111111111111111111"
+                ],
+                vec!["k", "1111"],
+                vec![
+                    "p",
+                    "2222222222222222222222222222222222222222222222222222222222222222"
+                ],
+                vec!["l", "ai", "agent"],
+            ]
+        );
+    }
+
+    #[test]
     fn multi_column_tags_round_trip_through_the_value_separator() {
         // A two-column tag is unchanged; a tag with further columns keeps
         // them inside its value, split back out only for the wire.
@@ -15144,6 +15972,45 @@ mod tests {
     }
 
     #[test]
+    fn simulate_event_uses_the_public_fake_relay_for_handler_publications() {
+        let source = "use nip01\nuse nip46\nsigner account = nip46()\nrelayset public = configured\npermissions {\n read Note from public\n publish Note to public\n sign Note with account\n relay public\n}\non Note {\n publish Note { content: \"simulated reply\" } to public with account\n}\n";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "trigger".to_owned(),
+                tags: Vec::new(),
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "relay-parity".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        let mut relay = FakeRelayHost::default();
+        let mut storage = InMemoryStorage::default();
+        let mut log = FakeLogHost::default();
+        let mut operations = eval::SimulatedOperations::default();
+        let report =
+            Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::simulate_event(
+                &program,
+                &checked,
+                &mut relay,
+                &mut storage,
+                &mut log,
+                &mut operations,
+                None,
+                &event,
+            )
+            .expect("handler can publish to fake://public");
+        assert_eq!(report.dispatched, 1);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+    }
+
+    #[test]
     fn simulate_event_reports_a_failing_handler_without_hiding_the_others() {
         let source = "permissions {\n    log\n}\non Note {\n    print(me)\n}\non Note {\n    print(\"second\")\n}";
         let (report, _) = simulate(source, &preview_event("x"), None);
@@ -15433,6 +16300,77 @@ mod tests {
             }
             other => panic!("expected a publish report, got {other:?}"),
         }
+    }
+
+    #[test]
+    #[cfg(feature = "real-hosts")]
+    fn process_operation_host_encodes_nip22_nip25_and_nip32_payloads_as_records() {
+        let comment = ProcessOperationHost::encode(
+            "nip22",
+            "publish_comment",
+            &OperationValue::Comment(Comment {
+                root_tag: "E".to_owned(),
+                root: "root-event".to_owned(),
+                root_kind: 1,
+                root_author: Some("root-author".to_owned()),
+                root_relay: None,
+                parent_tag: "e".to_owned(),
+                target: "parent-event".to_owned(),
+                parent_kind: 1111,
+                parent_author: Some("parent-author".to_owned()),
+                parent_relay: None,
+                content: "comment".to_owned(),
+                labels: vec![EmbeddedLabel {
+                    namespace: "moderation".to_owned(),
+                    value: "helpful".to_owned(),
+                }],
+            }),
+        )
+        .expect("comment encodes");
+        assert_eq!(comment["name"], "Comment");
+        let fields = &comment["fields"];
+        assert_eq!(fields["root_tag"]["value"], "E");
+        assert_eq!(fields["root_kind"]["value"], 1);
+        assert_eq!(fields["parent_tag"]["value"], "e");
+        assert_eq!(fields["parent_kind"]["value"], 1111);
+        assert_eq!(fields["labels"]["value"][0]["name"], "EmbeddedLabel");
+        assert_eq!(
+            fields["labels"]["value"][0]["fields"]["namespace"]["value"],
+            "moderation"
+        );
+
+        let reaction = ProcessOperationHost::encode(
+            "nip25",
+            "publish_reaction",
+            &OperationValue::Reaction(Reaction {
+                target: "event-id".to_owned(),
+                target_author: "target-author".to_owned(),
+                target_kind: Some(1),
+                relay_hint: Some("wss://relay.example".to_owned()),
+                content: "+".to_owned(),
+            }),
+        )
+        .expect("reaction encodes");
+        assert_eq!(reaction["name"], "Reaction");
+        assert_eq!(reaction["fields"]["target_author"]["type"], "pubkey");
+        assert_eq!(reaction["fields"]["target_kind"]["value"], 1);
+        assert_eq!(
+            reaction["fields"]["relay_hint"]["value"],
+            "wss://relay.example"
+        );
+
+        let label = ProcessOperationHost::encode(
+            "nip32",
+            "publish_label",
+            &OperationValue::Label(Label {
+                target: "event-id".to_owned(),
+                namespace: "moderation".to_owned(),
+                value: "spam".to_owned(),
+            }),
+        )
+        .expect("label encodes");
+        assert_eq!(label["name"], "Label");
+        assert_eq!(label["fields"]["namespace"]["value"], "moderation");
     }
 
     #[test]
@@ -16060,19 +16998,80 @@ mod tests {
                 &[OperationValue::Record {
                     name: "Comment".to_owned(),
                     fields: vec![
+                        ("root_tag".to_owned(), OperationValue::Text("E".to_owned())),
+                        (
+                            "root".to_owned(),
+                            OperationValue::Text("root-event".to_owned()),
+                        ),
+                        ("root_kind".to_owned(), OperationValue::Integer(1)),
+                        (
+                            "parent_tag".to_owned(),
+                            OperationValue::Text("e".to_owned()),
+                        ),
                         (
                             "target".to_owned(),
-                            OperationValue::Text("event-to-comment-on".to_owned()),
+                            OperationValue::Text("parent-event".to_owned()),
                         ),
+                        ("parent_kind".to_owned(), OperationValue::Integer(1111)),
                         (
                             "content".to_owned(),
                             OperationValue::Text("A useful comment".to_owned()),
+                        ),
+                        (
+                            "labels".to_owned(),
+                            OperationValue::List(vec![OperationValue::Record {
+                                name: "EmbeddedLabel".to_owned(),
+                                fields: vec![
+                                    (
+                                        "namespace".to_owned(),
+                                        OperationValue::Text("moderation".to_owned()),
+                                    ),
+                                    (
+                                        "value".to_owned(),
+                                        OperationValue::Text("helpful".to_owned()),
+                                    ),
+                                ],
+                            }]),
                         ),
                     ],
                 }],
             )
             .expect("comment host available");
         assert!(matches!(result, OperationValue::PublishReport(report) if report.accepted()));
+    }
+
+    #[test]
+    fn nip22_rejects_comments_without_root_and_parent_context() {
+        let mut runtime = Runtime::new(
+            FakeRelayHost::default(),
+            FakeSignerHost::default(),
+            FakeClock::default(),
+            RecordingAudit::default(),
+        );
+        let mut host = FakeOperationHost::default();
+        let result = runtime.invoke_authorized_operation(
+            &OperationPolicy::default().allow("nip22", "publish_comment"),
+            &mut host,
+            "nip22",
+            "publish_comment",
+            &[OperationValue::Record {
+                name: "Comment".to_owned(),
+                fields: vec![
+                    (
+                        "target".to_owned(),
+                        OperationValue::Text("parent-event".to_owned()),
+                    ),
+                    (
+                        "content".to_owned(),
+                        OperationValue::Text("missing scope".to_owned()),
+                    ),
+                ],
+            }],
+        );
+        assert!(matches!(
+            result,
+            Err(RuntimeError::InvalidOperationArguments { .. })
+        ));
     }
 
     #[test]
@@ -17057,6 +18056,9 @@ mod tests {
                 "publish_reaction",
                 &[OperationValue::Reaction(Reaction {
                     target: "11".repeat(32),
+                    target_author: "22".repeat(32),
+                    target_kind: None,
+                    relay_hint: None,
                     content: "+".to_owned(),
                 })],
             )
@@ -17129,8 +18131,14 @@ mod tests {
                 "create_zap_request",
                 &[OperationValue::ZapRequest(ZapRequest {
                     recipient: "44".repeat(32),
+                    lightning_address: "bot@example.com".to_owned(),
                     amount: 1_000,
                     message: "thanks".to_owned(),
+                    signer: "account".to_owned(),
+                    relays: vec!["wss://relay.example".to_owned()],
+                    target_event: None,
+                    target_address: None,
+                    target_kind: None,
                 })],
             )
             .expect("zap request operation is authorized");
@@ -17146,8 +18154,14 @@ mod tests {
             "create_zap_request",
             &[OperationValue::ZapRequest(ZapRequest {
                 recipient: "44".repeat(32),
+                lightning_address: String::new(),
                 amount: 0,
                 message: String::new(),
+                signer: String::new(),
+                relays: Vec::new(),
+                target_event: None,
+                target_address: None,
+                target_kind: None,
             })],
         );
         assert!(result.is_err());

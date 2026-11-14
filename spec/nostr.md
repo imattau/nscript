@@ -53,6 +53,34 @@ and `Quote` follows the NIP-10/NIP-18 quote convention. Module-specific
 validation may further constrain these values. Serialization preserves source
 order except where a NIP requires canonical ordering.
 
+## NIP-22 comments, NIP-25 reactions, and NIP-32 labels
+
+The `nip22.Comment` operation payload distinguishes root scope from the parent
+item. `root_tag` is an uppercase scope tag (`A`, `E`, or `I`); `parent_tag` is
+its lowercase counterpart (`a`, `e`, or `i`). The payload carries each item's
+kind, optional author and relay hints, and the plaintext comment. A host that
+implements `nip22.publish_comment` MUST emit both scope and parent references
+and their `K`/`k` kind tags. `labels` is a list of `nip32.EmbeddedLabel` values;
+a host MUST lower each value onto this same comment event as an `L` namespace
+tag and its corresponding `l` value tag.
+
+The `nip25.Reaction` payload carries the target event ID, its recommended
+author hint, optional target kind and relay hint, and reaction content. A host
+that implements this operation emits the `e` reference and `p` author tag; it
+may emit `k` and relay hints when provided. The operation payload describes
+native event reactions; NIP-73 external-content reactions use kind 17 and are
+not produced by this operation.
+
+`nip01.MetadataContent` exposes the common profile keys `name`,
+`display_name`, `about`, `picture`, `banner`, `website`, `nip05`, `lud06`,
+`lud16`, and `bot`. These values form kind-0 JSON content. Hosts may preserve
+additional profile JSON keys when reading or rewriting metadata.
+
+These are typed operation contracts: an operation host is responsible for
+serializing the fields to Nostr wire events and MUST preserve the tag meanings
+above. The generic module tag mechanism remains available for protocols that
+need different tag layouts.
+
 ## NIP-19
 
 `nip19` provides checked constructors and conversions for `Npub`, `Nsec`,

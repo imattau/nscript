@@ -1915,6 +1915,69 @@ impl Parser<'_> {
             Some("zap") => {
                 self.index += 1;
                 let recipient = self.parse_expression(0)?;
+                let live_request = if self.eat_word("to") {
+                    let lightning_address = self.parse_expression(0)?;
+                    if !self.eat_word("amount") {
+                        return None;
+                    }
+                    let amount = self.parse_expression(0)?;
+                    if !self.eat_word("with") {
+                        return None;
+                    }
+                    let signer = self.parse_expression(0)?;
+                    if !self.eat_word("relays") {
+                        return None;
+                    }
+                    let relays = self.parse_expression(0)?;
+                    let message = if self.eat_word("message") {
+                        self.parse_expression(0)?
+                    } else {
+                        Spanned {
+                            value: ExprKind::Text(String::new()),
+                            span: recipient.span,
+                        }
+                    };
+                    Some((lightning_address, amount, signer, relays, message))
+                } else {
+                    None
+                };
+                if let Some((lightning_address, amount, signer, relays, message)) = live_request {
+                    let span = recipient.span.join(message.span);
+                    let request = Self::construct(
+                        "ZapRequest",
+                        vec![
+                            ("recipient", recipient),
+                            ("lightning_address", lightning_address),
+                            ("amount", amount),
+                            ("message", message),
+                            ("signer", signer),
+                            ("relays", relays),
+                        ],
+                        span,
+                    );
+                    return Some(Spanned {
+                        value: StatementKind::Expression(Spanned {
+                            value: ExprKind::Call {
+                                callee: Box::new(Spanned {
+                                    value: ExprKind::Member {
+                                        value: Box::new(Spanned {
+                                            value: ExprKind::Identifier("nip57".to_owned()),
+                                            span,
+                                        }),
+                                        name: Spanned {
+                                            value: "create_zap_request".to_owned(),
+                                            span,
+                                        },
+                                    },
+                                    span,
+                                }),
+                                arguments: vec![request],
+                            },
+                            span,
+                        }),
+                        span,
+                    });
+                }
                 if !self.eat_word("amount") {
                     return None;
                 }

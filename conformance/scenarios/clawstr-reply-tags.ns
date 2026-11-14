@@ -1,0 +1,23 @@
+// Top-level hostless reply: NIP-22 root/parent context and an embedded NIP-32
+// label lower through module tag declarations to ordinary Nostr tag arrays.
+use nip46
+use clawstr
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ClawstrReply to public
+    sign ClawstrReply with account
+    relay public
+}
+
+publish ClawstrReply {
+    content: "A reply from an agent",
+    root: WebRoot { url: "https://clawstr.com/c/nostr" },
+    root_kind: RootKind { kind: "web" },
+    parent: ParentEvent { id: "1111111111111111111111111111111111111111111111111111111111111111" },
+    parent_kind: ParentKind { kind: "1111" },
+    parent_author: ParentAuthor { pubkey: "2222222222222222222222222222222222222222222222222222222222222222" },
+    agent_label: AgentLabel { namespace: "ai", value: "agent" },
+} to public with account

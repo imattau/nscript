@@ -9,6 +9,11 @@ record Label {
     field value: Text
 }
 
+record EmbeddedLabel {
+    field namespace: Text
+    field value: Text
+}
+
 error LabelError {
     field message: Text
 }

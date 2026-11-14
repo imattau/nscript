@@ -52,7 +52,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--input <name>=<value>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--input <name>=<value>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -998,6 +998,24 @@ enum DeployOperationHost {
 }
 
 impl nscript_runtime::OperationHost for DeployOperationHost {
+    fn supports_live_nip57(&self) -> bool {
+        true
+    }
+
+    fn http_get(
+        &mut self,
+        invocation: nscript_runtime::InvocationId,
+        url: &str,
+    ) -> Result<nscript_runtime::HttpResponse, nscript_runtime::RuntimeError> {
+        match self {
+            Self::Simulated(_) => {
+                let mut http = nscript_runtime::ProcessOperationHost::new("", Default::default());
+                http.http_get(invocation, url)
+            }
+            Self::Process(host) => host.http_get(invocation, url),
+        }
+    }
+
     fn host_key(
         &mut self,
         label: &str,
@@ -1124,6 +1142,7 @@ fn run_program(arguments: &[String]) -> ExitCode {
         &options,
         &operation_policy,
         &mut operation_host,
+        &inputs,
     )
 }
 
@@ -1541,7 +1560,7 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
                 event.unsigned.event_type.clone_from(&handler.event_type);
                 let event = &event;
                 let mut log = nscript_runtime::FakeLogHost::default();
-                match runtime.dispatch_evaluated(
+                match runtime.dispatch_evaluated_with_inputs(
                     &program,
                     request,
                     event,
@@ -1555,6 +1574,7 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
                     &mut operation_host,
                     options.principal.as_deref(),
                     nscript_runtime::eval::EvalLimits::default(),
+                    &inputs,
                 ) {
                     Ok(None) => {}
                     Ok(Some(Ok(_))) => dispatched += 1,
@@ -1628,6 +1648,7 @@ fn deliver_events<R, S, C, A>(
     options: &RunOptions,
     policy: &nscript_runtime::OperationPolicy,
     operations: &mut nscript_runtime::eval::SimulatedOperations,
+    inputs: &std::collections::BTreeMap<String, nscript_runtime::eval::Value>,
 ) -> ExitCode
 where
     R: nscript_runtime::RelayHost,
@@ -1665,7 +1686,7 @@ where
         );
         let mut log = nscript_runtime::FakeLogHost::default();
         let calls_before = operations.calls.len();
-        let outcomes = runtime.run_handlers_for_event(
+        let outcomes = runtime.run_handlers_for_event_with_inputs(
             program,
             checked,
             &event,
@@ -1675,6 +1696,7 @@ where
             options.principal.as_deref(),
             nscript_runtime::eval::EvalLimits::default(),
             Some(&mut idempotency),
+            inputs,
         );
         if outcomes.is_empty() {
             println!("  no handler matched");
@@ -1730,12 +1752,28 @@ fn test_event(arguments: &[String]) -> ExitCode {
                 .map(|(module, operation)| (module.to_owned(), operation.to_owned()))
         })
         .collect();
+    let input_values: Vec<(String, String)> = arguments
+        .windows(2)
+        .filter(|pair| pair[0] == "--input")
+        .filter_map(|pair| {
+            pair[1]
+                .split_once('=')
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        })
+        .collect();
+    if arguments
+        .windows(2)
+        .any(|pair| pair[0] == "--input" && !pair[1].contains('='))
+    {
+        eprintln!("--input expects <name>=<value>");
+        return ExitCode::from(2);
+    }
     let mut compiler_arguments = Vec::new();
     let mut argument_index = 0;
     while argument_index < arguments.len() {
         if matches!(
             arguments[argument_index].as_str(),
-            "--event" | "--as" | "--fail"
+            "--event" | "--as" | "--fail" | "--input"
         ) {
             argument_index += 2;
             continue;
@@ -1756,6 +1794,13 @@ fn test_event(arguments: &[String]) -> ExitCode {
     }
     let mut checked = checked.expect("a diagnostic-free program is checked");
     bind_module_events(&graph, &mut checked);
+    let inputs = match resolve_inputs(&input_values, &checked) {
+        Ok(inputs) => inputs,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
     let Ok(event) = parse_test_event(&event_value) else {
         eprintln!(
             "invalid --event: expected an object with event_type, kind, content, tags, created_at, signer, id, signature"
@@ -1773,7 +1818,7 @@ fn test_event(arguments: &[String]) -> ExitCode {
         nscript_runtime::FakeSignerHost,
         nscript_runtime::FakeClock,
         nscript_runtime::RecordingAudit,
-    >::simulate_event(
+    >::simulate_event_with_inputs(
         &program,
         &checked,
         &mut relay,
@@ -1782,6 +1827,7 @@ fn test_event(arguments: &[String]) -> ExitCode {
         &mut operations,
         principal.as_deref(),
         &event,
+        &inputs,
     ) {
         Ok(report) => print_simulation_report(&report, &storage),
         Err(error) => {

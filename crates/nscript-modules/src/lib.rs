@@ -544,8 +544,7 @@ impl Parser {
                 type_name,
                 default,
             });
-            self.skip_to_next_line_or('}');
-            self.skip_terminators();
+            self.skip_to_next_terminator_or('}');
         }
         self.expect_symbol('}')?;
         Some(fields)
@@ -797,8 +796,7 @@ impl Parser {
                 let span = self.current_span();
                 self.error(span, "unknown tag property");
             }
-            self.skip_to_next_line_or('}');
-            self.skip_terminators();
+            self.skip_to_next_terminator_or('}');
         }
         self.expect_symbol('}');
 
@@ -1000,6 +998,17 @@ impl Parser {
         {
             self.index += 1;
         }
+    }
+
+    fn skip_to_next_terminator_or(&mut self, symbol: char) {
+        while !matches!(
+            self.tokens.get(self.index).map(|token| &token.kind),
+            None | Some(TokenKind::Newline | TokenKind::Symbol(';'))
+        ) && !self.at_symbol(symbol)
+        {
+            self.index += 1;
+        }
+        self.skip_terminators();
     }
 
     fn skip_item(&mut self) {
@@ -1405,6 +1414,24 @@ mod tests {
             hash_hex(&descriptor.canonical_hash),
             "1ec0df32f017a4ad4d610feee5a81da7b88fd74503f0906166d2a3b85bab8ddf"
         );
+    }
+
+    #[test]
+    fn parses_semicolon_separated_tag_members_without_dropping_slots() {
+        let source = r#"module compact @ 0.1.0
+language ">=0.1.0 <0.2.0"
+tag WebRoot { wire: "I"; field url: Text at 1 }
+"#;
+        let (descriptor, diagnostics) = parse_module(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        let tag = &descriptor.expect("valid tag module").tags[0];
+        assert_eq!(tag.wire_name, "I");
+        assert_eq!(tag.slots.len(), 1);
+        assert!(matches!(
+            &tag.slots[0],
+            super::TagSlot::Field { name, type_name, position: 1 }
+                if name == "url" && type_name == "Text"
+        ));
     }
 
     #[test]

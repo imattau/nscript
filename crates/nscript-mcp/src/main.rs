@@ -161,7 +161,7 @@ fn tool_definitions() -> Value {
             "title": "Diagnose NScript event filters",
             "description": "Simulate an event and report matched handler counts and per-handler event, author, and tag filter traces.",
             "annotations": {"readOnlyHint": true, "openWorldHint": false},
-            "inputSchema": {"type": "object", "properties": {"source": {"type": "string"}, "event": {"type": "object"}, "principal": {"type": "string"}, "module_dirs": {"type": "array", "items": {"type": "string"}}}, "required": ["source", "event"], "additionalProperties": false}
+            "inputSchema": {"type": "object", "properties": {"source": {"type": "string"}, "event": {"type": "object"}, "principal": {"type": "string"}, "inputs": {"type": "object", "description": "Optional values for declared scalar inputs.", "additionalProperties": {"type": ["string", "integer", "boolean"]}}, "module_dirs": {"type": "array", "items": {"type": "string"}}}, "required": ["source", "event"], "additionalProperties": false}
         }
     ])
 }
@@ -228,8 +228,8 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
                 ))?;
                 run.extend(["--as".to_owned(), principal.to_owned()]);
             }
-            if name == "nscript_simulate_event"
-                && let Some(inputs) = arguments.get("inputs")
+            if let Some(inputs) = arguments.get("inputs")
+                && matches!(name, "nscript_simulate_event" | "nscript_test_event")
             {
                 let inputs = inputs.as_object().ok_or((
                     -32602,

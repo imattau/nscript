@@ -128,6 +128,109 @@ jobs:
           path: package-output/*
           if-no-files-found: error
 
+  linux-arm64:
+    name: Build Linux arm64 MCP bundle
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build binaries
+        run: cargo build --release --locked -p nscript-cli -p nscript-mcp
+      - name: Package Linux binaries
+        env:
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-ci.{0}', github.run_number) }}
+        run: |
+          VERSION="${VERSION#v}"
+          bundle="nscript-mcp-${VERSION}-linux-arm64"
+          mkdir -p "$RUNNER_TEMP/$bundle/share/doc/nscript" package-output
+          install -m 0755 target/release/nscript target/release/nscript-mcp "$RUNNER_TEMP/$bundle/"
+          install -m 0644 README.md LICENSE docs/MCP.md "$RUNNER_TEMP/$bundle/share/doc/nscript/"
+          tar -C "$RUNNER_TEMP" -czf "package-output/$bundle.tar.gz" "$bundle"
+          (cd package-output && sha256sum "$bundle.tar.gz" > "$bundle.sha256")
+      - name: Attest Linux arm64 bundle provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: package-output/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nscript-mcp-linux-arm64
+          path: package-output/*
+          if-no-files-found: error
+
+  windows-x64:
+    name: Build Windows x64 MCP bundle
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build binaries
+        run: cargo build --release --locked -p nscript-cli -p nscript-mcp
+      - name: Package Windows binaries
+        shell: pwsh
+        env:
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-ci.{0}', github.run_number) }}
+        run: |
+          $version = $env:VERSION.TrimStart('v')
+          $bundle = "nscript-mcp-$version-win-x64"
+          $root = Join-Path $env:RUNNER_TEMP $bundle
+          New-Item -ItemType Directory -Force -Path "$root/share/doc/nscript", package-output | Out-Null
+          Copy-Item target/release/nscript.exe,target/release/nscript-mcp.exe $root
+          Copy-Item README.md,LICENSE,docs/MCP.md "$root/share/doc/nscript/"
+          Compress-Archive -Path $root -DestinationPath "package-output/$bundle.zip"
+          Get-FileHash -Algorithm SHA256 "package-output/$bundle.zip" | ForEach-Object { "$($_.Hash.ToLower())  $bundle.zip" | Set-Content "package-output/$bundle.sha256" }
+      - name: Attest Windows x64 bundle provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: package-output/*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nscript-mcp-win-x64
+          path: package-output/*
+          if-no-files-found: error
+
+  windows-arm64:
+    name: Build Windows arm64 MCP bundle
+    runs-on: windows-11-arm
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build binaries
+        run: cargo build --release --locked -p nscript-cli -p nscript-mcp
+      - name: Package Windows binaries
+        shell: pwsh
+        env:
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-ci.{0}', github.run_number) }}
+        run: |
+          $version = $env:VERSION.TrimStart('v')
+          $bundle = "nscript-mcp-$version-win-arm64"
+          $root = Join-Path $env:RUNNER_TEMP $bundle
+          New-Item -ItemType Directory -Force -Path "$root/share/doc/nscript", package-output | Out-Null
+          Copy-Item target/release/nscript.exe,target/release/nscript-mcp.exe $root
+          Copy-Item README.md,LICENSE,docs/MCP.md "$root/share/doc/nscript/"
+          Compress-Archive -Path $root -DestinationPath "package-output/$bundle.zip"
+          Get-FileHash -Algorithm SHA256 "package-output/$bundle.zip" | ForEach-Object { "$($_.Hash.ToLower())  $bundle.zip" | Set-Content "package-output/$bundle.sha256" }
+      - name: Attest Windows arm64 bundle provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: package-output/*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nscript-mcp-win-arm64
+          path: package-output/*
+          if-no-files-found: error
+
   publish-macos-release:
     name: Attach macOS release bundle
     needs: [package, macos-arm64]
@@ -147,9 +250,39 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: gh release upload "$TAG" package-output/* --clobber
 
+  publish-additional-platforms:
+    name: Attach Linux and Windows release bundles
+    needs: [package, linux-arm64, windows-x64, windows-arm64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nscript-mcp-linux-arm64
+          path: package-output/linux-arm64
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nscript-mcp-win-x64
+          path: package-output/win-x64
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nscript-mcp-win-arm64
+          path: package-output/win-arm64
+          merge-multiple: true
+      - name: Upload GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: find package-output -type f -print0 | xargs -0 gh release upload "$TAG" --clobber
+
   publish-npm:
     name: Publish npm package
-    needs: [package, macos-arm64]
+    needs: [package, macos-arm64, linux-arm64, windows-x64, windows-arm64]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -170,13 +303,25 @@ jobs:
         with:
           name: nscript-mcp-darwin-arm64
           path: release-macos
+      - uses: actions/download-artifact@v4
+        with:
+          name: nscript-mcp-linux-arm64
+          path: release-linux-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: nscript-mcp-win-x64
+          path: release-win-x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: nscript-mcp-win-arm64
+          path: release-win-arm64
       - name: Assemble npm package
         env:
           VERSION: ${{ github.ref_name }}
         run: |
           VERSION="${VERSION#v}"
           staging="$RUNNER_TEMP/npm-package"
-          mkdir -p "$staging/bin/linux-x64" "$staging/bin/darwin-arm64"
+          mkdir -p "$staging/bin/linux-x64" "$staging/bin/linux-arm64" "$staging/bin/darwin-arm64" "$staging/bin/win-x64" "$staging/bin/win-arm64"
           cp npm/nscript-mcp/package.json npm/nscript-mcp/README.md "$staging/"
           cp npm/nscript-mcp/bin/nscript-mcp.js "$staging/bin/"
           cp LICENSE "$staging/"
@@ -184,7 +329,13 @@ jobs:
           tar -xzf "release-macos/nscript-mcp-${VERSION}-darwin-arm64.tar.gz" -C "$RUNNER_TEMP"
           cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-x86_64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-x86_64/nscript-mcp" "$staging/bin/linux-x64/"
           cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-darwin-arm64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-darwin-arm64/nscript-mcp" "$staging/bin/darwin-arm64/"
-          chmod 0755 "$staging/bin/nscript-mcp.js" "$staging"/bin/*/*
+          tar -xzf "release-linux-arm64/nscript-mcp-${VERSION}-linux-arm64.tar.gz" -C "$RUNNER_TEMP"
+          cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-arm64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-arm64/nscript-mcp" "$staging/bin/linux-arm64/"
+          unzip "release-win-x64/nscript-mcp-${VERSION}-win-x64.zip" -d "$RUNNER_TEMP/win-x64"
+          cp "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript.exe" "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript-mcp.exe" "$staging/bin/win-x64/"
+          unzip "release-win-arm64/nscript-mcp-${VERSION}-win-arm64.zip" -d "$RUNNER_TEMP/win-arm64"
+          cp "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript.exe" "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript-mcp.exe" "$staging/bin/win-arm64/"
+          chmod 0755 "$staging/bin/nscript-mcp.js" "$staging/bin/linux-x64/"* "$staging/bin/linux-arm64/"* "$staging/bin/darwin-arm64/"*
           node -e "const fs=require('fs'),p='$staging/package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\\n')"
           cd "$staging"
           npm pack --dry-run

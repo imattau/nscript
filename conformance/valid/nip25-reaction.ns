@@ -1,0 +1,15 @@
+// NIP-25 reactions preserve the target author and optional target kind/relay
+// hint so a host can lower p, k, and relay-aware target tags.
+use nip25
+
+permissions {
+    reaction
+}
+
+let result = nip25.publish_reaction(Reaction {
+    target: "1111111111111111111111111111111111111111111111111111111111111111";
+    target_author: "2222222222222222222222222222222222222222222222222222222222222222";
+    target_kind: 1;
+    relay_hint: "wss://relay.example";
+    content: "+";
+})

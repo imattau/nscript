@@ -291,8 +291,15 @@ permissions {
 zap alice amount 1000
 ```
 
-This creates a typed zap request/payment intent; it does not silently authorize
-or execute a payment.
+That shorthand constructs an intent for simulation. A live invoice request
+needs the recipient's Lightning address, a signer, and receipt relays:
+
+```nostr
+zap "<recipient-pubkey>" to "alice@example.com" amount 21000 with account relays ["wss://relay.example"] message "Thanks for the post"
+```
+
+This negotiates a real invoice during live deployment, but never pays it.
+Payment still requires an explicitly authorized wallet operation.
 
 ## Concord
 

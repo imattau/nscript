@@ -1,0 +1,9 @@
+permissions {
+    log
+}
+
+input reply_prefix: Text
+
+on Note {
+    print(reply_prefix + event.content)
+}

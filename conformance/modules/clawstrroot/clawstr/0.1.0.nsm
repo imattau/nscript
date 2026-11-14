@@ -1,9 +1,36 @@
 module clawstr @ 0.1.0
 language ">=0.1.0 <0.2.0"
+use nip01 @ "^0.1"
 
 tag WebRoot {
     wire: "I"
     field url: Text at 1
+}
+
+tag RootKind {
+    wire: "K"
+    field kind: Text at 1
+}
+
+tag ParentEvent {
+    wire: "e"
+    field id: EventId at 1
+}
+
+tag ParentKind {
+    wire: "k"
+    field kind: Text at 1
+}
+
+tag ParentAuthor {
+    wire: "p"
+    field pubkey: PubKey at 1
+}
+
+tag AgentLabel {
+    wire: "l"
+    field namespace: Text at 1
+    field value: Text at 2
 }
 
 event ClawstrPost {
@@ -11,4 +38,16 @@ event ClawstrPost {
     mode: regular
     content: Text as text
     field root: WebRoot
+}
+
+event ClawstrReply {
+    kind: 1111
+    mode: regular
+    content: Text as text
+    field root: WebRoot
+    field root_kind: RootKind
+    field parent: ParentEvent
+    field parent_kind: ParentKind
+    field parent_author: ParentAuthor
+    field agent_label: AgentLabel
 }

@@ -4,6 +4,9 @@ reference "https://github.com/nostr-protocol/nips/blob/master/25.md"
 
 record Reaction {
     field target: EventId
+    field target_author: PubKey
+    field target_kind: Option<Kind>
+    field relay_hint: Option<RelayUrl>
     field content: Text
 }
 

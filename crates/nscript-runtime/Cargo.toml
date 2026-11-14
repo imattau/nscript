@@ -14,11 +14,12 @@ rustls = { workspace = true, optional = true }
 serde_json.workspace = true
 sha2.workspace = true
 tungstenite = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
 wasmi = { version = "0.38", optional = true }
 
 [features]
 default = ["real-hosts"]
-real-hosts = ["dep:rustls", "dep:tungstenite"]
+real-hosts = ["dep:rustls", "dep:tungstenite", "dep:ureq"]
 wasm-engine = ["dep:wasmi"]
 
 [dev-dependencies]

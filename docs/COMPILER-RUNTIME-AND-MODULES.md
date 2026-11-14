@@ -78,8 +78,21 @@ that relays may accept or ignore the request.
 NIP-51 user lists use a typed `UserList` with nominal `PubKey` members and an
 explicit signed publication operation.
 
-NIP-57 zaps produce a typed `PaymentIntent` through an explicit payment effect;
-creating a request does not silently authorize a transfer.
+NIP-57 resolves a Lightning address, validates the recipient's LNURL-pay
+metadata, signs a kind-9734 zap request, and calls the callback to return its
+invoice. The live path is enabled by a real operation host; simulation never
+contacts Lightning services. Payment remains a separate `nip47.pay_invoice`
+operation and therefore requires the wallet's payment capability. The
+recipient's LNURL service, not the sending bot, publishes the kind-9735 receipt
+after settlement; the bot can observe it through a relay host. A receipt is a
+signed service assertion, not cryptographic proof that an invoice was paid.
+
+For a live request, pass `lightning_address`, `signer`, and at least one
+receipt relay in `ZapRequest`; optional `target_event`, `target_address`, and
+`target_kind` identify an event zap. Deploy with a signer capability matching
+the request. The runtime performs HTTPS LNURL discovery and callback requests
+itself, with redirects disabled. A simulated `run` or `test-event` still
+returns a clearly fake invoice and never contacts Lightning services.
 
 NIP-52 calendar events use typed timestamps and reject inverted start/end ranges
 before publication.
@@ -247,8 +260,10 @@ through an external command instead — see
 [`ProcessOperationHost`](../crates/nscript-runtime/src/lib.rs) for the process
 protocol and which operation argument/result shapes it supports today (the
 structural scalars plus the record shapes shared across modules, such as
-`UserList`, `AppData`, and `PublishReport`; anything else fails closed rather
-than being guessed at). Concord protocol operations have real Rust host
+`UserList`, `AppData`, `Comment`, `Reaction`, `Label`, and `PublishReport`;
+NIP-22 comments retain root/parent hints and embedded NIP-32 labels, while
+NIP-25 reactions retain target-author/kind/relay fields. Anything else fails
+closed rather than being guessed at). Concord protocol operations have real Rust host
 implementations and end-to-end tests, but are not yet available as a
 configured `nscript deploy` host.
 

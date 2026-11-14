@@ -86,9 +86,46 @@ The compiler validates the selected mode against the event kind rules supplied
 by the declaring NIP module. Parameterised events MUST lower their identifier to
 exactly one `d` tag.
 
-A `publish` of a record lowers each author field to a two-column tag named
-after the field. `Text`, `Int`, `Bool` and `PubKey` values lower to their text
-form; each element of a `List` field lowers to a repeated tag of the same name.
+A `publish` of a record lowers each ordinary author field to a two-column tag
+named after the field. `Text`, `Int`, `Bool` and `PubKey` values lower to their
+text form; each element of a `List` field lowers to a repeated tag of the same
+name. A field whose declared module type is a tag declaration lowers according
+to that tag's schema instead of using the author-field rule. For example:
+
+```nostr
+// In a module:
+tag WebRoot {
+    wire: "I"
+    field url: Text at 1
+}
+
+event ClawstrPost {
+    kind: 1111
+    mode: regular
+    content: Text as text
+    field root: WebRoot
+}
+
+// In NScript:
+publish ClawstrPost {
+    content: "hello",
+    root: WebRoot { url: "https://example.com/post" },
+}
+```
+
+This emits `["I", "https://example.com/post"]`. The `wire` string is the
+first tag column. Each `field ... at N` supplies column N after the wire name;
+`literal "..." at N` supplies a fixed column. Positions MUST be unique and
+contiguous starting at 1, and are emitted in numeric order. For a three-column
+`l` tag, declare fields at positions 1 and 2; the value record then emits
+`["l", namespace, value]`. The runtime stores extra columns after the first
+value joined by U+001F and splits them back into an array when serializing the
+event.
+
+A top-level `publish` lowers literal typed-tag records before startup. A
+computed top-level tag value is rejected with E2403 because startup does not
+execute expressions for tags. A handler's `publish` evaluates its tag records
+when the event arrives, so fields may use `event` and other run-time values.
 The `content` field is the event's content rather than a tag. The `tags` field
 and the bookkeeping fields `id`, `author`, `pubkey`, `kind` and `created_at`
 are read-side only and MUST NOT lower to tags. For a parameterised declaration
@@ -297,8 +334,8 @@ do not. Tests MAY replace the clock with a deterministic host implementation.
 `input name: Type` declares a typed value the host MUST supply before the
 program runs — for example, as a form the owner fills in, or a CLI flag at
 deploy time — and binds it as an ordinary named value, visible inside every
-`every`/`at` schedule body exactly as a `let` binding would be. It differs
-from `key name = host("label")`: a `key`'s value is always an opaque signing
+`every`/`at` schedule body and every event handler exactly as a `let` binding would be. It
+differs from `key name = host("label")`: a `key`'s value is always an opaque signing
 handle, never readable as text or bytes, while an `input`'s value is an
 ordinary value of its declared type with no such restriction. Only `Text`,
 `Int`, `Bool`, and `PubKey` are host-portable today, since those are the

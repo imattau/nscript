@@ -2,10 +2,21 @@ module nip22 @ 0.1.0
 language ">=0.1.0 <0.2.0"
 reference "https://github.com/nostr-protocol/nips/blob/master/22.md"
 use nip01 @ "^0.1"
+use nip32 @ "^0.1"
 
 record Comment {
-    field target: EventId
+    field root_tag: Text
+    field root: Text
+    field root_kind: Kind
+    field root_author: Option<PubKey>
+    field root_relay: Option<RelayUrl>
+    field parent_tag: Text
+    field target: Text
+    field parent_kind: Kind
+    field parent_author: Option<PubKey>
+    field parent_relay: Option<RelayUrl>
     field content: Text
+    field labels: List<EmbeddedLabel> = []
 }
 
 error CommentError {

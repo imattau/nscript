@@ -49,6 +49,7 @@ on Note where tags.t contains "community" {
         } else {
             nip25.publish_reaction(Reaction {
                 target: event.id,
+                target_author: event.author,
                 content: "👍",
             })
 

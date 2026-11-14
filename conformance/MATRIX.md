@@ -15,11 +15,17 @@ against deterministic host fakes.
 | Secret-key isolation | `secret-with-capability.ns` | `secret-without-capability.ns` | Secret redaction |
 | Query lowering and bounds | `mentions.ns` | `unbounded-local-filter.ns` | Inspect filter lowering trace |
 | Handler predicate safety | `mentions.ns` | semantics/runtime unsupported predicate tests | Principal-resolved filter trace |
-| Module-defined wire tags | `scenarios/clawstr-tagged-post.ns` | — | `I` tag in publication IR |
+| Module-defined wire tags | `scenarios/clawstr-tagged-post.ns` | `modules/valid/semicolon-tag.nsm` regression | `I` tag in publication IR |
+| Clawstr reply wire tags | `scenarios/clawstr-reply-tags.ns` | — | Published wire arrays include `I/K/e/k/p` and `l/ai/agent` |
+| NIP-01 metadata profile fields | `nip01-metadata.ns` | — | Kind-0 JSON profile shape |
+| NIP-22 comment scope and embedded labels | `nip22-comment.ns` | Runtime missing-scope rejection | Root/parent context and embedded NIP-32 labels |
+| NIP-25 reaction target hints | `nip25-reaction.ns` | — | Target `p`, optional `k`, and relay hint preserved |
+| Handler-visible inputs | `handler-input.ns` | missing/unknown inputs in CLI tests | `--input` is bound in run, deploy, and test-event handlers |
 | Read-side tag values | `read-tag-value.ns` | — | `starts_with` / `strip_prefix` handler run |
 | Pattern exhaustiveness | `exhaustive-match.ns` | `non-exhaustive-match.ns`, `unreachable-pattern.ns` | — |
 | At-least-once handlers | `idempotent-handler.ns` | `dispatch_event` runtime test | Duplicate delivery |
 | Store transactions | `idempotent-handler.ns` | `dispatch_event_transactional` runtime test | Transaction rollback |
+| NIP-73 external identifiers | `nip73-external-comment.ns` | — | Typed external identifier kind/value fields |
 | NIP-19 round trips | `nip19.ns` | Runtime invalid-input tests | Runtime npub round-trip vector |
 | NIP-46 validation | `hello-note.ns` | Dedicated signer-provision host test | Signer denial |
 | Typed tags | `mentions.ns` | Runtime wire-tags test | Serialization |

@@ -4,8 +4,14 @@ reference "https://github.com/nostr-protocol/nips/blob/master/57.md"
 
 record ZapRequest {
     field recipient: PubKey
+    field lightning_address: Option<Text>
     field amount: Int
     field message: Text
+    field signer: Option<Text>
+    field relays: List<Text> = []
+    field target_event: Option<Text>
+    field target_address: Option<Text>
+    field target_kind: Option<Int>
 }
 
 record PaymentIntent {
@@ -14,8 +20,26 @@ record PaymentIntent {
     field invoice: Text
 }
 
+record ZapReceipt {
+    field recipient: PubKey
+    field sender: Option<PubKey>
+    field event: Option<Text>
+    field address: Option<Text>
+    field kind: Option<Int>
+    field invoice: Text
+    field description: Text
+    field preimage: Option<Text>
+}
+
+event ZapReceiptEvent {
+    kind: 9735
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+}
+
 error ZapError {
     field message: Text
 }
 
-operation create_zap_request(request: ZapRequest) -> Result<PaymentIntent,ZapError> effect Payment,Sign,Relay permission zap
+operation create_zap_request(request: ZapRequest) -> Result<PaymentIntent,ZapError> effect HTTP,Payment,Sign permission zap
