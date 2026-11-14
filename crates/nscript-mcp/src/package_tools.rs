@@ -104,6 +104,7 @@ pub fn call(name: &str, args: &Value, cancelled: &Arc<AtomicBool>) -> Result<Val
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn publish(args: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64, String)> {
     let source = args
         .get("source")
@@ -396,6 +397,7 @@ fn valid_semver(value: &str) -> bool {
         })
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn run_npack(arguments: Vec<String>, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64, String)> {
     let executable = env::var_os("NSCRIPT_MCP_NPACK_PATH").unwrap_or_else(|| "npack".into());
     let mut child = Command::new(executable)
@@ -476,6 +478,7 @@ fn run_npack(arguments: Vec<String>, cancelled: &Arc<AtomicBool>) -> Result<Valu
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn internal(error: impl ToString) -> (i64, String) {
     (-32603, error.to_string())
 }
@@ -502,7 +505,7 @@ impl TempWorkspace {
                 builder.mode(0o700);
                 match builder.create(&path) {
                     Ok(()) => return Ok(Self { path }),
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(e) => return Err(e.to_string()),
                 }
             }
@@ -510,7 +513,7 @@ impl TempWorkspace {
             {
                 match fs::create_dir(&path) {
                     Ok(()) => return Ok(Self { path }),
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                     Err(e) => return Err(e.to_string()),
                 }
             }

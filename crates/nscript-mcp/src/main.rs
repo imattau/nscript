@@ -142,6 +142,7 @@ fn handle(request: &Value, cancelled: &Arc<AtomicBool>) -> Option<Value> {
     })
 }
 
+#[allow(clippy::too_many_lines)]
 fn tool_definitions() -> Value {
     json!([
         {

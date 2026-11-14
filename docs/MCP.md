@@ -24,7 +24,7 @@ The default transport is stdio. The server finds `nscript` beside its own execut
 }
 ```
 
-Install the published npm bundle on Linux x86_64/arm64, macOS Apple Silicon, or Windows x64/arm64 with `npx -y nscript-mcp@0.3.10`. It bundles the MCP server, CLI, and WASM guest. The `nscript-mcp` command uses stdio by default.
+Install the published npm bundle on Linux x86_64/arm64, macOS Apple Silicon, or Windows x64/arm64 with `npx -y nscript-mcp@0.3.11`. It bundles the MCP server, CLI, and WASM guest. The `nscript-mcp` command uses stdio by default.
 
 The MCP server loads `nscript_wasm.wasm` beside its executable. For manual installs, copy `target/wasm32-unknown-unknown/release/nscript_wasm.wasm` beside `nscript-mcp`, or set `NSCRIPT_WASM_PATH`. The guest has no WASI imports and runs with a 16 MiB memory limit and a 250 million fuel default. Administrators may set `NSCRIPT_MCP_WASM_FUEL` to a positive value up to 1 billion.
 
