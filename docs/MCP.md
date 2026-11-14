@@ -49,12 +49,13 @@ NSCRIPT_MCP_LIVE_ENABLED=true \
 NSCRIPT_MCP_RELAYS='["wss://relay.example"]' \
 NSCRIPT_MCP_ALLOWED_RELAYS='["wss://relay.example"]' \
 NSCRIPT_MCP_SIGNERS='{"bot":"bunker://…"}' \
+NSCRIPT_MCP_INPUTS='{"bot-token":"…"}' \
 NSCRIPT_MCP_OPERATION_COMMAND='/path/to/operation-host' \
 NSCRIPT_MCP_STATE_DIR='/var/lib/nscript-mcp' \
 nscript-mcp
 ```
 
-`NSCRIPT_MCP_RELAYS` and `NSCRIPT_MCP_SIGNERS` are JSON arrays/maps. Tool calls may select configured relay URLs and signer names; callers cannot supply raw signer URIs or an operation-command path. If `NSCRIPT_MCP_ALLOWED_RELAYS` is omitted, only the relays in `NSCRIPT_MCP_RELAYS` are permitted. Signer URIs are passed to the CLI through short-lived environment variables and are not written into session records.
+`NSCRIPT_MCP_RELAYS`, `NSCRIPT_MCP_SIGNERS`, and `NSCRIPT_MCP_INPUTS` are JSON arrays/maps. Tool calls may select configured relay URLs, signer names, and input references; callers cannot supply raw signer URIs or an operation-command path. If `NSCRIPT_MCP_ALLOWED_RELAYS` is omitted, only the relays in `NSCRIPT_MCP_RELAYS` are permitted. Signer URIs and referenced input values are passed to the CLI through environment variables and are not written into session records or process arguments. Durable sessions reject raw per-call inputs whose names look secret-bearing; configure those values in `NSCRIPT_MCP_INPUTS` and pass `input_refs`, for example `{"api_token":"bot-token"}`. Non-sensitive raw inputs remain supported and are persisted as part of the session definition.
 
 Sessions persist their source, selected relay URLs, signer names, inputs, module paths, logs, and NScript state under `NSCRIPT_MCP_STATE_DIR` (or the platform state directory). Session files and source files are owner-only on Unix. After a restart, the server reattaches to a still-running deploy process or starts it again using current server configuration. Restarted processes restore the CLI's durable `FileStorage` values and idempotency claims; they do not restore an exact relay cursor. Repeated relay history is filtered by persisted idempotency claims.
 

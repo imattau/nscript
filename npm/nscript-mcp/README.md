@@ -12,5 +12,6 @@ NSCRIPT_MCP_ALLOWED_HOSTS.
 WASM sandbox execution is dry by default. Live relay execution and durable
 bot sessions are disabled until the server administrator sets
 NSCRIPT_MCP_LIVE_ENABLED and configures NSCRIPT_MCP_RELAYS, NSCRIPT_MCP_SIGNERS,
-and NSCRIPT_MCP_STATE_DIR. See the repository MCP guide for the full policy
-and host configuration.
+NSCRIPT_MCP_INPUTS, and NSCRIPT_MCP_STATE_DIR. Durable sessions can refer to
+server-held input values without storing them in session records. See the
+repository MCP guide for the full policy and host configuration.

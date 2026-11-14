@@ -52,7 +52,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]... [--input-env <name>=<environment-variable>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -1225,6 +1225,7 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
             "--relay"
                 | "--signer"
                 | "--signer-env"
+                | "--input-env"
                 | "--as"
                 | "--poll-interval"
                 | "--cycles"
@@ -1259,6 +1260,17 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
                     format!("--signer-env variable `{variable}` is not set or is not Unicode")
                 })?;
                 options.signers.push((name.to_owned(), uri));
+            }
+            "--input-env" => {
+                let Some((name, variable)) = value.split_once('=') else {
+                    return Err(format!(
+                        "--input-env expects <name>=<environment-variable>, found {value}"
+                    ));
+                };
+                let raw = std::env::var(variable).map_err(|_| {
+                    format!("--input-env variable `{variable}` is not set or is not Unicode")
+                })?;
+                options.inputs.push((name.to_owned(), raw));
             }
             "--poll-interval" => {
                 options.poll_interval = Some(value.parse().map_err(|_| {

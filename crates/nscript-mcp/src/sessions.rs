@@ -21,6 +21,7 @@ struct LiveConfig {
     relays: Vec<String>,
     allowed_relays: Vec<String>,
     signers: Map<String, Value>,
+    inputs: Map<String, Value>,
     operation_command: Option<String>,
 }
 
@@ -35,11 +36,13 @@ fn live_config() -> Result<LiveConfig, String> {
     let allowed_relays =
         env_json::<Vec<String>>("NSCRIPT_MCP_ALLOWED_RELAYS")?.unwrap_or_else(|| relays.clone());
     let signers = env_json::<Map<String, Value>>("NSCRIPT_MCP_SIGNERS")?.unwrap_or_default();
+    let inputs = env_json::<Map<String, Value>>("NSCRIPT_MCP_INPUTS")?.unwrap_or_default();
     let operation_command = env::var("NSCRIPT_MCP_OPERATION_COMMAND").ok();
     Ok(LiveConfig {
         relays,
         allowed_relays,
         signers,
+        inputs,
         operation_command,
     })
 }
@@ -143,6 +146,25 @@ fn make_deploy_args(
             args.extend(["--input".to_owned(), format!("{name}={raw}")]);
         }
     }
+    if let Some(input_refs) = arguments.get("input_refs") {
+        let input_refs = input_refs
+            .as_object()
+            .ok_or_else(|| "input_refs must map input names to configured references".to_owned())?;
+        for (name, reference) in input_refs {
+            let reference = reference
+                .as_str()
+                .ok_or_else(|| "input_refs values must be configured reference names".to_owned())?;
+            let value = config
+                .inputs
+                .get(reference)
+                .ok_or_else(|| format!("input reference `{reference}` is not configured"))?;
+            scalar_input(name, value)?;
+            args.extend([
+                "--input-env".to_owned(),
+                format!("{name}={}", input_environment_name(name)?),
+            ]);
+        }
+    }
     if let Some(command) = &config.operation_command {
         args.extend(["--operation-command".to_owned(), command.clone()]);
     }
@@ -173,6 +195,19 @@ fn signer_environment_name(name: &str) -> Result<String, String> {
     Ok(format!("NSCRIPT_MCP_SIGNER_{}", name.to_ascii_uppercase()))
 }
 
+fn input_environment_name(name: &str) -> Result<String, String> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return Err(format!(
+            "input name `{name}` cannot map to a safe environment name"
+        ));
+    }
+    Ok(format!("NSCRIPT_MCP_INPUT_{}", name.to_ascii_uppercase()))
+}
+
 fn signer_environment(signers: &[(String, String)]) -> Result<Vec<(String, String)>, String> {
     let mut output = Vec::with_capacity(signers.len());
     for (name, uri) in signers {
@@ -183,6 +218,37 @@ fn signer_environment(signers: &[(String, String)]) -> Result<Vec<(String, Strin
             ));
         }
         output.push((variable, uri.clone()));
+    }
+    Ok(output)
+}
+
+fn input_environment(
+    arguments: &Value,
+    config: &LiveConfig,
+) -> Result<Vec<(String, String)>, String> {
+    let Some(refs) = arguments.get("input_refs") else {
+        return Ok(Vec::new());
+    };
+    let refs = refs
+        .as_object()
+        .ok_or_else(|| "input_refs must map input names to configured references".to_owned())?;
+    let mut output = Vec::with_capacity(refs.len());
+    for (name, reference) in refs {
+        let reference = reference
+            .as_str()
+            .ok_or_else(|| "input_refs values must be configured reference names".to_owned())?;
+        let value = config
+            .inputs
+            .get(reference)
+            .ok_or_else(|| format!("input reference `{reference}` is not configured"))?;
+        let raw = scalar_input(name, value)?;
+        let variable = input_environment_name(name)?;
+        if output.iter().any(|(existing, _)| existing == &variable) {
+            return Err(format!(
+                "input names collide on environment variable `{variable}`"
+            ));
+        }
+        output.push((variable, raw));
     }
     Ok(output)
 }
@@ -225,7 +291,8 @@ pub(crate) fn execute_once(
             None,
             true,
         )?;
-        let signer_env = signer_environment(&signers)?;
+        let mut signer_env = signer_environment(&signers)?;
+        signer_env.extend(input_environment(arguments, &config)?);
         crate::run_cli_with_env(&args, cancelled, &signer_env)
     })();
     let _ = fs::remove_file(source_path);
@@ -346,10 +413,12 @@ fn spawn_record(record: &Value, config: &LiveConfig) -> Result<u32, String> {
     let args_value = json!({
         "principal": record.get("principal"),
         "inputs": record.get("inputs"),
+        "input_refs": record.get("input_refs"),
         "signer_refs": signer_refs,
     });
     let signers = selected_signers(&args_value, config)?;
-    let signer_env = signer_environment(&signers)?;
+    let mut signer_env = signer_environment(&signers)?;
+    signer_env.extend(input_environment(&args_value, config)?);
     let state_dir = record
         .get("state_path")
         .and_then(Value::as_str)
@@ -406,6 +475,39 @@ pub(crate) fn start(arguments: &Value, directories: &[String]) -> Result<Value, 
         .cloned()
         .unwrap_or_else(|| json!([]));
     let signers = selected_signers(&json!({"signer_refs":signer_refs}), &config)?;
+    input_environment(arguments, &config)?;
+    let raw_inputs = arguments
+        .get("inputs")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for name in raw_inputs.keys() {
+        let lower = name.to_ascii_lowercase();
+        if [
+            "secret",
+            "token",
+            "password",
+            "passwd",
+            "credential",
+            "api_key",
+            "private_key",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
+        {
+            return Err(format!(
+                "durable session input `{name}` looks secret-bearing; configure it in NSCRIPT_MCP_INPUTS and pass its name through input_refs"
+            ));
+        }
+    }
+    if arguments.get("input_refs").is_some() {
+        let refs = arguments["input_refs"]
+            .as_object()
+            .ok_or_else(|| "input_refs must map input names to configured references".to_owned())?;
+        if refs.keys().any(|name| raw_inputs.contains_key(name)) {
+            return Err("an input cannot have both a raw value and an input_ref".to_owned());
+        }
+    }
     let source = arguments
         .get("source")
         .and_then(Value::as_str)
@@ -464,6 +566,7 @@ pub(crate) fn start(arguments: &Value, directories: &[String]) -> Result<Value, 
         "signer_refs": signers.iter().map(|(name, _)| name).collect::<Vec<_>>(),
         "principal": arguments.get("principal"),
         "inputs": arguments.get("inputs").cloned().unwrap_or_else(|| json!({})),
+        "input_refs": arguments.get("input_refs").cloned().unwrap_or_else(|| json!({})),
         "module_dirs": directories,
     });
     save_record(&record_path, &record)?;
@@ -667,5 +770,31 @@ pub(crate) fn resume_all() {
             }
         }
         let _ = save_record(&entry.path(), &record);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn configured_input_references_resolve_to_child_environment_values() {
+        let config = LiveConfig {
+            relays: vec!["wss://relay.example".to_owned()],
+            allowed_relays: vec!["wss://relay.example".to_owned()],
+            signers: Map::new(),
+            inputs: Map::from_iter([("api-token".to_owned(), json!("secret-value"))]),
+            operation_command: None,
+        };
+        let environment =
+            input_environment(&json!({"input_refs":{"api_token":"api-token"}}), &config)
+                .expect("configured reference resolves");
+        assert_eq!(
+            environment,
+            vec![(
+                "NSCRIPT_MCP_INPUT_API_TOKEN".to_owned(),
+                "secret-value".to_owned()
+            )]
+        );
     }
 }
