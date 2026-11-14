@@ -38,6 +38,7 @@ event ClawstrPost {
     mode: regular
     content: Text as text
     field root: WebRoot
+    require present(root)
 }
 
 event ClawstrReply {
@@ -50,4 +51,10 @@ event ClawstrReply {
     field parent_kind: ParentKind
     field parent_author: ParentAuthor
     field agent_label: AgentLabel
+    require present(root)
+    require present(root_kind)
+    require present(parent)
+    require present(parent_kind)
+    require present(parent_author)
+    require present(agent_label)
 }

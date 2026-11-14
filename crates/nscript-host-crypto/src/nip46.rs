@@ -396,6 +396,12 @@ impl Nip46Transport for RealNip46Transport {
                 .to_owned(),
         })
     }
+
+    fn public_key(&mut self, session: &SignerSession) -> Option<String> {
+        self.sessions
+            .get(&session.provider)
+            .map(|state| state.user_pubkey_hex.clone())
+    }
 }
 
 #[cfg(test)]

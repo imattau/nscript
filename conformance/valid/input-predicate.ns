@@ -1,0 +1,14 @@
+use nip01
+relayset public = configured
+input subclaw: Text
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+stream posts = select Note from public
+on posts where tags.c contains subclaw {
+    print(event.content)
+}

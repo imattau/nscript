@@ -593,6 +593,28 @@ fn check_rejects_a_nominally_mismatched_typed_tag_record() {
 }
 
 #[test]
+fn check_rejects_an_omitted_required_tag_field() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("check")
+        .arg("-M")
+        .arg(repository_path("conformance/modules/clawstrroot"))
+        .arg(repository_path(
+            "conformance/scenarios/clawstr-missing-agent-label.ns",
+        ))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "missing required tag field passed"
+    );
+    assert!(
+        stderr.contains("error[E2406]") && stderr.contains("agent_label"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn handler_can_extract_a_tag_value_with_string_helpers() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("run")
@@ -611,6 +633,78 @@ fn handler_can_extract_a_tag_value_with_string_helpers() {
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("log info: https://clawstr.com/c/nostr")
     );
+}
+
+#[test]
+fn zap_flow_passes_the_real_invoice_result_to_the_wallet_operation() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("examples/zap-and-pay.ns"))
+        .args(["--input", "lightning_address=alice@example.com"])
+        .args(["--input", "amount_msat=1000"])
+        .args(["--event", r#"{"event_type":"Note","author":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("operation nip57.create_zap_request"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("operation nip47.pay_invoice") && stdout.contains("fake-invoice-1000"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn live_zap_payment_requires_a_real_wallet_operation_host() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("deploy")
+        .arg(repository_path("examples/zap-and-pay.ns"))
+        .args(["--relay", "wss://relay.example"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "live payment unexpectedly proceeded"
+    );
+    assert!(
+        stderr.contains("requires --operation-command")
+            && stderr.contains("no payment was attempted"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn declared_inputs_bind_handler_subscription_predicates() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("run")
+        .arg(repository_path("conformance/valid/input-predicate.ns"))
+        .args(["--input", "subclaw=nostr"])
+        .args([
+            "--event",
+            r#"{"id":"match","event_type":"Note","content":"matched","tags":[["c","nostr"]]}"#,
+        ])
+        .args([
+            "--event",
+            r#"{"id":"skip","event_type":"Note","content":"not matched","tags":[["c","other"]]}"#,
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("log info: matched"), "{stdout}");
+    assert!(!stdout.contains("log info: not matched"), "{stdout}");
 }
 
 #[test]

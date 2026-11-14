@@ -194,6 +194,29 @@ fn validate_publication_expr(
             .flat_map(|module| module.descriptor.events.iter())
             .find(|event| event.name == name.value);
         if let Some(event) = event {
+            for required_name in event.requirements.iter().filter_map(|requirement| {
+                requirement
+                    .strip_prefix("present(")
+                    .and_then(|name| name.strip_suffix(')'))
+            }) {
+                let Some(required) = event
+                    .fields
+                    .iter()
+                    .find(|field| field.name == required_name)
+                else {
+                    continue;
+                };
+                if !fields.iter().any(|(name, _)| name.value == required.name) {
+                    diagnostics.push(Diagnostic {
+                        code: "E2406",
+                        message: format!(
+                            "publication of `{}` is missing required field `{}`",
+                            event.name, required.name
+                        ),
+                        span: value.span,
+                    });
+                }
+            }
             for (field_name, value) in fields {
                 let Some(field) = event
                     .fields

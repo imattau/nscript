@@ -183,14 +183,14 @@ fn tool_definitions() -> Value {
             "title": "Execute NScript against live relays",
             "description": "Explicitly run nscript deploy for one relay polling cycle. This may sign and publish events using server-configured remote signers. Requires confirm_live=true and NSCRIPT_MCP_LIVE_ENABLED=true.",
             "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true},
-            "inputSchema": {"type":"object","properties":{"source":{"type":"string"},"confirm_live":{"type":"boolean","const":true},"relays":{"type":"array","items":{"type":"string"},"description":"Optional subset of server-allowed relay URLs."},"signer_refs":{"type":"array","items":{"type":"string"},"description":"Configured signer names; raw signer URIs are not accepted."},"principal":{"type":"string"},"inputs":{"type":"object","additionalProperties":{"type":["string","integer","boolean"]}},"input_refs":{"type":"object","description":"Map input names to server-configured NSCRIPT_MCP_INPUTS reference names."},"module_dirs":{"type":"array","items":{"type":"string"}}},"required":["source","confirm_live"],"additionalProperties":false}
+            "inputSchema": {"type":"object","properties":{"source":{"type":"string"},"confirm_live":{"type":"boolean","const":true},"relays":{"type":"array","items":{"type":"string"},"description":"Optional subset of server-allowed relay URLs."},"signer_refs":{"type":"array","items":{"type":"string"},"description":"Configured signer names; raw signer URIs are not accepted."},"principal":{"type":"string"},"principal_signer":{"type":"string","description":"Configured signer reference whose NIP-46 user public key supplies `me`. Defaults to the only selected signer."},"inputs":{"type":"object","additionalProperties":{"type":["string","integer","boolean"]}},"input_refs":{"type":"object","description":"Map input names to server-configured NSCRIPT_MCP_INPUTS reference names."},"module_dirs":{"type":"array","items":{"type":"string"}}},"required":["source","confirm_live"],"additionalProperties":false}
         },
         {
             "name": "nscript_session_start",
             "title": "Start a durable NScript bot session",
             "description": "Start a long-running nscript deploy process that polls configured relays. Session definitions and NScript storage persist across MCP server restarts. Requires confirm_live=true and server live execution policy.",
             "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true},
-            "inputSchema": {"type":"object","properties":{"source":{"type":"string"},"confirm_live":{"type":"boolean","const":true},"relays":{"type":"array","items":{"type":"string"}},"signer_refs":{"type":"array","items":{"type":"string"}},"principal":{"type":"string"},"inputs":{"type":"object","additionalProperties":{"type":["string","integer","boolean"]}},"input_refs":{"type":"object","description":"Map input names to server-configured NSCRIPT_MCP_INPUTS reference names."},"module_dirs":{"type":"array","items":{"type":"string"}}},"required":["source","confirm_live"],"additionalProperties":false}
+            "inputSchema": {"type":"object","properties":{"source":{"type":"string"},"confirm_live":{"type":"boolean","const":true},"relays":{"type":"array","items":{"type":"string"}},"signer_refs":{"type":"array","items":{"type":"string"}},"principal":{"type":"string"},"principal_signer":{"type":"string","description":"Configured signer reference whose NIP-46 user public key supplies `me`. Defaults to the only selected signer."},"inputs":{"type":"object","additionalProperties":{"type":["string","integer","boolean"]}},"input_refs":{"type":"object","description":"Map input names to server-configured NSCRIPT_MCP_INPUTS reference names."},"module_dirs":{"type":"array","items":{"type":"string"}}},"required":["source","confirm_live"],"additionalProperties":false}
         },
         {
             "name": "nscript_session_status",
@@ -682,16 +682,29 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let input_values = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--input")
+            .filter_map(|pair| pair[1].split_once('='))
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect::<std::collections::BTreeMap<_, _>>();
         let traces = handlers.iter().enumerate().map(|(index, handler)| {
             let event_type = handler.get("event").and_then(Value::as_str).unwrap_or("");
             let actual_type = event.get("event_type").and_then(Value::as_str).unwrap_or("Note");
             let principal = args.windows(2).find(|pair| pair[0] == "--as").map_or("alice", |pair| pair[1].as_str());
             let principal = arguments.get("principal").and_then(Value::as_str).unwrap_or(principal);
-            let expected_author = if handler.get("author_is_principal").and_then(Value::as_bool) == Some(true) { Some(principal) } else { handler.get("author").and_then(Value::as_str) };
+            let expected_author = if handler.get("author_is_principal").and_then(Value::as_bool) == Some(true) { Some(principal) } else if let Some(input) = handler.get("author_input").and_then(Value::as_str) { input_values.get(input).map(String::as_str) } else { handler.get("author").and_then(Value::as_str) };
             let actual_author = event.get("signer").and_then(Value::as_str).unwrap_or("alice");
             let mut predicates = handler.get("tags").and_then(Value::as_array).cloned().unwrap_or_default();
             if let Some(principal_tags) = handler.get("tag_equals_principal").and_then(Value::as_array) {
                 predicates.extend(principal_tags.iter().map(|name| json!([name, principal])));
+            }
+            if let Some(input_tags) = handler.get("tag_equals_inputs").and_then(Value::as_array) {
+                predicates.extend(input_tags.iter().filter_map(|entry| {
+                    let name = entry.get(0)?.as_str()?;
+                    let input = entry.get(1)?.as_str()?;
+                    Some(json!([name, input_values.get(input)?]))
+                }));
             }
             let tag_checks: Vec<Value> = predicates.iter().map(|predicate| {
                 let name = predicate.get(0).and_then(Value::as_str).unwrap_or("");
@@ -1225,6 +1238,30 @@ mod tests {
         assert_eq!(
             payload["structuredContent"]["report"]["logs"][0]["message"],
             "reply: hello"
+        );
+    }
+
+    #[test]
+    fn wasm_mcp_execution_reports_lowered_wire_tags() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let module_dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../conformance/modules/clawstrroot");
+        let payload = call_tool(
+            &json!({
+                "name":"nscript_execute",
+                "arguments":{
+                    "source": include_str!("../../../conformance/scenarios/clawstr-tagged-post.ns"),
+                    "module_dirs": [module_dir],
+                },
+            }),
+            &cancelled,
+        )
+        .expect("executes through MCP tool");
+        assert_eq!(payload["isError"], false, "{payload}");
+        assert_eq!(
+            payload["structuredContent"]["trace"]["emitted_events"][0]["tags"],
+            json!([["I", "https://clawstr.com/c/nostr"]]),
+            "{payload}"
         );
     }
 

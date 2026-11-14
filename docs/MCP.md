@@ -24,7 +24,7 @@ The default transport is stdio. The server finds `nscript` beside its own execut
 }
 ```
 
-Install the published npm bundle on Linux x86_64/arm64, macOS Apple Silicon, or Windows x64/arm64 with `npx -y nscript-mcp@0.3.7`. It bundles the MCP server, CLI, and WASM guest. The `nscript-mcp` command uses stdio by default.
+Install the published npm bundle on Linux x86_64/arm64, macOS Apple Silicon, or Windows x64/arm64 with `npx -y nscript-mcp@0.3.8`. It bundles the MCP server, CLI, and WASM guest. The `nscript-mcp` command uses stdio by default.
 
 The MCP server loads `nscript_wasm.wasm` beside its executable. For manual installs, copy `target/wasm32-unknown-unknown/release/nscript_wasm.wasm` beside `nscript-mcp`, or set `NSCRIPT_WASM_PATH`. The guest has no WASI imports and runs with a 16 MiB memory limit and a 250 million fuel default. Administrators may set `NSCRIPT_MCP_WASM_FUEL` to a positive value up to 1 billion.
 
@@ -34,9 +34,11 @@ The MCP server loads `nscript_wasm.wasm` beside its executable. For manual insta
 - **`nscript_inspect`** returns a structured manifest with effects, resolved modules, operation calls, and publication trace.
 - **`nscript_simulate_event`** sends a JSON event to the CLI simulator. It accepts optional `principal` (`--as`), declared scalar `inputs`, and `module_dirs`.
 - **`nscript_test_event`** simulates an event and reports the dispatched handler count and per-handler event type, author, and tag filter trace. Principal-based predicates are resolved against its `principal` argument. Use it to diagnose events that match zero handlers. Unsupported handler predicate shapes fail checking with E2402, so they cannot silently widen a subscription. It accepts `principal`, declared scalar `inputs`, and `module_dirs`.
-- **`nscript_execute`** runs startup logic or delivers one event inside the WASM guest. It returns logs, operation traces, storage, and failures. This tool is sandboxed and does not access real relays, signing keys, or live operation hosts. It accepts `principal`, declared scalar `inputs`, and `module_dirs`.
+- **`nscript_execute`** runs startup logic or delivers one event inside the WASM guest. It returns logs, operation traces, storage, failures, and each simulated publication's lowered wire tags. This tool is sandboxed and does not access real relays, signing keys, or live operation hosts. It accepts `principal`, declared scalar `inputs`, and `module_dirs`.
 - **`nscript_execute_live`** is an explicit one-cycle live `nscript deploy` call. Supply `confirm_live: true`; the source can publish and handlers may process events from selected relays. Synthetic event injection is not supported in live mode.
 - **`nscript_session_start`**, **`nscript_session_status`**, and **`nscript_session_stop`** manage long-running relay-backed deploy processes. Starting requires `confirm_live: true`. Active sessions are recovered when the MCP server restarts.
+
+For live execution and sessions, `principal` can still be supplied explicitly. If exactly one configured signer is selected, its NIP-46 `get_public_key` identity supplies `me` automatically. With multiple signers, set `principal_signer` to one of the selected signer references.
 
 Simulation and WASM execution are dry: they do not connect to relays, publish events, or access signer keys. Operations without a simulator implementation are recorded and answered with declared placeholder values. Live tools use the existing `nscript deploy` runtime and its native relay and NIP-46 adapters; they do not run inside the sandboxed WASM guest. Module operations stay simulated unless the server configures an operation command.
 

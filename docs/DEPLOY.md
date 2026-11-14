@@ -14,8 +14,12 @@ your own Rust binary to drive a `Runtime` by hand.
 nscript deploy [-M <directory>]... <file> \
     --relay <wss://url>... \
     [--signer <name>=<bunker://...>]... \
-    [--as <key>] [--poll-interval <seconds>] [--cycles <n>]
+    [--as <key>] [--as-signer <name>] [--poll-interval <seconds>] [--cycles <n>]
 ```
+
+When exactly one NIP-46 signer is configured, its session's `get_public_key`
+identity supplies `me` automatically. With multiple signers, select one with
+`--as-signer`; `--as <key>` remains available as an explicit override.
 
 Each `--relay` is either a concrete websocket URL or an identity reference
 (`wss://npub…`) that resolves to one — see “Identity references” below.

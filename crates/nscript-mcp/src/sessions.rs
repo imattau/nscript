@@ -131,6 +131,21 @@ fn make_deploy_args(
             format!("{name}={}", signer_environment_name(name)?),
         ]);
     }
+    if arguments.get("principal").is_none() {
+        let selected = arguments
+            .get("principal_signer")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| (signers.len() == 1).then(|| signers[0].0.clone()));
+        if let Some(name) = selected {
+            if !signers.iter().any(|(selected, _)| selected == &name) {
+                return Err(format!(
+                    "principal signer `{name}` must be included in signer_refs"
+                ));
+            }
+            args.extend(["--as-signer".to_owned(), name]);
+        }
+    }
     if let Some(principal) = arguments.get("principal") {
         let principal = principal
             .as_str()
@@ -412,6 +427,7 @@ fn spawn_record(record: &Value, config: &LiveConfig) -> Result<u32, String> {
         .unwrap_or_else(|| json!([]));
     let args_value = json!({
         "principal": record.get("principal"),
+        "principal_signer": record.get("principal_signer"),
         "inputs": record.get("inputs"),
         "input_refs": record.get("input_refs"),
         "signer_refs": signer_refs,
@@ -533,6 +549,7 @@ pub(crate) fn start(arguments: &Value, directories: &[String]) -> Result<Value, 
         "relays": relays,
         "signer_refs": signers.iter().map(|(name, _)| name).collect::<Vec<_>>(),
         "principal": arguments.get("principal"),
+        "principal_signer": arguments.get("principal_signer"),
         "inputs": arguments.get("inputs").cloned().unwrap_or_else(|| json!({})),
         "input_refs": arguments.get("input_refs").cloned().unwrap_or_else(|| json!({})),
         "module_dirs": directories,
@@ -800,6 +817,34 @@ mod tests {
                 "NSCRIPT_MCP_INPUT_API_TOKEN".to_owned(),
                 "secret-value".to_owned()
             )]
+        );
+    }
+
+    #[test]
+    fn a_single_selected_signer_supplies_the_deploy_principal() {
+        let config = LiveConfig {
+            relays: vec!["wss://relay.example".to_owned()],
+            allowed_relays: vec!["wss://relay.example".to_owned()],
+            signers: Map::from_iter([("bot".to_owned(), json!("bunker://example"))]),
+            inputs: Map::new(),
+            operation_command: None,
+        };
+        let signers =
+            selected_signers(&json!({"signer_refs":["bot"]}), &config).expect("signer resolves");
+        let args = make_deploy_args(
+            Path::new("bot.ns"),
+            &json!({"signer_refs":["bot"]}),
+            &[],
+            &["wss://relay.example".to_owned()],
+            &signers,
+            &config,
+            None,
+            true,
+        )
+        .expect("deploy args build");
+        assert!(
+            args.windows(2).any(|pair| pair == ["--as-signer", "bot"]),
+            "{args:?}"
         );
     }
 }

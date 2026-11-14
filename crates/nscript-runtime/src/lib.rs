@@ -2109,6 +2109,12 @@ pub trait Nip46Transport {
         session: &SignerSession,
         event: UnsignedEvent,
     ) -> Result<SignedEvent, RuntimeError>;
+
+    /// The user's public key learned from the NIP-46 `get_public_key` call,
+    /// when the transport can expose it for principal binding.
+    fn public_key(&mut self, _session: &SignerSession) -> Option<String> {
+        None
+    }
 }
 
 /// NIP-46 signer host that enforces bunker URI validation and session binding.
@@ -2155,6 +2161,13 @@ impl<T: Nip46Transport> Nip46SignerHost<T> {
         let session = self.transport.provision(provider)?;
         self.sessions.insert(name.to_owned(), session.clone());
         Ok(session)
+    }
+
+    /// Gets the Nostr principal belonging to a named remote signer session.
+    #[must_use]
+    pub fn public_key(&mut self, name: &str) -> Option<String> {
+        let session = self.sessions.get(name)?.clone();
+        self.transport.public_key(&session)
     }
 }
 
@@ -2418,6 +2431,13 @@ where
             seen_event_ids: BTreeSet::new(),
             max_subscription_batch: 1024,
         }
+    }
+
+    /// Returns the relay host after execution, for hosts that expose an audit
+    /// preview of simulated publications.
+    #[must_use]
+    pub fn relay_host(&self) -> &R {
+        &self.relay
     }
 
     /// Resolve an LNURL-pay endpoint, create and sign its NIP-57 kind-9734
@@ -2966,6 +2986,17 @@ where
         relayset: Option<&str>,
         principal: Option<&str>,
     ) -> Result<Vec<SubscriptionRequest>, RuntimeError> {
+        Self::handler_subscriptions_with_inputs(checked, relayset, principal, &BTreeMap::new())
+    }
+
+    /// Lower subscriptions after binding declared input values used in
+    /// predicates. Inputs are resolved once at startup, before subscribing.
+    pub fn handler_subscriptions_with_inputs(
+        checked: &CheckedProgram,
+        relayset: Option<&str>,
+        principal: Option<&str>,
+        inputs: &BTreeMap<String, eval::Value>,
+    ) -> Result<Vec<SubscriptionRequest>, RuntimeError> {
         checked
             .handlers
             .iter()
@@ -2975,7 +3006,23 @@ where
                 {
                     return Err(RuntimeError::MissingPrincipal);
                 }
+                let input_text = |name: &str| -> Result<String, RuntimeError> {
+                    match inputs.get(name) {
+                        Some(eval::Value::Text(value)) | Some(eval::Value::PubKey(value)) => {
+                            Ok(value.clone())
+                        }
+                        Some(_) => Err(RuntimeError::InvalidOperationArguments {
+                            operation: format!("handler predicate input `{name}` must be text"),
+                        }),
+                        None => Err(RuntimeError::InvalidOperationArguments {
+                            operation: format!("handler predicate input `{name}` is missing"),
+                        }),
+                    }
+                };
                 let mut tag_equals = handler.tag_equals.clone();
+                for (name, input) in &handler.tag_equals_inputs {
+                    tag_equals.push((name.clone(), input_text(input)?));
+                }
                 if let Some(principal) = principal {
                     tag_equals.extend(
                         handler
@@ -2984,17 +3031,20 @@ where
                             .map(|name| (name.clone(), principal.to_owned())),
                     );
                 }
+                let author = if let Some(input) = &handler.author_input {
+                    Some(input_text(input)?)
+                } else if handler.author_is_principal {
+                    principal.map(str::to_owned)
+                } else {
+                    handler.author.clone()
+                };
                 Ok(SubscriptionRequest {
                     event_type: handler.event_type.clone(),
                     relayset: relayset.map(str::to_owned),
                     kinds: Vec::new(),
                     tag_equals,
                     cursor: None,
-                    author: if handler.author_is_principal {
-                        principal.map(str::to_owned)
-                    } else {
-                        handler.author.clone()
-                    },
+                    author,
                     since: None,
                     limit: None,
                 })
@@ -11266,6 +11316,8 @@ pub struct SimulationReport {
     /// Handlers that ran and failed. A failed body is rolled back and reported
     /// here, and does not stop the other handlers.
     pub failures: Vec<eval::HandlerFailure>,
+    /// Events accepted by the simulation relay during this handler cycle.
+    pub published: Vec<SignedEvent>,
 }
 
 impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
@@ -11326,7 +11378,8 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
             FakeClock { now: 1_700_000_000 },
             RecordingAudit::default(),
         );
-        let subscriptions = Self::handler_subscriptions(checked, Some("public"), principal)?;
+        let subscriptions =
+            Self::handler_subscriptions_with_inputs(checked, Some("public"), principal, inputs)?;
         for handle in 1..=subscriptions.len() {
             relay
                 .queued_events
@@ -11356,6 +11409,7 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
             logs: log.records.clone(),
             operations: operations.calls[calls_before..].to_vec(),
             failures: cycle.failures,
+            published: runtime.relay_host().published.clone(),
         })
     }
 }
@@ -14939,12 +14993,17 @@ mod tests {
                     signature: "remote-sig".to_owned(),
                 })
             }
+
+            fn public_key(&mut self, _session: &SignerSession) -> Option<String> {
+                Some("a".repeat(64))
+            }
         }
         let mut host = Nip46SignerHost::new(Transport);
         assert!(host.provision(1, "https://not-a-bunker").is_err());
         let session = host
             .provision(2, "bunker://remote")
             .expect("provisions session");
+        assert_eq!(host.public_key(&session.provider), Some("a".repeat(64)));
         let event = UnsignedEvent {
             event_type: "Note".to_owned(),
             kind: 1,
@@ -15649,6 +15708,24 @@ mod tests {
         assert_eq!(
             subscriptions[0].tag_equals,
             vec![("t".to_owned(), "nostrhost".to_owned())]
+        );
+    }
+
+    #[test]
+    fn handler_subscriptions_bind_declared_predicate_inputs() {
+        let source = "input subclaw: Text\npermissions { read Note from public\nrelay public\nlog\n}\non Note where tags.c contains subclaw { print(event.content) }";
+        let program = nscript_syntax::parse_program(source).0;
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let inputs = [("subclaw".to_owned(), eval::Value::Text("nostr".to_owned()))]
+            .into_iter()
+            .collect();
+        let requests = Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::handler_subscriptions_with_inputs(
+            &checked.unwrap(), Some("public"), None, &inputs,
+        ).expect("input predicate resolves");
+        assert_eq!(
+            requests[0].tag_equals,
+            [("c".to_owned(), "nostr".to_owned())]
         );
     }
 

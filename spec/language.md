@@ -224,9 +224,12 @@ A `stream` is an unbounded subscription. `on` registers a handler and does not
 block top-level registration of later handlers. Handler `where` predicates are
 pushed into the remote subscription only for these shapes: `author == "<pubkey>"`,
 `author == me`, `tags.<name> contains "<literal>"`, and
-`tags.<name> contains me`, joined with `and`. Identifier names such as
-`author == alice`, `or`, and other expressions are rejected with E2402; they
-never become an unrestricted subscription. `me` is resolved from the configured
+`tags.<name> contains me`, joined with `and`. A declared input identifier may
+replace the literal on the right side, for example `author == bot_author` or
+`tags.c contains subclaw`; the host resolves it once from the supplied inputs
+when creating the subscription. `author == alice` is rejected with E2402 unless
+`alice` is a declared input. Unsupported expressions are rejected and never
+become an unrestricted subscription. `me` is resolved from the configured
 principal when the subscription is created. A body check can express other
 filters when appropriate, for example `event.pubkey == me` or
 `event.tags contains "p=" + text(me)`.

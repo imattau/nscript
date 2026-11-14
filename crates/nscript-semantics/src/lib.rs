@@ -172,6 +172,8 @@ pub struct CheckedHandler {
     pub author_is_principal: bool,
     pub tag_equals: Vec<(String, String)>,
     pub tag_equals_principal: Vec<String>,
+    pub author_input: Option<String>,
+    pub tag_equals_inputs: Vec<(String, String)>,
     pub body_items: usize,
     pub body: Vec<Item>,
     pub span: Span,
@@ -997,6 +999,9 @@ fn handler_predicate_filters(
     author_is_principal: &mut bool,
     tag_equals: &mut Vec<(String, String)>,
     tag_equals_principal: &mut Vec<String>,
+    input_names: &BTreeSet<String>,
+    author_input: &mut Option<String>,
+    tag_equals_inputs: &mut Vec<(String, String)>,
 ) -> bool {
     let ExprKind::Binary {
         operator,
@@ -1013,12 +1018,18 @@ fn handler_predicate_filters(
             author_is_principal,
             tag_equals,
             tag_equals_principal,
+            input_names,
+            author_input,
+            tag_equals_inputs,
         ) && handler_predicate_filters(
             right,
             author,
             author_is_principal,
             tag_equals,
             tag_equals_principal,
+            input_names,
+            author_input,
+            tag_equals_inputs,
         );
     }
     match (operator.as_str(), &left.value, &right.value) {
@@ -1027,6 +1038,15 @@ fn handler_predicate_filters(
                 return false;
             }
             *author = Some(value.clone());
+            true
+        }
+        ("==", ExprKind::Identifier(name), ExprKind::Identifier(input))
+            if name == "author" && input_names.contains(input) =>
+        {
+            if author.is_some() || *author_is_principal || author_input.is_some() {
+                return false;
+            }
+            *author_input = Some(input.clone());
             true
         }
         ("==", ExprKind::Identifier(name), ExprKind::Identifier(value))
@@ -1048,6 +1068,13 @@ fn handler_predicate_filters(
                 && matches!(&value.value, ExprKind::Identifier(base) if base == "tags") =>
         {
             tag_equals_principal.push(name.value.clone());
+            true
+        }
+        ("contains", ExprKind::Member { value, name }, ExprKind::Identifier(input))
+            if input_names.contains(input)
+                && matches!(&value.value, ExprKind::Identifier(base) if base == "tags") =>
+        {
+            tag_equals_inputs.push((name.value.clone(), input.clone()));
             true
         }
         _ => false,
@@ -1750,6 +1777,12 @@ impl<'a> Checker<'a> {
                     let mut author_is_principal = false;
                     let mut tag_equals = Vec::new();
                     let mut tag_equals_principal = Vec::new();
+                    let mut author_input = None;
+                    let mut tag_equals_inputs = Vec::new();
+                    let input_names = declared_inputs(self.program)
+                        .keys()
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
                     if let Some(predicate) = predicate
                         && !handler_predicate_filters(
                             predicate,
@@ -1757,11 +1790,14 @@ impl<'a> Checker<'a> {
                             &mut author_is_principal,
                             &mut tag_equals,
                             &mut tag_equals_principal,
+                            &input_names,
+                            &mut author_input,
+                            &mut tag_equals_inputs,
                         )
                     {
                         self.diagnostics.push(Diagnostic {
                             code: "E2402",
-                            message: "handler predicate cannot be safely lowered; use `author == \"<pubkey>\"`, `author == me`, `tags.<name> contains \"<literal>\"`, or `tags.<name> contains me`, joined with `and`".to_owned(),
+                            message: "handler predicate cannot be safely lowered; use `author == \"<pubkey>\"`, `author == me`, `author == <declared input>`, `tags.<name> contains \"<literal>\"`, or `tags.<name> contains me` / `<declared input>`, joined with `and`".to_owned(),
                             span: predicate.span,
                         });
                     }
@@ -1772,6 +1808,8 @@ impl<'a> Checker<'a> {
                         author_is_principal,
                         tag_equals,
                         tag_equals_principal,
+                        author_input,
+                        tag_equals_inputs,
                         body_items: body.len(),
                         body: body.clone(),
                         span,
@@ -2470,6 +2508,18 @@ log\n}\nstream posts = select Note from public\non posts where author == \"some-
             scoped.tag_equals,
             [("I".to_owned(), "https://clawstr.com/c/nostr".to_owned())]
         );
+    }
+
+    #[test]
+    fn handler_predicates_can_bind_declared_inputs() {
+        let source = "use nip01\ninput bot_author: PubKey\ninput subclaw: Text\npermissions { read Note from public\nrelay public\nlog\n}\nstream posts = select Note from public\non posts where author == bot_author and tags.c contains subclaw { print(event.content) }\n";
+        let (program, parse_diagnostics) = parse_program(source);
+        assert!(parse_diagnostics.is_empty(), "{parse_diagnostics:?}");
+        let (checked, diagnostics) = check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let handler = &checked.expect("checks").handlers[0];
+        assert_eq!(handler.author_input.as_deref(), Some("bot_author"));
+        assert_eq!(handler.tag_equals_inputs, [("c".into(), "subclaw".into())]);
     }
 
     #[test]

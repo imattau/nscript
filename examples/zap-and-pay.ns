@@ -1,0 +1,37 @@
+// Full NIP-57 zap flow: obtain an invoice, then explicitly request a wallet
+// payment through the NIP-47 operation host.
+use nip01
+use nip46
+use nip57
+use nip47
+
+signer account = nip46()
+relayset public = configured
+input lightning_address: Text
+input amount_msat: Int
+
+permissions {
+    read Note from public
+    relay public
+    zap
+    wallet_payment
+    log
+}
+
+on Note {
+    let intent = nip57.create_zap_request(ZapRequest {
+        recipient: event.author;
+        lightning_address: lightning_address;
+        amount: amount_msat;
+        message: "Thanks for the note";
+        signer: "account";
+        relays: ["wss://relay.example"];
+    })
+    match intent {
+        Ok(invoice) => nip47.pay_invoice(WalletPayment {
+            invoice: invoice.invoice;
+            amount: invoice.amount;
+        })
+        Err(error) => print(error.message)
+    }
+}

@@ -2028,15 +2028,16 @@ where
         mut idempotency_host: Option<&mut dyn IdempotencyHost>,
         inputs: &BTreeMap<String, Value>,
     ) -> Vec<HandlerOutcome> {
-        let requests = match Self::handler_subscriptions(checked, None, principal) {
-            Ok(requests) => requests,
-            Err(error) => {
-                return vec![HandlerOutcome {
-                    handler: "subscription".to_owned(),
-                    result: Err(error),
-                }];
-            }
-        };
+        let requests =
+            match Self::handler_subscriptions_with_inputs(checked, None, principal, inputs) {
+                Ok(requests) => requests,
+                Err(error) => {
+                    return vec![HandlerOutcome {
+                        handler: "subscription".to_owned(),
+                        result: Err(error),
+                    }];
+                }
+            };
         let mut outcomes = Vec::new();
         for (handler, request) in checked.handlers.iter().zip(&requests) {
             if !Self::matches_subscription(request, event) {
@@ -2302,7 +2303,8 @@ where
         O: OperationHost,
     {
         let policy = policy_for(checked);
-        let requests = Self::handler_subscriptions(checked, relayset, principal)?;
+        let requests =
+            Self::handler_subscriptions_with_inputs(checked, relayset, principal, inputs)?;
         let mut report = CycleReport::default();
         for (index, (handler, request)) in checked.handlers.iter().zip(&requests).enumerate() {
             let handle = self.subscribe(subscription_host, request)?;

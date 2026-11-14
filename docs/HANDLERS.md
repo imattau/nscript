@@ -67,6 +67,12 @@ event sim-event (Note, kind 1)
 | `--as <key>` | the value of `me`; a handler that uses `me` without it fails, and says so |
 | `--input <name>=<value>` | provide a declared scalar input to handlers and schedules; repeat for multiple inputs |
 
+Declared inputs can also parameterize subscription filters. For example,
+`on posts where tags.c contains subclaw` binds the `subclaw` input when the
+subscription is created, so operators can configure the bot without editing
+its source. Only declared inputs and the supported filter shapes are accepted;
+missing input values fail before the relay subscription is opened.
+
 An event is a JSON object; every field is optional. `event_type` (default
 must equal the handler's event type. For `on Note` that is `Note`; for a stream
 handler it is the stream's element type, so `stream messages = select

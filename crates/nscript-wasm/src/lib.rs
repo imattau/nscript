@@ -464,6 +464,21 @@ fn handle_run(source: &str, modules: &[ModuleSource], principal: Option<&str>) -
             })
         })
         .collect::<Vec<_>>();
+    let emitted_events = runtime
+        .relay_host()
+        .published
+        .iter()
+        .map(|event| {
+            json!({
+                "event_type": event.unsigned.event_type,
+                "kind": event.unsigned.kind,
+                "content": event.unsigned.content,
+                "tags": event.unsigned.wire_tags(),
+                "id": event.id,
+                "pubkey": event.signer,
+            })
+        })
+        .collect::<Vec<_>>();
     ok(json!({
         "diagnostics": [],
         "executed": true,
@@ -475,6 +490,7 @@ fn handle_run(source: &str, modules: &[ModuleSource], principal: Option<&str>) -
             "subscriptions": subscriptions.iter().map(|subscription| subscription.event_type.clone()).collect::<Vec<_>>(),
             "operations": operation_values,
             "publications": publications,
+            "emitted_events": emitted_events,
             "timer_error": timer_error,
         },
     }))
@@ -579,6 +595,14 @@ fn handle_test_event(source: &str, modules: &[ModuleSource], request: &Value) ->
                 "failures": report.failures.iter().map(|failure| json!({
                     "handler": failure.handler,
                     "error": format!("{:?}", failure.error),
+                })).collect::<Vec<_>>(),
+                "publications": report.published.iter().map(|event| json!({
+                    "event_type": event.unsigned.event_type,
+                    "kind": event.unsigned.kind,
+                    "content": event.unsigned.content,
+                    "tags": event.unsigned.wire_tags(),
+                    "id": event.id,
+                    "pubkey": event.signer,
                 })).collect::<Vec<_>>(),
                 "storage": storage.values,
             },
@@ -926,6 +950,27 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+        assert_eq!(response["result"]["trace"]["emitted_events"][0]["kind"], 1);
+        assert_eq!(
+            response["result"]["trace"]["emitted_events"][0]["content"],
+            "Hello, Nostr"
+        );
+    }
+
+    #[test]
+    fn run_report_includes_lowered_wire_tags() {
+        let source = include_str!("../../../conformance/scenarios/clawstr-tagged-post.ns");
+        let module = include_str!("../../../conformance/modules/clawstrroot/clawstr/0.1.0.nsm");
+        let request = serde_json::json!({"op":"run","source":source,"modules":[{"name":"clawstr","source":module}]});
+        let response = result(&request.to_string());
+        assert!(
+            response["result"]["executed"].as_bool().unwrap(),
+            "{response}"
+        );
+        assert_eq!(
+            response["result"]["trace"]["emitted_events"][0]["tags"],
+            serde_json::json!([["I", "https://clawstr.com/c/nostr"]])
         );
     }
 

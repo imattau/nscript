@@ -52,7 +52,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]... [--input-env <name>=<environment-variable>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--as-signer <name>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]... [--input-env <name>=<environment-variable>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -478,14 +478,18 @@ fn inspect_program(arguments: &[String], json: bool) -> ExitCode {
                 "event": handler.event_type,
                 "author": handler.author,
                 "author_is_principal": handler.author_is_principal,
+                "author_input": handler.author_input,
                 "tags": handler.tag_equals,
                 "tag_equals_principal": handler.tag_equals_principal,
+                "tag_equals_inputs": handler.tag_equals_inputs,
                 "filter_trace": {
                     "event": handler.event_type,
                     "author": handler.author,
                     "author_is_principal": handler.author_is_principal,
+                    "author_input": handler.author_input,
                     "tags": handler.tag_equals,
-                    "tag_equals_principal": handler.tag_equals_principal
+                    "tag_equals_principal": handler.tag_equals_principal,
+                    "tag_equals_inputs": handler.tag_equals_inputs
                 }
             })).collect::<Vec<_>>(),
             "footprint": nscript_semantics::footprint(&program, &checked, &graph, &[]),
@@ -1135,6 +1139,7 @@ fn run_program(arguments: &[String]) -> ExitCode {
     let mut runtime = nscript_runtime::Runtime::new(relay, signer, clock, audit);
     let mut checked = checked.expect("checked program");
     bind_module_events(&graph, &mut checked);
+
     let mut timers = nscript_runtime::FakeTimerHost::default();
     if let Err(error) = runtime.schedule_program(&mut timers, &checked) {
         eprintln!("error[R1003]: {error:?}");
@@ -1143,17 +1148,28 @@ fn run_program(arguments: &[String]) -> ExitCode {
     for timer in &timers.schedules {
         println!("timer {} at {}", timer.name, timer.next_at);
     }
-    let subscriptions =
-        nscript_runtime::Runtime::<
-            nscript_runtime::FakeRelayHost,
-            nscript_runtime::FakeSignerHost,
-            nscript_runtime::FakeClock,
-            nscript_runtime::RecordingAudit,
-        >::handler_subscriptions(&checked, Some("public"), options.principal.as_deref())
-        .unwrap_or_else(|error| {
-            eprintln!("error[R1004]: {error:?}");
-            std::process::exit(1)
-        });
+    let inputs = match resolve_inputs(&options.inputs, &checked) {
+        Ok(inputs) => inputs,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let subscriptions = nscript_runtime::Runtime::<
+        nscript_runtime::FakeRelayHost,
+        nscript_runtime::FakeSignerHost,
+        nscript_runtime::FakeClock,
+        nscript_runtime::RecordingAudit,
+    >::handler_subscriptions_with_inputs(
+        &checked,
+        Some("public"),
+        options.principal.as_deref(),
+        &inputs,
+    )
+    .unwrap_or_else(|error| {
+        eprintln!("error[R1004]: {error:?}");
+        std::process::exit(1)
+    });
     for subscription in &subscriptions {
         println!("subscription {}", subscription.event_type);
     }
@@ -1162,13 +1178,6 @@ fn run_program(arguments: &[String]) -> ExitCode {
         |policy, call| policy.allow(&call.module, &call.operation),
     );
     let mut operation_host = simulated_operations(&graph, &options.failing);
-    let inputs = match resolve_inputs(&options.inputs, &checked) {
-        Ok(inputs) => inputs,
-        Err(message) => {
-            eprintln!("error: {message}");
-            return ExitCode::from(2);
-        }
-    };
     if let Err(code) = run_startup_sequential(
         &mut runtime,
         &program,
@@ -1197,6 +1206,7 @@ struct DeployOptions {
     /// `(capability name, bunker:// or nostrconnect:// URI)`.
     signers: Vec<(String, String)>,
     principal: Option<String>,
+    principal_signer: Option<String>,
     poll_interval: Option<u64>,
     /// Stop after this many poll cycles, instead of running until
     /// interrupted. Mainly for tests and for trying a deployment briefly.
@@ -1211,7 +1221,7 @@ struct DeployOptions {
     inputs: Vec<(String, String)>,
 }
 
-/// Separates `--relay`, `--signer`, `--as`, `--poll-interval`, `--cycles`,
+/// Separates `--relay`, `--signer`, `--as`, `--as-signer`, `--poll-interval`, `--cycles`,
 /// `--operation-command` and `--input` from the compiler arguments, the same
 /// way [`take_run_options`] does for `run`'s own flags.
 fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptions), String> {
@@ -1227,6 +1237,7 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
                 | "--signer-env"
                 | "--input-env"
                 | "--as"
+                | "--as-signer"
                 | "--poll-interval"
                 | "--cycles"
                 | "--operation-command"
@@ -1292,6 +1303,7 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
                 };
                 options.inputs.push((name.to_owned(), raw.to_owned()));
             }
+            "--as-signer" => options.principal_signer = Some(value.clone()),
             _ => options.principal = Some(value.clone()),
         }
         index += 2;
@@ -1373,6 +1385,18 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
     }
     let mut checked = checked.expect("checked program");
     bind_module_events(&graph, &mut checked);
+
+    if options.operation_command.is_none()
+        && checked
+            .operation_calls
+            .iter()
+            .any(|call| call.module == "nip47" && call.operation == "pay_invoice")
+    {
+        eprintln!(
+            "error: live NIP-47 invoice payment requires --operation-command connected to a wallet; no payment was attempted"
+        );
+        return ExitCode::from(2);
+    }
 
     // NCC-06 §Scope: an identity reference (`wss://npub1...`) is never
     // dereferenced. The concrete relays below stand in for its
@@ -1487,6 +1511,23 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
             }
         }
     }
+    let principal_signer = options.principal_signer.clone().or_else(|| {
+        (options.principal.is_none() && options.signers.len() == 1)
+            .then(|| options.signers[0].0.clone())
+    });
+    let principal = if let Some(explicit) = &options.principal {
+        Some(explicit.clone())
+    } else if let Some(name) = &principal_signer {
+        match signer.public_key(name) {
+            Some(pubkey) => Some(pubkey),
+            None => {
+                eprintln!("error: signer `{name}` has no available NIP-46 user public key");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        None
+    };
 
     let mut runtime = nscript_runtime::Runtime::new(
         relay,
@@ -1506,6 +1547,13 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
             timer.name, timer.next_at
         );
     }
+    let inputs = match resolve_inputs(&options.inputs, &checked) {
+        Ok(inputs) => inputs,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
 
     let operation_policy = checked.operation_calls.iter().fold(
         nscript_runtime::OperationPolicy::default(),
@@ -1526,20 +1574,13 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
             ),
         }
     }
-    let inputs = match resolve_inputs(&options.inputs, &checked) {
-        Ok(inputs) => inputs,
-        Err(message) => {
-            eprintln!("error: {message}");
-            return ExitCode::from(2);
-        }
-    };
     if let Err(code) = run_startup_sequential(
         &mut runtime,
         &program,
         &checked,
         &operation_policy,
         &mut operation_host,
-        options.principal.as_deref(),
+        principal.as_deref(),
         &inputs,
     ) {
         return code;
@@ -1564,16 +1605,17 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
     // only sends matching kinds) and the post-delivery re-check in the poll
     // loop below rejects anything a relay ignored that filter to deliver
     // anyway.
-    let mut requests = nscript_runtime::Runtime::<
-        nscript_runtime::RealRelayPool,
-        nscript_runtime::Nip46SignerHost<nscript_host_crypto::nip46::RealNip46Transport>,
-        nscript_runtime::RealClock,
-        nscript_runtime::RecordingAudit,
-    >::handler_subscriptions(&checked, None, options.principal.as_deref())
-    .unwrap_or_else(|error| {
-        eprintln!("error[R1004]: {error:?}");
-        std::process::exit(1)
-    });
+    let mut requests =
+        nscript_runtime::Runtime::<
+            nscript_runtime::RealRelayPool,
+            nscript_runtime::Nip46SignerHost<nscript_host_crypto::nip46::RealNip46Transport>,
+            nscript_runtime::RealClock,
+            nscript_runtime::RecordingAudit,
+        >::handler_subscriptions_with_inputs(&checked, None, principal.as_deref(), &inputs)
+        .unwrap_or_else(|error| {
+            eprintln!("error[R1004]: {error:?}");
+            std::process::exit(1)
+        });
     for (handler, request) in checked.handlers.iter().zip(&mut requests) {
         let declared = checked
             .events
@@ -1675,7 +1717,7 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
                     &mut storage,
                     &mut log,
                     &mut operation_host,
-                    options.principal.as_deref(),
+                    principal.as_deref(),
                     nscript_runtime::eval::EvalLimits::default(),
                     &inputs,
                 ) {

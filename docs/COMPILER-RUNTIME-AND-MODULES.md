@@ -87,6 +87,14 @@ recipient's LNURL service, not the sending bot, publishes the kind-9735 receipt
 after settlement; the bot can observe it through a relay host. A receipt is a
 signed service assertion, not cryptographic proof that an invoice was paid.
 
+The two operations can be composed inside a handler: pass the returned
+`PaymentIntent.invoice` and `.amount` to `nip47.pay_invoice`, as in
+[`examples/zap-and-pay.ns`](../examples/zap-and-pay.ns). This makes payment an
+explicit second operation checked against `wallet_payment`. A live deployment
+must configure an operation command that routes `nip47.pay_invoice` to a
+wallet; LNURL invoice creation alone never spends funds. The simulator returns
+placeholder operation results and does not pay an invoice.
+
 For a live request, pass `lightning_address`, `signer`, and at least one
 receipt relay in `ZapRequest`; optional `target_event`, `target_address`, and
 `target_kind` identify an event zap. Deploy with a signer capability matching
