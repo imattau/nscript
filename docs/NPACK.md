@@ -36,6 +36,13 @@ Keep the final archive hash in `sha256` before publishing. NScript's checked
 permissions and Nostr signer identity remain part of the source/package review
 workflow; installation transport is delegated to npack.
 
+The MCP server can optionally call a separately installed `npack` executable
+for search, resolve, publish, and user-prefix package management. Npack's
+`search --provides nscript-program --json` filter exposes machine-readable
+release metadata for that integration. `list --provides nscript-program
+--json` returns the matching current-user install records. See [MCP server
+configuration](MCP.md#npack-package-tools).
+
 For reproducible module resolution, generate a deterministic lockfile alongside
 the package manifest:
 

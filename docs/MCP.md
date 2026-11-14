@@ -24,7 +24,7 @@ The default transport is stdio. The server finds `nscript` beside its own execut
 }
 ```
 
-Install the published npm bundle on Linux x86_64/arm64, macOS Apple Silicon, or Windows x64/arm64 with `npx -y nscript-mcp@0.3.9`. It bundles the MCP server, CLI, and WASM guest. The `nscript-mcp` command uses stdio by default.
+Install the published npm bundle on Linux x86_64/arm64, macOS Apple Silicon, or Windows x64/arm64 with `npx -y nscript-mcp@0.3.10`. It bundles the MCP server, CLI, and WASM guest. The `nscript-mcp` command uses stdio by default.
 
 The MCP server loads `nscript_wasm.wasm` beside its executable. For manual installs, copy `target/wasm32-unknown-unknown/release/nscript_wasm.wasm` beside `nscript-mcp`, or set `NSCRIPT_WASM_PATH`. The guest has no WASI imports and runs with a 16 MiB memory limit and a 250 million fuel default. Administrators may set `NSCRIPT_MCP_WASM_FUEL` to a positive value up to 1 billion.
 
@@ -35,6 +35,8 @@ The MCP server loads `nscript_wasm.wasm` beside its executable. For manual insta
 - **`nscript_simulate_event`** sends a JSON event to the CLI simulator. It accepts optional `principal` (`--as`), declared scalar `inputs`, and `module_dirs`.
 - **`nscript_test_event`** simulates an event and reports the dispatched handler count and per-handler event type, author, and tag filter trace. Principal-based predicates are resolved against its `principal` argument. Use it to diagnose events that match zero handlers. Unsupported handler predicate shapes fail checking with E2402, so they cannot silently widen a subscription. It accepts `principal`, declared scalar `inputs`, and `module_dirs`.
 - **`nscript_execute`** runs startup logic or delivers one event inside the WASM guest. It returns logs, operation traces, storage, failures, and each simulated publication's lowered wire tags. This tool is sandboxed and does not access real relays, signing keys, or live operation hosts. It accepts `principal`, declared scalar `inputs`, and `module_dirs`.
+- **`nscript_package_publish`** creates a verified `.npk` from source and its resolved local module closure, then publishes it through npack. Set an explicit SemVer version on every release.
+- **`nscript_package_search`** searches for packages that provide `nscript-program`; **`nscript_package_resolve`** resolves release metadata; **`nscript_package_install`**, **`nscript_package_update`**, **`nscript_package_list`**, and **`nscript_package_remove`** manage the current user's npack prefix. Install, update, and remove require the target release to declare `nscript-program` and obey npack's existing trust policy.
 - **`nscript_execute_live`** is an explicit one-cycle live `nscript deploy` call. Supply `confirm_live: true`; the source can publish and handlers may process events from selected relays. Synthetic event injection is not supported in live mode.
 - **`nscript_session_start`**, **`nscript_session_status`**, and **`nscript_session_stop`** manage long-running relay-backed deploy processes. Starting requires `confirm_live: true`. Active sessions are recovered when the MCP server restarts.
 
@@ -68,6 +70,14 @@ The server accepts source up to 1 MB and event JSON up to 256 KB. Temporary sour
 ## Timeouts and cancellation
 
 CLI commands time out after 30 seconds by default. Set `NSCRIPT_MCP_TIMEOUT_SECS` to a positive integer to change the limit. On stdio, an MCP `notifications/cancelled` notification terminates the CLI process associated with that request. In HTTP mode, disconnecting the request stream terminates its CLI process.
+
+## Npack package tools
+
+Package tools are disabled unless the server process sets `NSCRIPT_MCP_NPACK_ENABLED=true`. Install npack separately and set `NSCRIPT_MCP_NPACK_PATH` when it is not on `PATH`. Npack uses its normal local config for relays, artifact storage, and publisher trust. Set `NSCRIPT_MCP_NPACK_PUBLISHER` to the dedicated publisher public key registered in that same OS user context with `npack`; the private key stays in npack's credential store and is never accepted as an MCP argument. Package operations time out after 120 seconds by default; set `NSCRIPT_MCP_NPACK_TIMEOUT_SECS` to change this.
+
+Publishing builds and checks the source, creates and verifies a lockfile, includes only custom modules resolved by the program, packs a temporary archive, hashes it, and asks npack to publish it. Temporary staging directories are owner-only on Unix and removed when the operation finishes. Npack handles signer access, relay and storage configuration, and existing install trust decisions. The MCP server does not bypass interactive trust prompts: if npack needs user interaction, the operation fails because its stdin is closed.
+
+The publisher identity and the MCP caller are both trusted to publish under the configured account. Keep this feature disabled for untrusted clients. Package tools are available over stdio or HTTP, so HTTP deployments must enforce their own client authentication and authorization policy.
 
 ## Module directories and filesystem access
 

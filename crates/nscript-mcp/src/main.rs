@@ -15,6 +15,7 @@ use std::{
 use serde_json::{Value, json};
 use wasmi::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
 
+mod package_tools;
 mod sessions;
 
 const PROTOCOL_VERSION: &str = "2025-03-26";
@@ -149,6 +150,55 @@ fn tool_definitions() -> Value {
             "description": "Parse and statically check an NScript program. Returns compiler diagnostics and a success flag.",
             "annotations": {"readOnlyHint": true, "openWorldHint": false},
             "inputSchema": {"type": "object", "properties": {"source": {"type": "string", "description": "Complete NScript source code."}, "module_dirs": {"type": "array", "items": {"type": "string"}, "description": "Optional local directories containing custom .nsm modules; each is passed to the CLI with -M."}}, "required": ["source"], "additionalProperties": false}
+        },
+        {
+            "name": "nscript_package_publish",
+            "title": "Package and publish an NScript",
+            "description": "Build a verified NScript package including its local module dependency closure and publish it through npack using the server's registered publisher key.",
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true},
+            "inputSchema": {"type":"object","properties":{"source":{"type":"string"},"name":{"type":"string"},"version":{"type":"string","description":"Explicit SemVer release version."},"summary":{"type":"string"},"module_dirs":{"type":"array","items":{"type":"string"}}},"required":["source","name","version"],"additionalProperties":false}
+        },
+        {
+            "name": "nscript_package_search",
+            "title": "Search NScript packages",
+            "description": "Search the npack catalogue for packages providing nscript-program.",
+            "annotations": {"readOnlyHint": true, "openWorldHint": true},
+            "inputSchema": {"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}
+        },
+        {
+            "name": "nscript_package_resolve",
+            "title": "Resolve an NScript package",
+            "description": "Resolve and verify an NScript package release and its metadata.",
+            "annotations": {"readOnlyHint": true, "openWorldHint": true},
+            "inputSchema": {"type":"object","properties":{"package":{"type":"string"},"version_requirement":{"type":"string"}},"required":["package"],"additionalProperties":false}
+        },
+        {
+            "name": "nscript_package_install",
+            "title": "Install an NScript package",
+            "description": "Install an NScript package into the current user's npack prefix using existing npack trust policy.",
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true},
+            "inputSchema": {"type":"object","properties":{"package":{"type":"string"}},"required":["package"],"additionalProperties":false}
+        },
+        {
+            "name": "nscript_package_update",
+            "title": "Update NScript packages",
+            "description": "Update an installed NScript package or all installed packages in the current user's prefix.",
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true},
+            "inputSchema": {"type":"object","properties":{"package":{"type":"string"}},"required":["package"],"additionalProperties":false}
+        },
+        {
+            "name": "nscript_package_list",
+            "title": "List installed NScript packages",
+            "description": "List packages installed in the current user's npack prefix.",
+            "annotations": {"readOnlyHint": true, "openWorldHint": false},
+            "inputSchema": {"type":"object","properties":{},"additionalProperties":false}
+        },
+        {
+            "name": "nscript_package_remove",
+            "title": "Remove an NScript package",
+            "description": "Remove a package from the current user's npack prefix.",
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false},
+            "inputSchema": {"type":"object","properties":{"package":{"type":"string"}},"required":["package"],"additionalProperties":false}
         },
         {
             "name": "nscript_inspect",
@@ -503,6 +553,13 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
             | "nscript_session_start"
             | "nscript_session_status"
             | "nscript_session_stop"
+            | "nscript_package_publish"
+            | "nscript_package_search"
+            | "nscript_package_resolve"
+            | "nscript_package_install"
+            | "nscript_package_update"
+            | "nscript_package_list"
+            | "nscript_package_remove"
     ) {
         return Ok(json!({
             "content": [{"type": "text", "text": format!("Unknown tool: {name}")}],
@@ -513,6 +570,9 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    if name.starts_with("nscript_package_") {
+        return package_tools::call(name, &arguments, cancelled);
+    }
     if name == "nscript_session_status" || name == "nscript_session_stop" {
         let result = if name == "nscript_session_status" {
             sessions::status(&arguments)

@@ -13,7 +13,7 @@ permissions:
 
 env:
   # The npack release used to pack, verify and publish. Bump deliberately.
-  NPACK_REF: v0.9.0
+  NPACK_REF: v0.9.5
 
 jobs:
   package:
