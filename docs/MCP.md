@@ -35,8 +35,30 @@ The MCP server loads `nscript_wasm.wasm` beside its executable. For manual insta
 - **`nscript_simulate_event`** sends a JSON event to the CLI simulator. It accepts optional `principal` (`--as`), declared scalar `inputs`, and `module_dirs`.
 - **`nscript_test_event`** simulates an event and reports the dispatched handler count and per-handler event type, author, and tag filter trace. Principal-based predicates are resolved against its `principal` argument. Use it to diagnose events that match zero handlers. Unsupported handler predicate shapes fail checking with E2402, so they cannot silently widen a subscription. It accepts `principal`, declared scalar `inputs`, and `module_dirs`.
 - **`nscript_execute`** runs startup logic or delivers one event inside the WASM guest. It returns logs, operation traces, storage, and failures. This tool is sandboxed and does not access real relays, signing keys, or live operation hosts. It accepts `principal`, declared scalar `inputs`, and `module_dirs`.
+- **`nscript_execute_live`** is an explicit one-cycle live `nscript deploy` call. Supply `confirm_live: true`; the source can publish and handlers may process events from selected relays. Synthetic event injection is not supported in live mode.
+- **`nscript_session_start`**, **`nscript_session_status`**, and **`nscript_session_stop`** manage long-running relay-backed deploy processes. Starting requires `confirm_live: true`. Active sessions are recovered when the MCP server restarts.
 
-Simulation and WASM execution are dry: they do not connect to relays, publish events, or access signer keys. Operations without a simulator implementation are recorded and answered with declared placeholder values. Live execution and persistent managed sessions are not exposed through MCP.
+Simulation and WASM execution are dry: they do not connect to relays, publish events, or access signer keys. Operations without a simulator implementation are recorded and answered with declared placeholder values. Live tools use the existing `nscript deploy` runtime and its native relay and NIP-46 adapters; they do not run inside the sandboxed WASM guest. Module operations stay simulated unless the server configures an operation command.
+
+## Live execution and sessions
+
+Live execution is disabled unless the server administrator opts in and configures its hosts:
+
+```sh
+NSCRIPT_MCP_LIVE_ENABLED=true \
+NSCRIPT_MCP_RELAYS='["wss://relay.example"]' \
+NSCRIPT_MCP_ALLOWED_RELAYS='["wss://relay.example"]' \
+NSCRIPT_MCP_SIGNERS='{"bot":"bunker://…"}' \
+NSCRIPT_MCP_OPERATION_COMMAND='/path/to/operation-host' \
+NSCRIPT_MCP_STATE_DIR='/var/lib/nscript-mcp' \
+nscript-mcp
+```
+
+`NSCRIPT_MCP_RELAYS` and `NSCRIPT_MCP_SIGNERS` are JSON arrays/maps. Tool calls may select configured relay URLs and signer names; callers cannot supply raw signer URIs or an operation-command path. If `NSCRIPT_MCP_ALLOWED_RELAYS` is omitted, only the relays in `NSCRIPT_MCP_RELAYS` are permitted. Signer URIs are passed to the CLI through short-lived environment variables and are not written into session records.
+
+Sessions persist their source, selected relay URLs, signer names, inputs, module paths, logs, and NScript state under `NSCRIPT_MCP_STATE_DIR` (or the platform state directory). Session files and source files are owner-only on Unix. After a restart, the server reattaches to a still-running deploy process or starts it again using current server configuration. Restarted processes restore the CLI's durable `FileStorage` values and idempotency claims; they do not restore an exact relay cursor. Repeated relay history is filtered by persisted idempotency claims.
+
+The `nscript_execute_live` and session tools have live side effects. Use them only on a server whose relay, signer, and operation-host configuration is intended for the requesting MCP clients.
 
 The server accepts source up to 1 MB and event JSON up to 256 KB. Temporary source files use owner-only permissions on Unix and are removed after use. Paths to temporary source files are redacted from CLI diagnostics.
 
@@ -66,4 +88,4 @@ The transport accepts MCP POST requests at `/mcp` and returns either JSON or a r
 
 ## Scope
 
-The server supports authoring, dry simulation, and sandboxed WASM execution. It does not expose `deploy` or any live network, signing, or package-mutation tool. A deployment host should grant capabilities through NScript's normal permission and host policies.
+The server supports authoring, dry simulation, sandboxed WASM execution, and explicitly opted-in live deploy sessions. Live sessions use NScript's compiler permission checks and configured host policies; they do not use WASI or the emitted `compile --emit wasm` artifact.

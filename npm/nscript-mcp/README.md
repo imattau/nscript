@@ -8,3 +8,9 @@ The default transport is stdio. Add --http to run the opt-in Streamable HTTP
 transport. HTTP mode requires NSCRIPT_MCP_BEARER_TOKEN; configure
 NSCRIPT_MCP_ALLOWED_ORIGINS and, when serving a non-local hostname,
 NSCRIPT_MCP_ALLOWED_HOSTS.
+
+WASM sandbox execution is dry by default. Live relay execution and durable
+bot sessions are disabled until the server administrator sets
+NSCRIPT_MCP_LIVE_ENABLED and configures NSCRIPT_MCP_RELAYS, NSCRIPT_MCP_SIGNERS,
+and NSCRIPT_MCP_STATE_DIR. See the repository MCP guide for the full policy
+and host configuration.

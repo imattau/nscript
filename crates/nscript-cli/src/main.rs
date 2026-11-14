@@ -52,7 +52,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--input <name>=<value>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             ExitCode::from(2)
         }
@@ -997,6 +997,51 @@ enum DeployOperationHost {
     Process(nscript_runtime::ProcessOperationHost),
 }
 
+enum DeployStorage {
+    Memory(nscript_runtime::InMemoryStorage),
+    File(nscript_runtime::FileStorage),
+}
+
+impl nscript_runtime::StorageHost for DeployStorage {
+    fn begin(
+        &mut self,
+        invocation: nscript_runtime::InvocationId,
+    ) -> nscript_runtime::StorageTransaction {
+        match self {
+            Self::Memory(host) => nscript_runtime::StorageHost::begin(host, invocation),
+            Self::File(host) => nscript_runtime::StorageHost::begin(host, invocation),
+        }
+    }
+}
+
+impl nscript_runtime::TransactionalStorageHost for DeployStorage {
+    fn commit(&mut self, transaction: nscript_runtime::StorageTransaction) {
+        match self {
+            Self::Memory(host) => {
+                nscript_runtime::TransactionalStorageHost::commit(host, transaction);
+            }
+            Self::File(host) => {
+                nscript_runtime::TransactionalStorageHost::commit(host, transaction);
+            }
+        }
+    }
+}
+
+impl nscript_runtime::IdempotencyHost for DeployStorage {
+    fn claim_once(
+        &mut self,
+        invocation: nscript_runtime::InvocationId,
+        key: &str,
+    ) -> Result<bool, nscript_runtime::RuntimeError> {
+        match self {
+            Self::Memory(host) => {
+                nscript_runtime::IdempotencyHost::claim_once(host, invocation, key)
+            }
+            Self::File(host) => nscript_runtime::IdempotencyHost::claim_once(host, invocation, key),
+        }
+    }
+}
+
 impl nscript_runtime::OperationHost for DeployOperationHost {
     fn supports_live_nip57(&self) -> bool {
         true
@@ -1160,6 +1205,8 @@ struct DeployOptions {
     /// (see [`nscript_runtime::ProcessOperationHost`]), in place of the
     /// built-in simulator `deploy` otherwise always uses for them.
     operation_command: Option<String>,
+    /// Durable per-session storage directory.
+    state_dir: Option<PathBuf>,
     /// `(name, raw value)` pairs for declared `input`s; see [`resolve_inputs`].
     inputs: Vec<(String, String)>,
 }
@@ -1177,10 +1224,12 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
             flag,
             "--relay"
                 | "--signer"
+                | "--signer-env"
                 | "--as"
                 | "--poll-interval"
                 | "--cycles"
                 | "--operation-command"
+                | "--state-dir"
                 | "--input"
         ) {
             rest.push(arguments[index].clone());
@@ -1200,6 +1249,17 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
                 };
                 options.signers.push((name.to_owned(), uri.to_owned()));
             }
+            "--signer-env" => {
+                let Some((name, variable)) = value.split_once('=') else {
+                    return Err(format!(
+                        "--signer-env expects <name>=<environment-variable>, found {value}"
+                    ));
+                };
+                let uri = std::env::var(variable).map_err(|_| {
+                    format!("--signer-env variable `{variable}` is not set or is not Unicode")
+                })?;
+                options.signers.push((name.to_owned(), uri));
+            }
             "--poll-interval" => {
                 options.poll_interval = Some(value.parse().map_err(|_| {
                     format!("--poll-interval expects a whole number of seconds, found {value}")
@@ -1213,6 +1273,7 @@ fn take_deploy_options(arguments: &[String]) -> Result<(Vec<String>, DeployOptio
                 );
             }
             "--operation-command" => options.operation_command = Some(value.clone()),
+            "--state-dir" => options.state_dir = Some(PathBuf::from(value)),
             "--input" => {
                 let Some((name, raw)) = value.split_once('=') else {
                     return Err(format!("--input expects <name>=<value>, found {value}"));
@@ -1511,8 +1572,38 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
             request.kinds = vec![kind];
         }
     }
-    let mut idempotency = nscript_runtime::InMemoryStorage::default();
-    let mut storage = nscript_runtime::InMemoryStorage::default();
+    let (mut idempotency, mut storage) = if let Some(state_dir) = &options.state_dir {
+        if let Err(error) = std::fs::create_dir_all(state_dir) {
+            eprintln!(
+                "error: cannot create state directory {}: {error}",
+                state_dir.display()
+            );
+            return ExitCode::from(2);
+        }
+        let open_store = |name: &str| {
+            nscript_runtime::FileStorage::open(state_dir.join(name)).map(DeployStorage::File)
+        };
+        let idempotency = match open_store("idempotency.store") {
+            Ok(store) => store,
+            Err(error) => {
+                eprintln!("error: cannot open idempotency store: {error:?}");
+                return ExitCode::from(2);
+            }
+        };
+        let storage = match open_store("storage.store") {
+            Ok(store) => store,
+            Err(error) => {
+                eprintln!("error: cannot open storage store: {error:?}");
+                return ExitCode::from(2);
+            }
+        };
+        (idempotency, storage)
+    } else {
+        (
+            DeployStorage::Memory(nscript_runtime::InMemoryStorage::default()),
+            DeployStorage::Memory(nscript_runtime::InMemoryStorage::default()),
+        )
+    };
     let poll_interval = std::time::Duration::from_secs(options.poll_interval.unwrap_or(5));
 
     println!(
@@ -2048,5 +2139,40 @@ fn finish(path: &str, mut diagnostics: Vec<Diagnostic>) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+#[cfg(test)]
+mod deploy_storage_tests {
+    use super::*;
+
+    #[test]
+    fn deploy_storage_persists_values_and_idempotency_claims() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("nscript-deploy-store-{nonce}"));
+        std::fs::create_dir_all(&directory).expect("creates temp store dir");
+        let mut storage = DeployStorage::File(
+            nscript_runtime::FileStorage::open(directory.join("storage.store"))
+                .expect("opens storage store"),
+        );
+        let mut transaction = nscript_runtime::StorageHost::begin(&mut storage, 1);
+        transaction.put("reply", "persisted");
+        nscript_runtime::TransactionalStorageHost::commit(&mut storage, transaction);
+        assert!(
+            nscript_runtime::IdempotencyHost::claim_once(&mut storage, 1, "handler/event",)
+                .expect("claims event")
+        );
+        drop(storage);
+        let reopened = nscript_runtime::FileStorage::open(directory.join("storage.store"))
+            .expect("reopens persisted storage");
+        assert_eq!(
+            reopened.values.get("reply").map(String::as_str),
+            Some("persisted")
+        );
+        assert!(reopened.claimed.contains("handler/event"));
+        std::fs::remove_dir_all(directory).expect("removes temp store dir");
     }
 }

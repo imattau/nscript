@@ -15,6 +15,8 @@ use std::{
 use serde_json::{Value, json};
 use wasmi::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
 
+mod sessions;
+
 const PROTOCOL_VERSION: &str = "2025-03-26";
 const MAX_SOURCE_BYTES: usize = 1_000_000;
 const MAX_EVENT_BYTES: usize = 256_000;
@@ -27,6 +29,7 @@ static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 static HTTP_MODE: AtomicBool = AtomicBool::new(false);
 
 fn main() -> io::Result<()> {
+    sessions::resume_all();
     if env::args().any(|argument| argument == "--http") {
         return serve_http();
     }
@@ -116,7 +119,7 @@ fn handle(request: &Value, cancelled: &Arc<AtomicBool>) -> Option<Value> {
                 .unwrap_or(PROTOCOL_VERSION),
             "capabilities": {"tools": {"listChanged": false}},
             "serverInfo": {"name": "nscript", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": "Check, inspect, and simulate NScript source. nscript_execute runs inside a fuel- and memory-limited WASM sandbox and does not access live relays or signing keys."
+            "instructions": "Check, inspect, and simulate NScript source. nscript_execute runs inside a fuel- and memory-limited WASM sandbox and does not access live relays or signing keys. nscript_execute_live and nscript_session_start are available only when the server administrator enables live execution; they use native nscript deploy and may publish to configured relays."
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({"tools": tool_definitions()})),
@@ -174,6 +177,34 @@ fn tool_definitions() -> Value {
             "description": "Run NScript startup logic or deliver one event inside a fuel- and memory-limited WASM guest. This is sandbox simulation: it does not connect to relays, publish, access signing keys, or perform live module operations.",
             "annotations": {"readOnlyHint": true, "openWorldHint": false},
             "inputSchema": {"type": "object", "properties": {"source": {"type": "string", "description": "Complete NScript source code."}, "event": {"type": "object", "description": "Optional JSON event to deliver to handlers."}, "principal": {"type": "string", "description": "Optional principal value used for `me`."}, "inputs": {"type": "object", "description": "Optional values for declared scalar inputs.", "additionalProperties": {"type": ["string", "integer", "boolean"]}}, "module_dirs": {"type": "array", "items": {"type": "string", "description": "Local module directories the MCP process is allowed to read."}}}, "required": ["source"], "additionalProperties": false}
+        },
+        {
+            "name": "nscript_execute_live",
+            "title": "Execute NScript against live relays",
+            "description": "Explicitly run nscript deploy for one relay polling cycle. This may sign and publish events using server-configured remote signers. Requires confirm_live=true and NSCRIPT_MCP_LIVE_ENABLED=true.",
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true},
+            "inputSchema": {"type":"object","properties":{"source":{"type":"string"},"confirm_live":{"type":"boolean","const":true},"relays":{"type":"array","items":{"type":"string"},"description":"Optional subset of server-allowed relay URLs."},"signer_refs":{"type":"array","items":{"type":"string"},"description":"Configured signer names; raw signer URIs are not accepted."},"principal":{"type":"string"},"inputs":{"type":"object","additionalProperties":{"type":["string","integer","boolean"]}},"module_dirs":{"type":"array","items":{"type":"string"}}},"required":["source","confirm_live"],"additionalProperties":false}
+        },
+        {
+            "name": "nscript_session_start",
+            "title": "Start a durable NScript bot session",
+            "description": "Start a long-running nscript deploy process that polls configured relays. Session definitions and NScript storage persist across MCP server restarts. Requires confirm_live=true and server live execution policy.",
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true},
+            "inputSchema": {"type":"object","properties":{"source":{"type":"string"},"confirm_live":{"type":"boolean","const":true},"relays":{"type":"array","items":{"type":"string"}},"signer_refs":{"type":"array","items":{"type":"string"}},"principal":{"type":"string"},"inputs":{"type":"object","additionalProperties":{"type":["string","integer","boolean"]}},"module_dirs":{"type":"array","items":{"type":"string"}}},"required":["source","confirm_live"],"additionalProperties":false}
+        },
+        {
+            "name": "nscript_session_status",
+            "title": "Check NScript session status",
+            "description": "Return a session's state, process ID, and recent log output.",
+            "annotations": {"readOnlyHint": true, "openWorldHint": false},
+            "inputSchema": {"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"],"additionalProperties":false}
+        },
+        {
+            "name": "nscript_session_stop",
+            "title": "Stop an NScript session",
+            "description": "Stop a running nscript deploy process and mark the durable session as stopped.",
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false},
+            "inputSchema": {"type":"object","properties":{"session_id":{"type":"string"}},"required":["session_id"],"additionalProperties":false}
         }
     ])
 }
@@ -468,6 +499,10 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
             | "nscript_simulate_event"
             | "nscript_test_event"
             | "nscript_execute"
+            | "nscript_execute_live"
+            | "nscript_session_start"
+            | "nscript_session_status"
+            | "nscript_session_stop"
     ) {
         return Ok(json!({
             "content": [{"type": "text", "text": format!("Unknown tool: {name}")}],
@@ -478,6 +513,51 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    if name == "nscript_session_status" || name == "nscript_session_stop" {
+        let result = if name == "nscript_session_status" {
+            sessions::status(&arguments)
+        } else {
+            sessions::stop(&arguments)
+        };
+        return Ok(match result {
+            Ok(payload) => tool_result(&payload, false),
+            Err(error) => tool_error(&error),
+        });
+    }
+    if name == "nscript_execute_live" || name == "nscript_session_start" {
+        if arguments.get("confirm_live").and_then(Value::as_bool) != Some(true) {
+            return Err((
+                -32602,
+                "confirm_live must be true for live execution".to_owned(),
+            ));
+        }
+        let source = arguments
+            .get("source")
+            .and_then(Value::as_str)
+            .ok_or((-32602, "tool argument `source` must be a string".to_owned()))?;
+        if source.len() > MAX_SOURCE_BYTES {
+            return Err((
+                -32602,
+                format!("source exceeds the {MAX_SOURCE_BYTES}-byte limit"),
+            ));
+        }
+        let directories = module_dirs(&arguments)?;
+        if name == "nscript_session_start" {
+            return Ok(match sessions::start(&arguments, &directories) {
+                Ok(payload) => tool_result(&payload, false),
+                Err(error) => tool_error(&error),
+            });
+        }
+        return Ok(
+            match sessions::execute_once(&arguments, &directories, cancelled) {
+                Ok(payload) => {
+                    let failed = payload.get("success").and_then(Value::as_bool) != Some(true);
+                    tool_result(&payload, failed)
+                }
+                Err(error) => tool_error(&error),
+            },
+        );
+    }
     let source = arguments
         .get("source")
         .and_then(Value::as_str)
@@ -647,7 +727,23 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
     }))
 }
 
-fn module_dirs(arguments: &Value) -> Result<Vec<String>, (i64, String)> {
+fn tool_result(payload: &Value, is_error: bool) -> Value {
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
+    json!({
+        "content": [{"type":"text","text":text}],
+        "structuredContent": payload.clone(),
+        "isError": is_error,
+    })
+}
+
+fn tool_error(message: &str) -> Value {
+    json!({
+        "content": [{"type":"text","text":message}],
+        "isError": true,
+    })
+}
+
+pub(crate) fn module_dirs(arguments: &Value) -> Result<Vec<String>, (i64, String)> {
     let Some(directories) = arguments.get("module_dirs") else {
         return Ok(Vec::new());
     };
@@ -690,28 +786,40 @@ fn module_dirs(arguments: &Value) -> Result<Vec<String>, (i64, String)> {
     Ok(paths)
 }
 
-fn run_cli(
+pub(crate) fn cli_path() -> Result<PathBuf, io::Error> {
+    if let Some(path) = env::var_os("NSCRIPT_CLI_PATH") {
+        return Ok(PathBuf::from(path));
+    }
+    let current = env::current_exe()?;
+    let sibling = current.with_file_name(if cfg!(windows) {
+        "nscript.exe"
+    } else {
+        "nscript"
+    });
+    if sibling.is_file() {
+        Ok(sibling)
+    } else {
+        Ok(PathBuf::from("nscript"))
+    }
+}
+
+pub(crate) fn run_cli(
     arguments: &[String],
     cancelled: &Arc<AtomicBool>,
 ) -> Result<std::process::Output, String> {
-    let executable = if let Some(path) = env::var_os("NSCRIPT_CLI_PATH") {
-        PathBuf::from(path)
-    } else {
-        let current = env::current_exe()
-            .map_err(|error| format!("cannot locate nscript-mcp executable: {error}"))?;
-        let sibling = current.with_file_name(if cfg!(windows) {
-            "nscript.exe"
-        } else {
-            "nscript"
-        });
-        if sibling.is_file() {
-            sibling
-        } else {
-            PathBuf::from("nscript")
-        }
-    };
+    run_cli_with_env(arguments, cancelled, &[])
+}
+
+pub(crate) fn run_cli_with_env(
+    arguments: &[String],
+    cancelled: &Arc<AtomicBool>,
+    extra_env: &[(String, String)],
+) -> Result<std::process::Output, String> {
+    let executable =
+        cli_path().map_err(|error| format!("cannot locate nscript-mcp executable: {error}"))?;
     let mut child = Command::new(&executable)
         .args(arguments)
+        .envs(extra_env.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1126,5 +1234,35 @@ mod tests {
         config.consume_fuel(true);
         let engine = Engine::new(&config);
         assert!(Module::new(&engine, b"not wasm".as_slice()).is_err());
+    }
+
+    #[test]
+    fn live_tools_require_an_explicit_confirmation_flag() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let error = call_tool(
+            &json!({
+                "name":"nscript_execute_live",
+                "arguments":{"source":"", "confirm_live":false},
+            }),
+            &cancelled,
+        )
+        .expect_err("live call without confirmation is rejected");
+        assert_eq!(error.0, -32602);
+    }
+
+    #[test]
+    fn tool_list_exposes_live_execution_and_session_controls() {
+        let definitions = tool_definitions();
+        let names = definitions
+            .as_array()
+            .expect("tool list is an array")
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"nscript_execute"));
+        assert!(names.contains(&"nscript_execute_live"));
+        assert!(names.contains(&"nscript_session_start"));
+        assert!(names.contains(&"nscript_session_status"));
+        assert!(names.contains(&"nscript_session_stop"));
     }
 }
