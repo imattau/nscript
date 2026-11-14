@@ -623,10 +623,8 @@ fn parse_inputs(value: Option<&Value>) -> Option<BTreeMap<String, eval::Value>> 
                 eval::Value::Text(value.to_owned())
             } else if let Some(value) = value.as_i64() {
                 eval::Value::Int(value)
-            } else if let Some(value) = value.as_bool() {
-                eval::Value::Bool(value)
             } else {
-                return None;
+                eval::Value::Bool(value.as_bool()?)
             };
             Some((name.clone(), value))
         })

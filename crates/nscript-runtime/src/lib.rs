@@ -1828,6 +1828,11 @@ pub trait OperationHost {
     /// as LNURL-pay discovery and callbacks. Hosts must enforce their own
     /// network policy; the runtime only issues HTTPS URLs and rejects
     /// redirects for payment negotiation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::OperationUnavailable`] when the host does not
+    /// provide HTTPS access.
     fn http_get(
         &mut self,
         invocation: InvocationId,
@@ -2443,6 +2448,13 @@ where
     /// Resolve an LNURL-pay endpoint, create and sign its NIP-57 kind-9734
     /// request, then return the invoice supplied by the callback. This does
     /// not pay the invoice; payment remains a separate wallet operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::HostRejected`] for invalid LNURL metadata,
+    /// rejected requests, or invoices that fail amount validation. Host and
+    /// signing failures are returned unchanged.
+    #[allow(clippy::too_many_lines)]
     pub fn create_zap_request<O: OperationHost>(
         &mut self,
         host: &mut O,
@@ -2991,6 +3003,12 @@ where
 
     /// Lower subscriptions after binding declared input values used in
     /// predicates. Inputs are resolved once at startup, before subscribing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeError::MissingPrincipal`] for `me` predicates without a
+    /// principal and [`RuntimeError::InvalidOperationArguments`] for missing
+    /// predicate inputs.
     pub fn handler_subscriptions_with_inputs(
         checked: &CheckedProgram,
         relayset: Option<&str>,
@@ -3008,7 +3026,7 @@ where
                 }
                 let input_text = |name: &str| -> Result<String, RuntimeError> {
                     match inputs.get(name) {
-                        Some(eval::Value::Text(value)) | Some(eval::Value::PubKey(value)) => {
+                        Some(eval::Value::Text(value) | eval::Value::PubKey(value)) => {
                             Ok(value.clone())
                         }
                         Some(_) => Err(RuntimeError::InvalidOperationArguments {
@@ -3057,32 +3075,22 @@ where
     /// are represented in the signed-event value.
     #[must_use]
     pub fn matches_subscription(request: &SubscriptionRequest, event: &SignedEvent) -> bool {
-        if request.event_type != event.unsigned.event_type {
-            return false;
-        }
-        if !request.kinds.is_empty() && !request.kinds.contains(&event.unsigned.kind) {
-            return false;
-        }
-        if let Some(since) = request.since
-            && event.unsigned.created_at < since
-        {
-            return false;
-        }
-        if let Some(author) = &request.author
-            && author != &event.signer
-        {
-            return false;
-        }
-        if request.tag_equals.iter().any(|(name, value)| {
-            !event
-                .unsigned
-                .tags
-                .iter()
-                .any(|tag| tag == &(name.clone(), value.clone()))
-        }) {
-            return false;
-        }
-        true
+        request.event_type == event.unsigned.event_type
+            && (request.kinds.is_empty() || request.kinds.contains(&event.unsigned.kind))
+            && request
+                .since
+                .is_none_or(|since| event.unsigned.created_at >= since)
+            && request
+                .author
+                .as_ref()
+                .is_none_or(|author| author == &event.signer)
+            && request.tag_equals.iter().all(|(name, value)| {
+                event
+                    .unsigned
+                    .tags
+                    .iter()
+                    .any(|tag| tag.0 == *name && tag.1 == *value)
+            })
     }
 
     /// Dispatch one matched event through an idempotent handler callback.
@@ -7171,6 +7179,7 @@ impl ProcessOperationHost {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn encode(
         module: &str,
         operation: &str,
@@ -7978,22 +7987,13 @@ fn zap_error(message: impl Into<String>) -> RuntimeError {
 fn bolt11_amount_msat(invoice: &str) -> Option<i64> {
     let (hrp, _) = bech32_decode(invoice)?;
     let hrp = hrp.as_str();
-    let amount = if let Some(amount) = hrp.strip_prefix("lnbcrt") {
-        amount
-    } else if let Some(amount) = hrp.strip_prefix("lntbs") {
-        amount
-    } else if let Some(amount) = hrp.strip_prefix("lnbc") {
-        amount
-    } else if let Some(amount) = hrp.strip_prefix("lntb") {
-        amount
-    } else {
-        return None;
-    };
+    let amount = hrp
+        .strip_prefix("lnbcrt")
+        .or_else(|| hrp.strip_prefix("lntbs"))
+        .or_else(|| hrp.strip_prefix("lnbc"))
+        .or_else(|| hrp.strip_prefix("lntb"))?;
     let (digits, unit) = match amount.as_bytes().last().copied() {
-        Some(b'm' | b'u' | b'n' | b'p') => (
-            &amount[..amount.len() - 1],
-            amount.as_bytes().last().copied()?,
-        ),
+        Some(unit @ (b'm' | b'u' | b'n' | b'p')) => (&amount[..amount.len() - 1], unit),
         _ => (amount, 0),
     };
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -8006,7 +8006,6 @@ fn bolt11_amount_msat(invoice: &str) -> Option<i64> {
         b'u' => value.checked_mul(100_000)?,      // micro-BTC
         b'n' => value.checked_mul(100)?,          // nano-BTC
         b'p' if value % 10 == 0 => value / 10,    // pico-BTC
-        b'p' => return None,
         _ => return None,
     };
     i64::try_from(millisatoshis).ok()
@@ -8076,15 +8075,20 @@ fn validate_lnurl_https_url(url: &str) -> Result<(), RuntimeError> {
 }
 
 fn is_local_or_ip_host(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
     host.parse::<std::net::IpAddr>().is_ok()
-        || host.eq_ignore_ascii_case("localhost")
-        || host.ends_with(".localhost")
-        || host.ends_with(".local")
-        || host.ends_with(".internal")
-        || host.ends_with(".localdomain")
-        || host.ends_with(".lan")
-        || host.ends_with(".home")
-        || host.ends_with(".home.arpa")
+        || host == "localhost"
+        || [
+            ".localhost",
+            ".local",
+            ".internal",
+            ".localdomain",
+            ".lan",
+            ".home",
+            ".home.arpa",
+        ]
+        .iter()
+        .any(|suffix| host.ends_with(suffix))
         || !host.contains('.')
         || !host.bytes().any(|byte| byte.is_ascii_alphabetic())
 }
@@ -8108,7 +8112,7 @@ fn url_query_encode(value: &str) -> String {
             encoded.push(char::from(byte));
         } else {
             encoded.push('%');
-            encoded.push_str(&format!("{byte:02X}"));
+            write!(encoded, "{byte:02X}").expect("writing to a String cannot fail");
         }
     }
     encoded
@@ -10193,7 +10197,7 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             } else {
                 Vec::new()
             };
-            let (Some(root_author), Some(root_relay), Some(parent_author), Some(parent_relay)) = (
+            let (Ok(root_author), Ok(root_relay), Ok(parent_author), Ok(parent_relay)) = (
                 optional_record_pubkey(fields, "root_author"),
                 optional_record_text(fields, "root_relay"),
                 optional_record_pubkey(fields, "parent_author"),
@@ -10384,7 +10388,7 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
             _ => value.clone(),
         },
         "Reaction" => {
-            let (Some(target_author), Some(target_kind), Some(relay_hint)) = (
+            let (Some(target_author), Ok(target_kind), Ok(relay_hint)) = (
                 record_pubkey(fields, "target_author"),
                 optional_record_integer(fields, "target_kind"),
                 optional_record_text(fields, "relay_hint"),
@@ -10429,14 +10433,14 @@ fn normalize_record(value: &OperationValue) -> OperationValue {
         ) {
             (
                 Some(recipient),
-                Some(lightning_address),
+                Ok(lightning_address),
                 Some(amount),
                 Some(message),
-                Some(signer),
+                Ok(signer),
                 Some(relays),
-                Some(target_event),
-                Some(target_address),
-                Some(target_kind),
+                Ok(target_event),
+                Ok(target_address),
+                Ok(target_kind),
             ) => OperationValue::ZapRequest(ZapRequest {
                 recipient,
                 lightning_address: lightning_address.unwrap_or_default(),
@@ -11081,30 +11085,36 @@ fn record_text_list(fields: &[(String, OperationValue)], key: &str) -> Option<Ve
         .collect()
 }
 
-fn optional_record_text(fields: &[(String, OperationValue)], key: &str) -> Option<Option<String>> {
-    if !record_has_field(fields, key) {
-        Some(None)
+fn optional_record_text(
+    fields: &[(String, OperationValue)],
+    key: &str,
+) -> Result<Option<String>, ()> {
+    if record_has_field(fields, key) {
+        record_text(fields, key).map(Some).ok_or(())
     } else {
-        record_text(fields, key).map(Some)
+        Ok(None)
     }
 }
 
-fn optional_record_integer(fields: &[(String, OperationValue)], key: &str) -> Option<Option<i64>> {
-    if !record_has_field(fields, key) {
-        Some(None)
+fn optional_record_integer(
+    fields: &[(String, OperationValue)],
+    key: &str,
+) -> Result<Option<i64>, ()> {
+    if record_has_field(fields, key) {
+        record_integer(fields, key).map(Some).ok_or(())
     } else {
-        record_integer(fields, key).map(Some)
+        Ok(None)
     }
 }
 
 fn optional_record_pubkey(
     fields: &[(String, OperationValue)],
     key: &str,
-) -> Option<Option<String>> {
-    if !record_has_field(fields, key) {
-        Some(None)
+) -> Result<Option<String>, ()> {
+    if record_has_field(fields, key) {
+        record_pubkey(fields, key).map(Some).ok_or(())
     } else {
-        record_pubkey(fields, key).map(Some)
+        Ok(None)
     }
 }
 
@@ -11357,6 +11367,11 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
 
     /// Like [`Runtime::simulate_event`], with host-supplied inputs available to
     /// each handler body.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first subscription, polling, idempotency, storage, logging,
+    /// or handler-body failure.
     #[allow(clippy::too_many_arguments)]
     pub fn simulate_event_with_inputs(
         program: &nscript_syntax::Program,

@@ -167,7 +167,7 @@ pub enum Value {
     ResultErr(Box<Value>),
     /// An operation result the evaluator does not model, kept whole so it can
     /// be passed back into another operation.
-    Op(OperationValue),
+    Op(Box<OperationValue>),
 }
 
 impl Value {
@@ -257,7 +257,7 @@ impl Value {
                     .map(Value::to_operation)
                     .collect::<Result<_, Stop>>()?,
             )),
-            Self::Op(value) => Ok(value.clone()),
+            Self::Op(value) => Ok((**value).clone()),
             Self::Record { name, fields } if name == "StreamMessage" => {
                 let text = |field: &str| {
                     fields.iter().find_map(|(key, value)| match value {
@@ -331,7 +331,7 @@ impl Value {
                     .map(|(field, value)| (field, Value::from_operation(value)))
                     .collect(),
             },
-            other => Self::Op(other),
+            other => Self::Op(Box::new(other)),
         }
     }
 }
@@ -359,7 +359,7 @@ impl Default for EvalLimits {
 /// carried separately and caught at the function or handler boundary.
 enum Stop {
     Error(RuntimeError),
-    Propagate(Value),
+    Propagate(Box<Value>),
 }
 
 impl From<RuntimeError> for Stop {
@@ -376,7 +376,7 @@ fn fail(message: impl Into<String>) -> Stop {
 
 enum Flow {
     Next,
-    Return(Value),
+    Return(Box<Value>),
 }
 
 pub struct Interpreter<'a, H: EvalHost> {
@@ -444,6 +444,10 @@ pub fn run_handler<'a, H: EvalHost>(
 
 /// Runs a handler body with its delivered `event` and the program's declared
 /// host inputs in scope.
+///
+/// # Errors
+///
+/// Returns the first evaluation or host-operation failure.
 pub fn run_handler_with_inputs<'a, H: EvalHost>(
     program: &'a Program,
     body: &'a [Item],
@@ -522,10 +526,10 @@ fn run_with_scope<'a, H: EvalHost>(
         depth: 0,
     };
     match interpreter.block(body) {
-        Ok(Flow::Return(value)) => Ok(value),
+        Ok(Flow::Return(value)) => Ok(*value),
         Ok(Flow::Next) => Ok(Value::Unit),
         // A `?` on an error returns that error from the handler.
-        Err(Stop::Propagate(error)) => Ok(Value::ResultErr(Box::new(error))),
+        Err(Stop::Propagate(error)) => Ok(Value::ResultErr(error)),
         Err(Stop::Error(error)) => Err(error),
     }
 }
@@ -667,7 +671,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
                     Some(expression) => self.expression(expression)?,
                     None => Value::Unit,
                 };
-                Ok(Flow::Return(value))
+                Ok(Flow::Return(Box::new(value)))
             }
             StatementKind::If {
                 condition,
@@ -825,7 +829,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
             // modelled.
             ExprKind::Propagate(value) => match self.expression(value)? {
                 Value::ResultOk(inner) => Ok(*inner),
-                Value::ResultErr(error) => Err(Stop::Propagate(*error)),
+                Value::ResultErr(error) => Err(Stop::Propagate(error)),
                 other => Ok(other),
             },
             ExprKind::Match { value, arms } => self.match_expression(value, arms),
@@ -849,6 +853,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
     /// `Note`/whatever the checker's `check_publish` infers structurally at
     /// check time, but read here from the evaluated value instead, so it is
     /// exact even when `value` is a variable rather than a literal record.
+    #[allow(clippy::too_many_lines)]
     fn publish(
         &mut self,
         value: &Expr,
@@ -894,7 +899,10 @@ impl<H: EvalHost> Interpreter<'_, H> {
                     // event) publish the payload nip44 handed us whole: the
                     // wire content is that envelope's bytes, so lowering it
                     // is not "text vs. not text" but "carry the payload".
-                    Value::Op(OperationValue::EncryptedText(payload)) => content = Some(payload),
+                    Value::Op(operation) => match *operation {
+                        OperationValue::EncryptedText(payload) => content = Some(payload),
+                        _ => return Err(fail("signing returned an unexpected operation value")),
+                    },
                     other => {
                         return Err(fail(format!(
                             "`content` must be text to publish, found a {}",
@@ -972,7 +980,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
             return self
                 .host
                 .host_key(label)
-                .map(Value::Op)
+                .map(|operation| Value::Op(Box::new(operation)))
                 .map_err(Stop::Error);
         }
         if name == "me" {
@@ -1156,10 +1164,10 @@ impl<H: EvalHost> Interpreter<'_, H> {
         self.scopes = caller;
         self.depth -= 1;
         match result {
-            Ok(Flow::Return(value)) => Ok(value),
+            Ok(Flow::Return(value)) => Ok(*value),
             Ok(Flow::Next) => Ok(Value::Unit),
             // `?` inside a function returns the error from that function.
-            Err(Stop::Propagate(error)) => Ok(Value::ResultErr(Box::new(error))),
+            Err(Stop::Propagate(error)) => Ok(Value::ResultErr(error)),
             Err(other) => Err(other),
         }
     }
@@ -1197,7 +1205,7 @@ impl<H: EvalHost> Interpreter<'_, H> {
 
 fn runtime_value_json(value: Value) -> serde_json::Value {
     match value {
-        Value::Unit => serde_json::Value::Null,
+        Value::Unit | Value::ResultErr(_) | Value::Op(_) => serde_json::Value::Null,
         Value::Bool(value) => serde_json::json!(value),
         Value::Int(value) => serde_json::json!(value),
         Value::Text(value) | Value::PubKey(value) => serde_json::json!(value),
@@ -1217,7 +1225,6 @@ fn runtime_value_json(value: Value) -> serde_json::Value {
                 .collect(),
         ),
         Value::ResultOk(value) => runtime_value_json(*value),
-        Value::ResultErr(_) | Value::Op(_) => serde_json::Value::Null,
     }
 }
 
@@ -2161,6 +2168,10 @@ where
     /// Like [`Runtime::dispatch_evaluated`], with host-supplied program inputs
     /// visible to the handler.
     #[allow(clippy::too_many_arguments)]
+    ///
+    /// # Errors
+    ///
+    /// Returns subscription, idempotency, storage, logging, or handler failures.
     pub fn dispatch_evaluated_with_inputs<I, T, L, O>(
         &mut self,
         program: &Program,
@@ -2281,6 +2292,10 @@ where
     /// Like [`Runtime::run_evaluated_cycle`], with declared program inputs
     /// visible to every dispatched handler.
     #[allow(clippy::too_many_arguments)]
+    ///
+    /// # Errors
+    ///
+    /// Returns subscription, relay, idempotency, storage, logging, or handler failures.
     pub fn run_evaluated_cycle_with_inputs<H, I, T, L, O>(
         &mut self,
         program: &Program,

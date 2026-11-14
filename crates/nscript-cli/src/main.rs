@@ -1058,7 +1058,10 @@ impl nscript_runtime::OperationHost for DeployOperationHost {
     ) -> Result<nscript_runtime::HttpResponse, nscript_runtime::RuntimeError> {
         match self {
             Self::Simulated(_) => {
-                let mut http = nscript_runtime::ProcessOperationHost::new("", Default::default());
+                let mut http = nscript_runtime::ProcessOperationHost::new(
+                    "",
+                    std::collections::BTreeMap::default(),
+                );
                 http.http_get(invocation, url)
             }
             Self::Process(host) => host.http_get(invocation, url),
@@ -1518,12 +1521,11 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
     let principal = if let Some(explicit) = &options.principal {
         Some(explicit.clone())
     } else if let Some(name) = &principal_signer {
-        match signer.public_key(name) {
-            Some(pubkey) => Some(pubkey),
-            None => {
-                eprintln!("error: signer `{name}` has no available NIP-46 user public key");
-                return ExitCode::from(2);
-            }
+        if let Some(pubkey) = signer.public_key(name) {
+            Some(pubkey)
+        } else {
+            eprintln!("error: signer `{name}` has no available NIP-46 user public key");
+            return ExitCode::from(2);
         }
     } else {
         None
@@ -1870,6 +1872,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn test_event(arguments: &[String]) -> ExitCode {
     let event_text = arguments
         .windows(2)
