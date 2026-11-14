@@ -22,12 +22,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Install npack
         run: cargo install --git https://github.com/imattau/npack --tag "$NPACK_REF" --locked --root "$RUNNER_TEMP/npack" npack
 
       - name: Build nscript
-        run: cargo build --release --locked -p nscript-cli -p nscript-mcp
+        run: |
+          cargo build --release --locked -p nscript-cli -p nscript-mcp
+          cargo build --release --locked --target wasm32-unknown-unknown -p nscript-wasm
 
       - name: Determine release version
         id: release
@@ -63,6 +67,7 @@ jobs:
           bundle="nscript-mcp-${VERSION}-linux-x86_64"
           mkdir -p "$RUNNER_TEMP/$bundle/share/doc/nscript"
           install -m 0755 target/release/nscript target/release/nscript-mcp "$RUNNER_TEMP/$bundle/"
+          install -m 0644 target/wasm32-unknown-unknown/release/nscript_wasm.wasm "$RUNNER_TEMP/$bundle/nscript_wasm.wasm"
           install -m 0644 README.md LICENSE docs/MCP.md "$RUNNER_TEMP/$bundle/share/doc/nscript/"
           tar -C "$RUNNER_TEMP" -czf "package-output/$bundle.tar.gz" "$bundle"
           (cd package-output && sha256sum "$bundle.tar.gz" >> SHA256SUMS)
@@ -104,9 +109,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: aarch64-apple-darwin,wasm32-unknown-unknown
       - name: Build binaries
-        run: cargo build --release --locked --target aarch64-apple-darwin -p nscript-cli -p nscript-mcp
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin -p nscript-cli -p nscript-mcp
+          cargo build --release --locked --target wasm32-unknown-unknown -p nscript-wasm
       - name: Package macOS binaries
         env:
           VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-ci.{0}', github.run_number) }}
@@ -115,6 +122,7 @@ jobs:
           bundle="nscript-mcp-${VERSION}-darwin-arm64"
           mkdir -p "$RUNNER_TEMP/$bundle/share/doc/nscript" package-output
           install -m 0755 target/aarch64-apple-darwin/release/nscript target/aarch64-apple-darwin/release/nscript-mcp "$RUNNER_TEMP/$bundle/"
+          install -m 0644 target/wasm32-unknown-unknown/release/nscript_wasm.wasm "$RUNNER_TEMP/$bundle/nscript_wasm.wasm"
           install -m 0644 README.md LICENSE docs/MCP.md "$RUNNER_TEMP/$bundle/share/doc/nscript/"
           tar -C "$RUNNER_TEMP" -czf "package-output/$bundle.tar.gz" "$bundle"
           (cd package-output && shasum -a 256 "$bundle.tar.gz" > "$bundle.sha256")
@@ -138,8 +146,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - name: Build binaries
-        run: cargo build --release --locked -p nscript-cli -p nscript-mcp
+        run: |
+          cargo build --release --locked -p nscript-cli -p nscript-mcp
+          cargo build --release --locked --target wasm32-unknown-unknown -p nscript-wasm
       - name: Package Linux binaries
         env:
           VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('0.0.0-ci.{0}', github.run_number) }}
@@ -148,6 +160,7 @@ jobs:
           bundle="nscript-mcp-${VERSION}-linux-arm64"
           mkdir -p "$RUNNER_TEMP/$bundle/share/doc/nscript" package-output
           install -m 0755 target/release/nscript target/release/nscript-mcp "$RUNNER_TEMP/$bundle/"
+          install -m 0644 target/wasm32-unknown-unknown/release/nscript_wasm.wasm "$RUNNER_TEMP/$bundle/nscript_wasm.wasm"
           install -m 0644 README.md LICENSE docs/MCP.md "$RUNNER_TEMP/$bundle/share/doc/nscript/"
           tar -C "$RUNNER_TEMP" -czf "package-output/$bundle.tar.gz" "$bundle"
           (cd package-output && sha256sum "$bundle.tar.gz" > "$bundle.sha256")
@@ -171,8 +184,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - name: Build binaries
-        run: cargo build --release --locked -p nscript-cli -p nscript-mcp
+        run: |
+          cargo build --release --locked -p nscript-cli -p nscript-mcp
+          cargo build --release --locked --target wasm32-unknown-unknown -p nscript-wasm
       - name: Package Windows binaries
         shell: pwsh
         env:
@@ -183,6 +200,7 @@ jobs:
           $root = Join-Path $env:RUNNER_TEMP $bundle
           New-Item -ItemType Directory -Force -Path "$root/share/doc/nscript", package-output | Out-Null
           Copy-Item target/release/nscript.exe,target/release/nscript-mcp.exe $root
+          Copy-Item target/wasm32-unknown-unknown/release/nscript_wasm.wasm $root
           Copy-Item README.md,LICENSE,docs/MCP.md "$root/share/doc/nscript/"
           Compress-Archive -Path $root -DestinationPath "package-output/$bundle.zip"
           Get-FileHash -Algorithm SHA256 "package-output/$bundle.zip" | ForEach-Object { "$($_.Hash.ToLower())  $bundle.zip" | Set-Content "package-output/$bundle.sha256" }
@@ -206,8 +224,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - name: Build binaries
-        run: cargo build --release --locked -p nscript-cli -p nscript-mcp
+        run: |
+          cargo build --release --locked -p nscript-cli -p nscript-mcp
+          cargo build --release --locked --target wasm32-unknown-unknown -p nscript-wasm
       - name: Package Windows binaries
         shell: pwsh
         env:
@@ -218,6 +240,7 @@ jobs:
           $root = Join-Path $env:RUNNER_TEMP $bundle
           New-Item -ItemType Directory -Force -Path "$root/share/doc/nscript", package-output | Out-Null
           Copy-Item target/release/nscript.exe,target/release/nscript-mcp.exe $root
+          Copy-Item target/wasm32-unknown-unknown/release/nscript_wasm.wasm $root
           Copy-Item README.md,LICENSE,docs/MCP.md "$root/share/doc/nscript/"
           Compress-Archive -Path $root -DestinationPath "package-output/$bundle.zip"
           Get-FileHash -Algorithm SHA256 "package-output/$bundle.zip" | ForEach-Object { "$($_.Hash.ToLower())  $bundle.zip" | Set-Content "package-output/$bundle.sha256" }
@@ -327,14 +350,14 @@ jobs:
           cp LICENSE "$staging/"
           tar -xzf "release-linux/nscript-mcp-${VERSION}-linux-x86_64.tar.gz" -C "$RUNNER_TEMP"
           tar -xzf "release-macos/nscript-mcp-${VERSION}-darwin-arm64.tar.gz" -C "$RUNNER_TEMP"
-          cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-x86_64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-x86_64/nscript-mcp" "$staging/bin/linux-x64/"
-          cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-darwin-arm64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-darwin-arm64/nscript-mcp" "$staging/bin/darwin-arm64/"
+          cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-x86_64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-x86_64/nscript-mcp" "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-x86_64/nscript_wasm.wasm" "$staging/bin/linux-x64/"
+          cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-darwin-arm64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-darwin-arm64/nscript-mcp" "$RUNNER_TEMP/nscript-mcp-${VERSION}-darwin-arm64/nscript_wasm.wasm" "$staging/bin/darwin-arm64/"
           tar -xzf "release-linux-arm64/nscript-mcp-${VERSION}-linux-arm64.tar.gz" -C "$RUNNER_TEMP"
-          cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-arm64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-arm64/nscript-mcp" "$staging/bin/linux-arm64/"
+          cp "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-arm64/nscript" "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-arm64/nscript-mcp" "$RUNNER_TEMP/nscript-mcp-${VERSION}-linux-arm64/nscript_wasm.wasm" "$staging/bin/linux-arm64/"
           unzip "release-win-x64/nscript-mcp-${VERSION}-win-x64.zip" -d "$RUNNER_TEMP/win-x64"
-          cp "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript.exe" "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript-mcp.exe" "$staging/bin/win-x64/"
+          cp "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript.exe" "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript-mcp.exe" "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript_wasm.wasm" "$staging/bin/win-x64/"
           unzip "release-win-arm64/nscript-mcp-${VERSION}-win-arm64.zip" -d "$RUNNER_TEMP/win-arm64"
-          cp "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript.exe" "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript-mcp.exe" "$staging/bin/win-arm64/"
+          cp "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript.exe" "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript-mcp.exe" "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript_wasm.wasm" "$staging/bin/win-arm64/"
           chmod 0755 "$staging/bin/nscript-mcp.js" "$staging/bin/linux-x64/"* "$staging/bin/linux-arm64/"* "$staging/bin/darwin-arm64/"*
           node -e "const fs=require('fs'),p='$staging/package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\\n')"
           cd "$staging"

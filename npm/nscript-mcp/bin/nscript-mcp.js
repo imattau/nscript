@@ -22,8 +22,9 @@ if (!target) {
 const binDir = path.join(__dirname, target);
 const cli = path.join(binDir, 'nscript' + executable);
 const server = path.join(binDir, 'nscript-mcp' + executable);
-if (!existsSync(cli) || !existsSync(server)) {
-  process.stderr.write('nscript-mcp: bundled binaries are missing; reinstall the package\n');
+const wasm = path.join(binDir, 'nscript_wasm.wasm');
+if (!existsSync(cli) || !existsSync(server) || !existsSync(wasm)) {
+  process.stderr.write('nscript-mcp: bundled runtime files are missing; reinstall the package\n');
   process.exit(1);
 }
 

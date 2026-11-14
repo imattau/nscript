@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install --yes jq
       - name: Check specification corpus
@@ -21,5 +24,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Lint Rust workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Build WASM guest for MCP integration tests
+        run: cargo build --locked --target wasm32-unknown-unknown --release -p nscript-wasm
       - name: Test Rust workspace
         run: cargo test --workspace

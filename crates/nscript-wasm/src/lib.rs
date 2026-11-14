@@ -542,11 +542,14 @@ fn handle_test_event(source: &str, modules: &[ModuleSource], request: &Value) ->
         .get("principal")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let Some(inputs) = parse_inputs(request.get("inputs")) else {
+        return error_response("inputs must map names to strings, integers, or booleans");
+    };
     let mut relay = FakeRelayHost::default();
     let mut storage = InMemoryStorage::default();
     let mut logs = FakeLogHost::default();
     let mut operations = simulated_operations(&loaded.graph);
-    match Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::simulate_event(
+    match Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::simulate_event_with_inputs(
         &loaded.program,
         &checked,
         &mut relay,
@@ -555,6 +558,7 @@ fn handle_test_event(source: &str, modules: &[ModuleSource], request: &Value) ->
         &mut operations,
         principal.as_deref(),
         &event,
+        &inputs,
     ) {
         Ok(report) => ok(json!({
             "diagnostics": [],
@@ -581,6 +585,28 @@ fn handle_test_event(source: &str, modules: &[ModuleSource], request: &Value) ->
         })),
         Err(error) => error_response(&format!("{error:?}")),
     }
+}
+
+fn parse_inputs(value: Option<&Value>) -> Option<BTreeMap<String, eval::Value>> {
+    let Some(value) = value else {
+        return Some(BTreeMap::new());
+    };
+    let object = value.as_object()?;
+    object
+        .iter()
+        .map(|(name, value)| {
+            let value = if let Some(value) = value.as_str() {
+                eval::Value::Text(value.to_owned())
+            } else if let Some(value) = value.as_i64() {
+                eval::Value::Int(value)
+            } else if let Some(value) = value.as_bool() {
+                eval::Value::Bool(value)
+            } else {
+                return None;
+            };
+            Some((name.clone(), value))
+        })
+        .collect()
 }
 
 fn simulated_operations(graph: &nscript_modules::ResolvedModuleGraph) -> eval::SimulatedOperations {

@@ -451,7 +451,9 @@ dependencies = [
 name = "nscript-mcp"
 version = "0.3.6"
 dependencies = [
+ "nscript-modules",
  "serde_json",
+ "wasmi",
 ]
 
 [[package]]

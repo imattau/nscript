@@ -1,6 +1,6 @@
 # MCP server
 
-`nscript-mcp` exposes NScript check, inspection, and dry-simulation workflows to MCP-compatible agents. It is general-purpose and does not know about a particular social network or Nostr application.
+`nscript-mcp` exposes NScript checking, inspection, dry simulation, and WASM-sandboxed execution to MCP-compatible agents. It is general-purpose and does not know about a particular social network or Nostr application.
 
 ## Build and local use
 
@@ -8,6 +8,7 @@ Build the server and CLI from the repository root:
 
 ```sh
 cargo build --release -p nscript-mcp -p nscript-cli
+cargo build --release --target wasm32-unknown-unknown -p nscript-wasm
 ```
 
 The default transport is stdio. The server finds `nscript` beside its own executable; set `NSCRIPT_CLI_PATH` if it is installed elsewhere. Both executables run with the MCP process user's permissions.
@@ -23,7 +24,9 @@ The default transport is stdio. The server finds `nscript` beside its own execut
 }
 ```
 
-Install the published npm bundle on Linux x86_64/arm64, macOS Apple Silicon, or Windows x64/arm64 with `npx -y nscript-mcp@0.3.6`. It bundles both the MCP server and CLI. The `nscript-mcp` command uses stdio by default.
+Install the published npm bundle on Linux x86_64/arm64, macOS Apple Silicon, or Windows x64/arm64 with `npx -y nscript-mcp@0.3.6`. It bundles the MCP server, CLI, and WASM guest. The `nscript-mcp` command uses stdio by default.
+
+The MCP server loads `nscript_wasm.wasm` beside its executable. For manual installs, copy `target/wasm32-unknown-unknown/release/nscript_wasm.wasm` beside `nscript-mcp`, or set `NSCRIPT_WASM_PATH`. The guest has no WASI imports and runs with a 16 MiB memory limit and a 250 million fuel default. Administrators may set `NSCRIPT_MCP_WASM_FUEL` to a positive value up to 1 billion.
 
 ## Tools
 
@@ -31,8 +34,9 @@ Install the published npm bundle on Linux x86_64/arm64, macOS Apple Silicon, or 
 - **`nscript_inspect`** returns a structured manifest with effects, resolved modules, operation calls, and publication trace.
 - **`nscript_simulate_event`** sends a JSON event to the CLI simulator. It accepts optional `principal` (`--as`), declared scalar `inputs`, and `module_dirs`.
 - **`nscript_test_event`** simulates an event and reports the dispatched handler count and per-handler event type, author, and tag filter trace. Principal-based predicates are resolved against its `principal` argument. Use it to diagnose events that match zero handlers. Unsupported handler predicate shapes fail checking with E2402, so they cannot silently widen a subscription. It accepts `principal`, declared scalar `inputs`, and `module_dirs`.
+- **`nscript_execute`** runs startup logic or delivers one event inside the WASM guest. It returns logs, operation traces, storage, and failures. This tool is sandboxed and does not access real relays, signing keys, or live operation hosts. It accepts `principal`, declared scalar `inputs`, and `module_dirs`.
 
-Simulation is dry: it does not connect to relays, publish events, or access signer keys. Operations without a simulator implementation are recorded and answered with declared placeholder values.
+Simulation and WASM execution are dry: they do not connect to relays, publish events, or access signer keys. Operations without a simulator implementation are recorded and answered with declared placeholder values. Live execution and persistent managed sessions are not exposed through MCP.
 
 The server accepts source up to 1 MB and event JSON up to 256 KB. Temporary source files use owner-only permissions on Unix and are removed after use. Paths to temporary source files are redacted from CLI diagnostics.
 
@@ -62,4 +66,4 @@ The transport accepts MCP POST requests at `/mcp` and returns either JSON or a r
 
 ## Scope
 
-The server supports authoring and dry simulation. It does not expose `deploy` or any live network, signing, or package-mutation tool. A deployment host should grant capabilities through NScript's normal permission and host policies.
+The server supports authoring, dry simulation, and sandboxed WASM execution. It does not expose `deploy` or any live network, signing, or package-mutation tool. A deployment host should grant capabilities through NScript's normal permission and host policies.

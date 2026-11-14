@@ -13,10 +13,15 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use wasmi::{Config, Engine, Linker, Module, Store, StoreLimitsBuilder};
 
 const PROTOCOL_VERSION: &str = "2025-03-26";
 const MAX_SOURCE_BYTES: usize = 1_000_000;
 const MAX_EVENT_BYTES: usize = 256_000;
+const MAX_WASM_RESPONSE_BYTES: usize = 2_000_000;
+const DEFAULT_WASM_FUEL: u64 = 250_000_000;
+const MAX_WASM_FUEL: u64 = 1_000_000_000;
+const WASM_MEMORY_LIMIT: usize = 16 * 1024 * 1024;
 const DEFAULT_CLI_TIMEOUT: Duration = Duration::from_secs(30);
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 static HTTP_MODE: AtomicBool = AtomicBool::new(false);
@@ -111,7 +116,7 @@ fn handle(request: &Value, cancelled: &Arc<AtomicBool>) -> Option<Value> {
                 .unwrap_or(PROTOCOL_VERSION),
             "capabilities": {"tools": {"listChanged": false}},
             "serverInfo": {"name": "nscript", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": "Check, inspect, and simulate NScript source. Simulation uses the NScript CLI simulator and does not publish to relays or access signing keys."
+            "instructions": "Check, inspect, and simulate NScript source. nscript_execute runs inside a fuel- and memory-limited WASM sandbox and does not access live relays or signing keys."
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({"tools": tool_definitions()})),
@@ -162,8 +167,292 @@ fn tool_definitions() -> Value {
             "description": "Simulate an event and report matched handler counts and per-handler event, author, and tag filter traces.",
             "annotations": {"readOnlyHint": true, "openWorldHint": false},
             "inputSchema": {"type": "object", "properties": {"source": {"type": "string"}, "event": {"type": "object"}, "principal": {"type": "string"}, "inputs": {"type": "object", "description": "Optional values for declared scalar inputs.", "additionalProperties": {"type": ["string", "integer", "boolean"]}}, "module_dirs": {"type": "array", "items": {"type": "string"}}}, "required": ["source", "event"], "additionalProperties": false}
+        },
+        {
+            "name": "nscript_execute",
+            "title": "Execute NScript in a WASM sandbox",
+            "description": "Run NScript startup logic or deliver one event inside a fuel- and memory-limited WASM guest. This is sandbox simulation: it does not connect to relays, publish, access signing keys, or perform live module operations.",
+            "annotations": {"readOnlyHint": true, "openWorldHint": false},
+            "inputSchema": {"type": "object", "properties": {"source": {"type": "string", "description": "Complete NScript source code."}, "event": {"type": "object", "description": "Optional JSON event to deliver to handlers."}, "principal": {"type": "string", "description": "Optional principal value used for `me`."}, "inputs": {"type": "object", "description": "Optional values for declared scalar inputs.", "additionalProperties": {"type": ["string", "integer", "boolean"]}}, "module_dirs": {"type": "array", "items": {"type": "string", "description": "Local module directories the MCP process is allowed to read."}}}, "required": ["source"], "additionalProperties": false}
         }
     ])
+}
+
+fn wasm_execute_tool(
+    arguments: &Value,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<Value, (i64, String)> {
+    let source = arguments
+        .get("source")
+        .and_then(Value::as_str)
+        .ok_or((-32602, "tool argument `source` must be a string".to_owned()))?;
+    if source.len() > MAX_SOURCE_BYTES {
+        return Err((
+            -32602,
+            format!("source exceeds the {MAX_SOURCE_BYTES}-byte limit"),
+        ));
+    }
+    if cancelled.load(Ordering::Relaxed) {
+        return Err((-32603, "request cancelled".to_owned()));
+    }
+    let directories = module_dirs(arguments)?;
+    let modules = module_sources_from_dirs(&directories).map_err(|error| (-32602, error))?;
+    let event = arguments.get("event");
+    if let Some(event) = event {
+        if !event.is_object() {
+            return Err((-32602, "event must be a JSON object".to_owned()));
+        }
+        let bytes = serde_json::to_vec(event).map_err(|error| (-32602, error.to_string()))?;
+        if bytes.len() > MAX_EVENT_BYTES {
+            return Err((
+                -32602,
+                format!("event exceeds the {MAX_EVENT_BYTES}-byte limit"),
+            ));
+        }
+    }
+    let principal = arguments.get("principal");
+    if principal.is_some_and(|value| !value.is_string()) {
+        return Err((-32602, "principal must be a string".to_owned()));
+    }
+    let inputs = arguments.get("inputs");
+    if let Some(inputs) = inputs {
+        let Some(inputs) = inputs.as_object() else {
+            return Err((
+                -32602,
+                "inputs must be an object of scalar values".to_owned(),
+            ));
+        };
+        for (name, value) in inputs {
+            if !(value.is_string() || value.as_i64().is_some() || value.is_boolean()) {
+                return Err((
+                    -32602,
+                    format!("input `{name}` must be a string, integer, or boolean"),
+                ));
+            }
+        }
+        if event.is_none() && !inputs.is_empty() {
+            return Err((
+                -32602,
+                "declared inputs are available during event-handler execution; supply an event"
+                    .to_owned(),
+            ));
+        }
+    }
+    let mut request = json!({
+        "op": if event.is_some() { "test_event" } else { "run" },
+        "source": source,
+        "modules": modules,
+    });
+    if let Some(event) = event {
+        request["event"] = event.clone();
+    }
+    if let Some(principal) = principal {
+        request["principal"] = principal.clone();
+    }
+    if let Some(inputs) = inputs {
+        request["inputs"] = inputs.clone();
+    }
+    let response = match wasm_call(&request) {
+        Ok(response) => response,
+        Err(error) => {
+            return Ok(json!({
+                "content": [{"type":"text","text":error}],
+                "isError": true,
+            }));
+        }
+    };
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(json!({
+            "content": [{"type":"text","text":"execution cancelled"}],
+            "isError": true,
+        }));
+    }
+    let payload = response
+        .get("result")
+        .cloned()
+        .unwrap_or_else(|| response.clone());
+    let failed = response.get("ok").and_then(Value::as_bool) != Some(true)
+        || payload.get("executed").and_then(Value::as_bool) == Some(false);
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
+    Ok(json!({
+        "content": [{"type":"text","text":text}],
+        "structuredContent": payload,
+        "isError": failed,
+    }))
+}
+
+fn wasm_path() -> Result<PathBuf, String> {
+    if let Some(path) = env::var_os("NSCRIPT_WASM_PATH") {
+        return Ok(PathBuf::from(path));
+    }
+    let executable = env::current_exe().map_err(|error| error.to_string())?;
+    let sibling = executable.with_file_name("nscript_wasm.wasm");
+    if sibling.is_file() {
+        return Ok(sibling);
+    }
+    Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/wasm32-unknown-unknown/release/nscript_wasm.wasm"))
+}
+
+#[allow(clippy::too_many_lines)]
+fn wasm_call(request: &Value) -> Result<Value, String> {
+    let path = wasm_path()?;
+    let bytes = fs::read(&path).map_err(|error| {
+        format!(
+            "cannot read NScript WASM guest {}: {error}; build nscript-wasm for wasm32-unknown-unknown or set NSCRIPT_WASM_PATH",
+            path.display()
+        )
+    })?;
+    if bytes.len() > WASM_MEMORY_LIMIT {
+        return Err("NScript WASM guest exceeds the module size limit".to_owned());
+    }
+    let mut config = Config::default();
+    config.consume_fuel(true);
+    let engine = Engine::new(&config);
+    let module = Module::new(&engine, &bytes[..])
+        .map_err(|error| format!("invalid NScript WASM guest: {error}"))?;
+    if module.imports().next().is_some() {
+        return Err("NScript WASM guest must not import host or WASI functions".to_owned());
+    }
+    let limits = StoreLimitsBuilder::new()
+        .memory_size(WASM_MEMORY_LIMIT)
+        .instances(1)
+        .tables(1)
+        .build();
+    let mut store = Store::new(&engine, limits);
+    store.limiter(|limits| limits);
+    let fuel = env::var("NSCRIPT_MCP_WASM_FUEL")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|fuel| *fuel > 0 && *fuel <= MAX_WASM_FUEL)
+        .unwrap_or(DEFAULT_WASM_FUEL);
+    store
+        .set_fuel(fuel)
+        .map_err(|error| format!("cannot set WASM fuel: {error}"))?;
+    let linker = Linker::<wasmi::StoreLimits>::new(&engine);
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .map_err(|error| format!("cannot instantiate NScript WASM guest: {error}"))?
+        .start(&mut store)
+        .map_err(|error| format!("cannot start NScript WASM guest: {error}"))?;
+    let memory = instance
+        .get_memory(&store, "memory")
+        .ok_or_else(|| "NScript WASM guest does not export memory".to_owned())?;
+    let alloc = instance
+        .get_typed_func::<i32, i32>(&store, "nscript_alloc")
+        .map_err(|error| format!("NScript WASM guest ABI is missing nscript_alloc: {error}"))?;
+    let dealloc = instance
+        .get_typed_func::<(i32, i32), ()>(&store, "nscript_dealloc")
+        .map_err(|error| format!("NScript WASM guest ABI is missing nscript_dealloc: {error}"))?;
+    let handle = instance
+        .get_typed_func::<(i32, i32), i32>(&store, "nscript_handle")
+        .map_err(|error| format!("NScript WASM guest ABI is missing nscript_handle: {error}"))?;
+    let free = instance
+        .get_typed_func::<(i32, i32), ()>(&store, "nscript_free")
+        .map_err(|error| format!("NScript WASM guest ABI is missing nscript_free: {error}"))?;
+    let abi = instance
+        .get_typed_func::<(), i32>(&store, "nscript_abi")
+        .map_err(|error| format!("NScript WASM guest ABI is missing nscript_abi: {error}"))?
+        .call(&mut store, ())
+        .map_err(|error| format!("cannot query NScript WASM ABI: {error}"))?;
+    if abi != 1 {
+        return Err(format!("unsupported NScript WASM ABI version {abi}"));
+    }
+    let request = serde_json::to_vec(request).map_err(|error| error.to_string())?;
+    let request_len = i32::try_from(request.len()).map_err(|_| "request is too large")?;
+    let request_ptr = alloc
+        .call(&mut store, request_len)
+        .map_err(|error| format!("WASM request allocation failed: {error}"))?;
+    if request_ptr < 0 {
+        return Err("WASM returned an invalid request pointer".to_owned());
+    }
+    let request_offset =
+        usize::try_from(request_ptr).map_err(|_| "WASM returned an invalid request pointer")?;
+    memory
+        .write(&mut store, request_offset, &request)
+        .map_err(|error| format!("WASM request write failed: {error}"))?;
+    let response_ptr = handle
+        .call(&mut store, (request_ptr, request_len))
+        .map_err(|error| format!("WASM execution failed (fuel or memory limit): {error}"))?;
+    dealloc
+        .call(&mut store, (request_ptr, request_len))
+        .map_err(|error| format!("WASM request cleanup failed: {error}"))?;
+    if response_ptr < 0 {
+        return Err("WASM returned an invalid response pointer".to_owned());
+    }
+    let response_ptr_i32 = response_ptr;
+    let response_ptr =
+        usize::try_from(response_ptr).map_err(|_| "WASM returned an invalid response pointer")?;
+    let data = memory.data(&store);
+    let response = data
+        .get(response_ptr..)
+        .ok_or_else(|| "WASM response pointer is out of bounds".to_owned())?;
+    let response_len = response
+        .iter()
+        .take(MAX_WASM_RESPONSE_BYTES + 1)
+        .position(|byte| *byte == 0)
+        .ok_or_else(|| {
+            "WASM response is missing a terminator or exceeds the size limit".to_owned()
+        })?;
+    let response_text = std::str::from_utf8(&response[..response_len])
+        .map_err(|error| format!("WASM response is not UTF-8: {error}"))?;
+    let result = serde_json::from_str::<Value>(response_text)
+        .map_err(|error| format!("WASM response is not valid JSON: {error}"));
+    let response_len = i32::try_from(response_len + 1).map_err(|_| "response is too large")?;
+    free.call(&mut store, (response_ptr_i32, response_len))
+        .map_err(|error| format!("WASM response cleanup failed: {error}"))?;
+    result
+}
+
+fn module_sources_from_dirs(directories: &[String]) -> Result<Vec<Value>, String> {
+    let mut sources = Vec::new();
+    let mut pending = directories.iter().map(PathBuf::from).collect::<Vec<_>>();
+    let mut total_bytes = 0_usize;
+    while let Some(path) = pending.pop() {
+        let entries = fs::read_dir(&path)
+            .map_err(|error| format!("cannot read module directory {}: {error}", path.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let entry_path = entry.path();
+            let metadata = entry
+                .file_type()
+                .map_err(|error| format!("cannot inspect {}: {error}", entry_path.display()))?;
+            if metadata.is_dir() {
+                pending.push(entry_path);
+                continue;
+            }
+            if !metadata.is_file()
+                || entry_path.extension().and_then(|value| value.to_str()) != Some("nsm")
+            {
+                continue;
+            }
+            let source = fs::read_to_string(&entry_path)
+                .map_err(|error| format!("cannot read module {}: {error}", entry_path.display()))?;
+            total_bytes = total_bytes.saturating_add(source.len());
+            if total_bytes > MAX_SOURCE_BYTES {
+                return Err("custom module sources exceed the 1 MB total limit".to_owned());
+            }
+            let (descriptor, diagnostics) = nscript_modules::parse_module(&source);
+            let descriptor = descriptor
+                .filter(|_| diagnostics.is_empty())
+                .ok_or_else(|| {
+                    format!(
+                        "invalid module {}: {}",
+                        entry_path.display(),
+                        diagnostics
+                            .iter()
+                            .map(|diagnostic| diagnostic.message.as_str())
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    )
+                })?;
+            sources.push(json!({"name":descriptor.id.name,"source":source}));
+            if sources.len() > 256 {
+                return Err("module directory contains more than 256 .nsm files".to_owned());
+            }
+        }
+    }
+    Ok(sources)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -174,7 +463,11 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
         .ok_or((-32602, "tools/call requires a tool name".to_owned()))?;
     if !matches!(
         name,
-        "nscript_check" | "nscript_inspect" | "nscript_simulate_event" | "nscript_test_event"
+        "nscript_check"
+            | "nscript_inspect"
+            | "nscript_simulate_event"
+            | "nscript_test_event"
+            | "nscript_execute"
     ) {
         return Ok(json!({
             "content": [{"type": "text", "text": format!("Unknown tool: {name}")}],
@@ -194,6 +487,10 @@ fn call_tool(params: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64,
             -32602,
             format!("source exceeds the {MAX_SOURCE_BYTES}-byte limit"),
         ));
+    }
+
+    if name == "nscript_execute" {
+        return wasm_execute_tool(&arguments, cancelled);
     }
 
     let mut temp = TempSource::new(source).map_err(|error| (-32603, error))?;
@@ -777,5 +1074,57 @@ impl TempSource {
 impl Drop for TempSource {
     fn drop(&mut self) {
         self.remove();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wasm_execution_delivers_event_and_returns_handler_trace() {
+        let request = json!({
+            "op": "test_event",
+            "source": include_str!("../../../conformance/valid/handler-print.ns"),
+            "event": {"event_type":"Note", "content":"hello from wasm", "signer":"alice"},
+        });
+        let response = wasm_call(&request).expect("executes in wasm");
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["executed"], true);
+        assert_eq!(response["result"]["report"]["dispatched"], 1);
+        assert_eq!(
+            response["result"]["report"]["logs"][0]["message"],
+            "hello from wasm"
+        );
+    }
+
+    #[test]
+    fn wasm_mcp_tool_supplies_declared_handler_inputs() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let payload = call_tool(
+            &json!({
+                "name":"nscript_execute",
+                "arguments":{
+                    "source": include_str!("../../../conformance/valid/handler-input.ns"),
+                    "event": {"event_type":"Note", "content":"hello", "signer":"alice"},
+                    "inputs": {"reply_prefix":"reply: "},
+                },
+            }),
+            &cancelled,
+        )
+        .expect("executes through MCP tool");
+        assert_eq!(payload["isError"], false);
+        assert_eq!(
+            payload["structuredContent"]["report"]["logs"][0]["message"],
+            "reply: hello"
+        );
+    }
+
+    #[test]
+    fn wasm_executor_rejects_invalid_guest_bytes() {
+        let mut config = Config::default();
+        config.consume_fuel(true);
+        let engine = Engine::new(&config);
+        assert!(Module::new(&engine, b"not wasm".as_slice()).is_err());
     }
 }

@@ -12,7 +12,9 @@ name = "nscript-mcp"
 path = "src/main.rs"
 
 [dependencies]
+nscript-modules = { path = "../nscript-modules" }
 serde_json.workspace = true
+wasmi = "0.38"
 
 [lints]
 workspace = true

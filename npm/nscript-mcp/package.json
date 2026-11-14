@@ -1,7 +1,7 @@
 {
   "name": "nscript-mcp",
   "version": "0.3.6",
-  "description": "MCP server for checking, inspecting, and simulating NScript programs",
+  "description": "MCP server for checking, inspecting, simulating, and sandbox-executing NScript programs",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -14,14 +14,19 @@
     "bin/nscript-mcp.js",
     "bin/linux-x64/nscript",
     "bin/linux-x64/nscript-mcp",
+    "bin/linux-x64/nscript_wasm.wasm",
     "bin/linux-arm64/nscript",
     "bin/linux-arm64/nscript-mcp",
+    "bin/linux-arm64/nscript_wasm.wasm",
     "bin/darwin-arm64/nscript",
     "bin/darwin-arm64/nscript-mcp",
+    "bin/darwin-arm64/nscript_wasm.wasm",
     "bin/win-x64/nscript.exe",
     "bin/win-x64/nscript-mcp.exe",
+    "bin/win-x64/nscript_wasm.wasm",
     "bin/win-arm64/nscript.exe",
     "bin/win-arm64/nscript-mcp.exe",
+    "bin/win-arm64/nscript_wasm.wasm",
     "README.md",
     "LICENSE"
   ],
