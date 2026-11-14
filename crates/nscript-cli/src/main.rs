@@ -69,6 +69,10 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
         eprintln!("package manifest requires an NScript source file");
         return ExitCode::from(2);
     };
+    let portable_source = Path::new(source)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(source);
     let flag = |name: &str| {
         arguments
             .windows(2)
@@ -142,7 +146,10 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
             write!(&mut fingerprint, "{byte:02x}").expect("writing to a string cannot fail");
         }
         Some(serde_json::json!({
-            "path": lock_path,
+            "path": Path::new(&lock_path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&lock_path),
             "sha256": fingerprint
         }))
     } else {
@@ -178,12 +185,16 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
     let dependencies = program
         .imports
         .iter()
+        .filter(|import| {
+            !graph.modules.get(&import.path).is_some_and(|module| {
+                matches!(module.origin, nscript_modules::ModuleOrigin::BuiltIn(_))
+            })
+        })
         .map(|import| {
-            format!(
-                "{} {}",
-                import.path,
-                import.requirement.as_deref().unwrap_or("*")
-            )
+            serde_json::json!({
+                "name": import.path,
+                "requirement": import.requirement.as_deref().unwrap_or("*")
+            })
         })
         .collect::<Vec<_>>();
     let resolved_modules = graph
@@ -213,7 +224,7 @@ fn package_manifest(arguments: &[String]) -> ExitCode {
         "provides": ["nscript-program"],
         "post_install": [],
         "nscript": {
-            "source": source,
+            "source": portable_source,
             "lockfile": lock_metadata,
             "resolved_modules": resolved_modules,
             "effects": checked.effects.iter().map(|effect| format!("{effect:?}").to_lowercase()).collect::<Vec<_>>(),
@@ -347,9 +358,15 @@ fn resolve_lockfile(arguments: &[String]) -> Result<(String, serde_json::Value),
             })
         })
         .collect::<Vec<_>>();
+    // Lockfiles travel with packages, so `source` must identify the source
+    // file inside the package instead of recording the build machine's path.
+    let portable_source = Path::new(source)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(source);
     let lockfile = serde_json::json!({
         "lockfile_version": 1,
-        "source": source,
+        "source": portable_source,
         "roots": roots,
         "modules": modules
     });

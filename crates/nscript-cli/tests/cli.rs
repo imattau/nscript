@@ -731,7 +731,8 @@ fn generates_npack_compatible_manifest() {
     assert_eq!(manifest["name"], "hello");
     assert_eq!(manifest["runtime_requires"][0], "nscript-runtime >=0.1");
     assert_eq!(manifest["nscript"]["permissions_reviewed"], true);
-    assert_eq!(manifest["dependencies"][0], "nip01 *");
+    assert_eq!(manifest["dependencies"].as_array().unwrap().len(), 0);
+    assert_eq!(manifest["nscript"]["source"], "hello-note.ns");
     assert!(
         manifest["nscript"]["resolved_modules"]
             .as_array()
@@ -804,7 +805,7 @@ fn package_manifest_embeds_verified_lockfile_fingerprint() {
     let manifest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         manifest["nscript"]["lockfile"]["path"],
-        lock_path.to_str().unwrap()
+        lock_path.file_name().unwrap().to_str().unwrap()
     );
     assert_eq!(
         manifest["nscript"]["lockfile"]["sha256"]
@@ -859,6 +860,7 @@ fn generates_deterministic_module_lockfile() {
     assert!(output.status.success());
     let lockfile: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(lockfile["lockfile_version"], 1);
+    assert_eq!(lockfile["source"], "hello-note.ns");
     assert_eq!(lockfile["roots"][0]["name"], "nip01");
     assert!(
         lockfile["modules"]

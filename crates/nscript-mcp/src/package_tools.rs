@@ -263,7 +263,7 @@ fn publish(args: &Value, cancelled: &Arc<AtomicBool>) -> Result<Value, (i64, Str
         serde_json::from_slice(&fs::read(&external).map_err(internal)?)
             .map_err(|e| (-32603, format!("invalid generated package manifest: {e}")))?;
     external_manifest["artifact"] = json!(artifact_name);
-    external_manifest["app"] = json!({"summary":summary});
+    external_manifest["app"] = json!({"summary":summary,"categories":["Development"]});
     fs::write(
         &external,
         serde_json::to_vec_pretty(&external_manifest).map_err(internal)?,

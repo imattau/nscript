@@ -211,7 +211,7 @@ fn tool_definitions() -> Value {
         {
             "name": "nscript_simulate_event",
             "title": "Simulate an NScript event handler",
-            "description": "Deliver a JSON event to an NScript program using the CLI simulator. This is a dry simulation: it does not publish, connect to relays, or access signing keys. Module operations are simulated.",
+            "description": "Deliver a JSON event to an NScript program using the CLI simulator. Set event.event_type to the handler's declared event name (for example, Comment) when it is not the default Note. This is a dry simulation: it does not publish, connect to relays, or access signing keys. Module operations are simulated.",
             "annotations": {"readOnlyHint": true, "openWorldHint": false},
             "inputSchema": {"type": "object", "properties": {"source": {"type": "string", "description": "Complete NScript source code."}, "event": {"type": "object", "description": "JSON event value to deliver."}, "principal": {"type": "string", "description": "Optional value supplied as the program's me principal (--as)."}, "inputs": {"type": "object", "description": "Optional values for declared scalar inputs. Values may be strings, integers, or booleans.", "additionalProperties": {"type": ["string", "integer", "boolean"]}}, "module_dirs": {"type": "array", "items": {"type": "string"}, "description": "Optional local directories containing custom .nsm modules; each is passed to the CLI with -M."}}, "required": ["source", "event"], "additionalProperties": false}
         },

@@ -842,6 +842,8 @@ mod tests {
             signers: Map::new(),
             inputs: Map::from_iter([("api-token".to_owned(), json!("secret-value"))]),
             operation_command: None,
+            event_webhook_url: None,
+            event_webhook_token: None,
         };
         let environment =
             input_environment(&json!({"input_refs":{"api_token":"api-token"}}), &config)
@@ -863,6 +865,8 @@ mod tests {
             signers: Map::from_iter([("bot".to_owned(), json!("bunker://example"))]),
             inputs: Map::new(),
             operation_command: None,
+            event_webhook_url: None,
+            event_webhook_token: None,
         };
         let signers =
             selected_signers(&json!({"signer_refs":["bot"]}), &config).expect("signer resolves");
