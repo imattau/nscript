@@ -993,6 +993,7 @@ fn schedule_value(expression: &Expr, every: bool) -> Option<u64> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handler_predicate_filters(
     expression: &Expr,
     author: &mut Option<String>,
