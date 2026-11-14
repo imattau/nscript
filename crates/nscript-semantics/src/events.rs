@@ -91,6 +91,229 @@ pub(crate) fn validate(program: &Program, graph: &ResolvedModuleGraph) -> Vec<Di
     diagnostics
 }
 
+/// Reject nominal tag records that do not match the declared type of the
+/// published event field. Silently skipping these values omits wire tags.
+pub(crate) fn validate_publication_tag_types(
+    program: &Program,
+    graph: &ResolvedModuleGraph,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    validate_publication_items(&program.ast.items, graph, &mut diagnostics);
+    diagnostics
+}
+
+fn validate_publication_items(
+    items: &[Item],
+    graph: &ResolvedModuleGraph,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    for item in items {
+        match item {
+            Item::Let(declaration) => {
+                validate_publication_expr(&declaration.value, graph, diagnostics);
+            }
+            Item::Function(function) => {
+                validate_publication_items(&function.body, graph, diagnostics);
+            }
+            Item::Stream { value, .. } => validate_publication_expr(value, graph, diagnostics),
+            Item::Statement(statement) => {
+                validate_publication_statement(&statement.value, graph, diagnostics);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn validate_publication_statement(
+    statement: &StatementKind,
+    graph: &ResolvedModuleGraph,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    match statement {
+        StatementKind::Expression(value) | StatementKind::Return(Some(value)) => {
+            validate_publication_expr(value, graph, diagnostics);
+        }
+        StatementKind::For { value, body, .. } => {
+            validate_publication_expr(value, graph, diagnostics);
+            validate_publication_items(body, graph, diagnostics);
+        }
+        StatementKind::If {
+            condition,
+            then_body,
+            else_body,
+        } => {
+            validate_publication_expr(condition, graph, diagnostics);
+            validate_publication_items(then_body, graph, diagnostics);
+            validate_publication_items(else_body, graph, diagnostics);
+        }
+        StatementKind::On {
+            source,
+            predicate,
+            body,
+        } => {
+            validate_publication_expr(source, graph, diagnostics);
+            if let Some(predicate) = predicate {
+                validate_publication_expr(predicate, graph, diagnostics);
+            }
+            validate_publication_items(body, graph, diagnostics);
+        }
+        StatementKind::Once { key, body } => {
+            validate_publication_expr(key, graph, diagnostics);
+            validate_publication_items(body, graph, diagnostics);
+        }
+        StatementKind::Every { duration, body } => {
+            validate_publication_expr(duration, graph, diagnostics);
+            validate_publication_items(body, graph, diagnostics);
+        }
+        StatementKind::At { schedule, body } => {
+            validate_publication_expr(schedule, graph, diagnostics);
+            validate_publication_items(body, graph, diagnostics);
+        }
+        StatementKind::Send { value, signer } => {
+            validate_publication_expr(value, graph, diagnostics);
+            if let Some(signer) = signer {
+                validate_publication_expr(signer, graph, diagnostics);
+            }
+        }
+        StatementKind::Return(None) => {}
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn validate_publication_expr(
+    expression: &Expr,
+    graph: &ResolvedModuleGraph,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if let ExprKind::Publish { value, .. } = &expression.value
+        && let ExprKind::Construct { name, fields } = &value.value
+    {
+        let event = graph
+            .modules
+            .values()
+            .flat_map(|module| module.descriptor.events.iter())
+            .find(|event| event.name == name.value);
+        if let Some(event) = event {
+            for (field_name, value) in fields {
+                let Some(field) = event
+                    .fields
+                    .iter()
+                    .find(|field| field.name == field_name.value)
+                else {
+                    continue;
+                };
+                let declared_tag = graph
+                    .modules
+                    .values()
+                    .flat_map(|module| module.descriptor.tags.iter())
+                    .find(|tag| tag.name == field.type_name);
+                let (Some(tag), ExprKind::Construct { name: actual, .. }) =
+                    (declared_tag, &value.value)
+                else {
+                    continue;
+                };
+                if actual.value != tag.name {
+                    diagnostics.push(Diagnostic {
+                        code: "E2405",
+                        message: format!(
+                            "event field `{}.{}` requires tag type `{}`, found `{}`",
+                            event.name, field.name, tag.name, actual.value
+                        ),
+                        span: value.span,
+                    });
+                }
+            }
+        }
+    }
+
+    match &expression.value {
+        ExprKind::Call { callee, arguments } => {
+            validate_publication_expr(callee, graph, diagnostics);
+            for argument in arguments {
+                validate_publication_expr(argument, graph, diagnostics);
+            }
+        }
+        ExprKind::Member { value, .. }
+        | ExprKind::Propagate(value)
+        | ExprKind::Unary { value, .. }
+        | ExprKind::Fetch { url: value, .. } => {
+            validate_publication_expr(value, graph, diagnostics);
+        }
+        ExprKind::Sign { value, signer } => {
+            validate_publication_expr(value, graph, diagnostics);
+            validate_publication_expr(signer, graph, diagnostics);
+        }
+        ExprKind::Publish {
+            value,
+            relays,
+            signer,
+        } => {
+            validate_publication_expr(value, graph, diagnostics);
+            if let Some(relays) = relays {
+                validate_publication_expr(relays, graph, diagnostics);
+            }
+            if let Some(signer) = signer {
+                validate_publication_expr(signer, graph, diagnostics);
+            }
+        }
+        ExprKind::Binary { left, right, .. }
+        | ExprKind::Assign {
+            target: left,
+            value: right,
+        }
+        | ExprKind::Index {
+            value: left,
+            index: right,
+        } => {
+            validate_publication_expr(left, graph, diagnostics);
+            validate_publication_expr(right, graph, diagnostics);
+        }
+        ExprKind::List(values) => {
+            for value in values {
+                validate_publication_expr(value, graph, diagnostics);
+            }
+        }
+        ExprKind::Latest {
+            arguments, relays, ..
+        } => {
+            for argument in arguments {
+                validate_publication_expr(argument, graph, diagnostics);
+            }
+            if let Some(relays) = relays {
+                validate_publication_expr(relays, graph, diagnostics);
+            }
+        }
+        ExprKind::Record(fields) | ExprKind::Construct { fields, .. } => {
+            for (_, value) in fields {
+                validate_publication_expr(value, graph, diagnostics);
+            }
+        }
+        ExprKind::Select(select) => {
+            for expression in [
+                select.predicate.as_deref(),
+                select.since.as_deref(),
+                select.until.as_deref(),
+                select.relays.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                validate_publication_expr(expression, graph, diagnostics);
+            }
+        }
+        ExprKind::Match { value, arms } => {
+            validate_publication_expr(value, graph, diagnostics);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    validate_publication_expr(guard, graph, diagnostics);
+                }
+                validate_publication_expr(&arm.value, graph, diagnostics);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Every `on` handler in the program, including those nested in functions.
 fn collect_handlers<'a>(items: &'a [Item], out: &mut Vec<(&'a Expr, &'a [Item])>) {
     for item in items {

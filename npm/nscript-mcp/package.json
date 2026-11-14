@@ -1,17 +1,19 @@
 {
   "name": "nscript-mcp",
   "version": "0.3.6",
-  "description": "MCP server for checking, inspecting, simulating, and sandbox-executing NScript programs",
+  "description": "NScript CLI and MCP server for checking, inspecting, simulating, and sandbox-executing NScript programs",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/imattau/nscript.git"
   },
   "bin": {
+    "nscript": "bin/nscript.js",
     "nscript-mcp": "bin/nscript-mcp.js"
   },
   "files": [
     "bin/nscript-mcp.js",
+    "bin/nscript.js",
     "bin/linux-x64/nscript",
     "bin/linux-x64/nscript-mcp",
     "bin/linux-x64/nscript_wasm.wasm",

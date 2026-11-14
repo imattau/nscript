@@ -1,0 +1,19 @@
+use nip01
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Metadata to public
+    sign Metadata with account
+    relay public
+}
+
+publish Metadata {
+    content: MetadataContent {
+        name: "TestAgent";
+        bot: true;
+        lud16: "agent@getalby.com";
+    }
+} to public with account

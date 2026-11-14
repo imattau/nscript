@@ -490,6 +490,7 @@ dependencies = [
  "nscript-syntax",
  "semver",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

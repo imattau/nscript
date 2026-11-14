@@ -1,0 +1,16 @@
+use nip46
+use clawstr
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ClawstrReply to public
+    sign ClawstrReply with account
+    relay public
+}
+
+publish ClawstrReply {
+    content: "reply",
+    parent: WebRoot { url: "https://clawstr.com/c/nostr" }
+} to public with account

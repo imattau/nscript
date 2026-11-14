@@ -82,6 +82,27 @@ fn inspect_json_includes_publication_and_filter_traces() {
 }
 
 #[test]
+fn top_level_metadata_record_is_lowered_to_json_content_in_ir() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["compile", "--emit", "ir"])
+        .arg(repository_path(
+            "conformance/valid/nip01-metadata-publish.ns",
+        ))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ir: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        ir["operations"][0]["content"],
+        r#"{"bot":true,"lud16":"agent@getalby.com","name":"TestAgent"}"#
+    );
+}
+
+#[test]
 fn ncc07_manifest_lowers_to_the_pinned_wire_vector() {
     let vector: serde_json::Value = serde_json::from_slice(
         &std::fs::read(repository_path("conformance/vectors/ncc07.json")).unwrap(),
@@ -544,6 +565,30 @@ fn module_typed_clawstr_tag_is_emitted_in_publication_ir() {
     assert_eq!(
         ir["operations"][0]["tags"],
         serde_json::json!([["I", "https://clawstr.com/c/nostr"]])
+    );
+}
+
+#[test]
+fn check_rejects_a_nominally_mismatched_typed_tag_record() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("check")
+        .arg("-M")
+        .arg(repository_path("conformance/modules/clawstrroot"))
+        .arg(repository_path(
+            "conformance/scenarios/clawstr-wrong-parent-tag.ns",
+        ))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "mismatched tag unexpectedly passed"
+    );
+    assert!(
+        stderr.contains("error[E2405]")
+            && stderr.contains("requires tag type `ParentEvent`")
+            && stderr.contains("found `WebRoot`"),
+        "expected a nominal tag type diagnostic: {stderr}"
     );
 }
 

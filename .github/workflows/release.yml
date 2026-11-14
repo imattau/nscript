@@ -346,7 +346,7 @@ jobs:
           staging="$RUNNER_TEMP/npm-package"
           mkdir -p "$staging/bin/linux-x64" "$staging/bin/linux-arm64" "$staging/bin/darwin-arm64" "$staging/bin/win-x64" "$staging/bin/win-arm64"
           cp npm/nscript-mcp/package.json npm/nscript-mcp/README.md "$staging/"
-          cp npm/nscript-mcp/bin/nscript-mcp.js "$staging/bin/"
+          cp npm/nscript-mcp/bin/nscript-mcp.js npm/nscript-mcp/bin/nscript.js "$staging/bin/"
           cp LICENSE "$staging/"
           tar -xzf "release-linux/nscript-mcp-${VERSION}-linux-x86_64.tar.gz" -C "$RUNNER_TEMP"
           tar -xzf "release-macos/nscript-mcp-${VERSION}-darwin-arm64.tar.gz" -C "$RUNNER_TEMP"
@@ -358,7 +358,7 @@ jobs:
           cp "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript.exe" "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript-mcp.exe" "$RUNNER_TEMP/win-x64/nscript-mcp-${VERSION}-win-x64/nscript_wasm.wasm" "$staging/bin/win-x64/"
           unzip "release-win-arm64/nscript-mcp-${VERSION}-win-arm64.zip" -d "$RUNNER_TEMP/win-arm64"
           cp "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript.exe" "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript-mcp.exe" "$RUNNER_TEMP/win-arm64/nscript-mcp-${VERSION}-win-arm64/nscript_wasm.wasm" "$staging/bin/win-arm64/"
-          chmod 0755 "$staging/bin/nscript-mcp.js" "$staging/bin/linux-x64/"* "$staging/bin/linux-arm64/"* "$staging/bin/darwin-arm64/"*
+          chmod 0755 "$staging/bin/nscript-mcp.js" "$staging/bin/nscript.js" "$staging/bin/linux-x64/"* "$staging/bin/linux-arm64/"* "$staging/bin/darwin-arm64/"*
           node -e "const fs=require('fs'),p='$staging/package.json';const j=JSON.parse(fs.readFileSync(p));j.version='$VERSION';fs.writeFileSync(p,JSON.stringify(j,null,2)+'\\n')"
           cd "$staging"
           npm pack --dry-run

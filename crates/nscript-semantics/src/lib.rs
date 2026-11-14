@@ -278,6 +278,7 @@ pub fn analyze_with_modules(program: &Program, graph: &ResolvedModuleGraph) -> V
     let mut diagnostics = analyze(program);
     diagnostics.extend(validate_module_symbols(program, graph));
     diagnostics.extend(events::validate(program, graph));
+    diagnostics.extend(events::validate_publication_tag_types(program, graph));
     diagnostics.sort_by_key(|diagnostic| (diagnostic.span.start, diagnostic.code));
     diagnostics
 }
@@ -2024,16 +2025,26 @@ impl<'a> Checker<'a> {
         {
             self.missing_permission(span, "sign");
         }
-        let content = match &value.value {
-            ExprKind::Construct { fields, .. } => fields
-                .iter()
-                .find(|(name, _)| name.value == "content")
-                .and_then(|(_, value)| match &value.value {
-                    ExprKind::Text(text) => Some(text.clone()),
-                    _ => None,
-                }),
+        let content_field = match &value.value {
+            ExprKind::Construct { fields, .. } => {
+                fields.iter().find(|(name, _)| name.value == "content")
+            }
             _ => None,
         };
+        let content = content_field.and_then(|(_, content)| match &content.value {
+            ExprKind::Text(text) => Some(text.clone()),
+            _ => literal_json_content(content),
+        });
+        if self.handler_depth == 0
+            && content.is_none()
+            && let Some((_, content_expr)) = content_field
+        {
+            self.diagnostics.push(Diagnostic {
+                code: "E2404",
+                message: "top-level publication content must be text or a fully literal record/list; computed content is not evaluated at startup".to_owned(),
+                span: content_expr.span,
+            });
+        }
         self.check_top_level_tag_values(value);
         // Author fields as literal wire pairs. Only literals can be carried
         // this way: a top-level `publish` runs from this checked snapshot,
@@ -2224,6 +2235,35 @@ fn literal_wire_text(expression: &Expr) -> Option<String> {
         ExprKind::Text(text) => Some(text.clone()),
         ExprKind::Integer(value) => Some(value.to_string()),
         ExprKind::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn literal_json_content(expression: &Expr) -> Option<String> {
+    literal_json_value(expression).and_then(|value| serde_json::to_string(&value).ok())
+}
+
+fn literal_json_value(expression: &Expr) -> Option<serde_json::Value> {
+    use serde_json::{Map, Number, Value};
+
+    match &expression.value {
+        ExprKind::Text(value) => Some(Value::String(value.clone())),
+        ExprKind::Integer(value) => Some(Value::Number(Number::from(*value))),
+        ExprKind::Decimal(value) => serde_json::from_str(value).ok(),
+        ExprKind::Bool(value) => Some(Value::Bool(*value)),
+        ExprKind::None => Some(Value::Null),
+        ExprKind::List(values) => values
+            .iter()
+            .map(literal_json_value)
+            .collect::<Option<Vec<_>>>()
+            .map(Value::Array),
+        ExprKind::Record(fields) | ExprKind::Construct { fields, .. } => {
+            let mut object = Map::new();
+            for (name, value) in fields {
+                object.insert(name.value.clone(), literal_json_value(value)?);
+            }
+            Some(Value::Object(object))
+        }
         _ => None,
     }
 }
@@ -2615,6 +2655,84 @@ event ClawstrPost {
         assert_eq!(
             checked.publications[0].tags,
             [("I".to_owned(), "https://clawstr.com/c/nostr".to_owned())]
+        );
+    }
+
+    #[test]
+    fn top_level_structured_content_is_serialized_as_json() {
+        let source = r#"use nip01
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions { publish Metadata to public; sign Metadata with account; relay public }
+publish Metadata {
+    content: MetadataContent { name: "TestAgent"; bot: true; lud16: "agent@getalby.com" }
+} to public with account
+"#;
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (checked, diagnostics) = check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let checked = checked.expect("program checks");
+        assert_eq!(
+            checked.publications[0].content.as_deref(),
+            Some(r#"{"bot":true,"lud16":"agent@getalby.com","name":"TestAgent"}"#)
+        );
+    }
+
+    #[test]
+    fn module_tag_record_type_mismatch_is_diagnostic() {
+        let module_source = r#"module clawstr @ 0.1.0
+language ">=0.1.0 <0.2.0"
+tag WebRoot { wire: "I" field url: Text at 1 }
+tag ParentEvent { wire: "e" field id: EventId at 1 }
+event ClawstrReply {
+    kind: 1111
+    mode: regular
+    content: Text as text
+    field parent: ParentEvent
+}
+"#;
+        let (descriptor, module_diagnostics) = parse_module(module_source);
+        assert!(module_diagnostics.is_empty(), "{module_diagnostics:?}");
+        let mut registry = ModuleRegistry::with_builtins();
+        registry
+            .register(
+                descriptor.expect("module descriptor"),
+                ModuleOrigin::File("clawstr.nsm".into()),
+            )
+            .expect("register module");
+        let graph = registry
+            .resolve(&[
+                ModuleDependency {
+                    name: "clawstr".to_owned(),
+                    requirement: VersionReq::STAR,
+                },
+                ModuleDependency {
+                    name: "nip46".to_owned(),
+                    requirement: VersionReq::STAR,
+                },
+            ])
+            .expect("resolve modules");
+        let source = r#"use clawstr
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions { publish ClawstrReply to public; sign ClawstrReply with account; relay public }
+publish ClawstrReply { content: "reply"; parent: WebRoot { url: "https://example.com" } } to public with account
+"#;
+        let (program, parse_diagnostics) = parse_program(source);
+        assert!(parse_diagnostics.is_empty(), "{parse_diagnostics:?}");
+        let diagnostics = analyze_with_modules(&program, &graph);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2405"
+                    && diagnostic
+                        .message
+                        .contains("requires tag type `ParentEvent`")
+                    && diagnostic.message.contains("found `WebRoot`")
+            }),
+            "expected a clear nominal tag mismatch diagnostic, got {diagnostics:?}"
         );
     }
 
