@@ -120,7 +120,7 @@ fn handle(request: &Value, cancelled: &Arc<AtomicBool>) -> Option<Value> {
                 .unwrap_or(PROTOCOL_VERSION),
             "capabilities": {"tools": {"listChanged": false}},
             "serverInfo": {"name": "nscript", "version": env!("CARGO_PKG_VERSION")},
-            "instructions": "Check, inspect, and simulate NScript source. nscript_execute runs inside a fuel- and memory-limited WASM sandbox and does not access live relays or signing keys. nscript_execute_live and nscript_session_start are available only when the server administrator enables live execution; they use native nscript deploy and may publish to configured relays."
+            "instructions": "Check, inspect, and simulate NScript source. nscript_execute runs inside a fuel- and memory-limited WASM sandbox and does not access live relays or signing keys. nscript_execute_live and nscript_session_start are available only when the server administrator enables live execution; they use native nscript deploy and may publish to configured relays. Callback capability: clawstr-agentd-event-webhook-v1. Durable sessions can POST matched events to the configured NSCRIPT_MCP_EVENT_WEBHOOK_URL using NSCRIPT_MCP_EVENT_WEBHOOK_TOKEN."
         })),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({"tools": tool_definitions()})),

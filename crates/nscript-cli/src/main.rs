@@ -1363,6 +1363,139 @@ fn event_kind(graph: &nscript_modules::ResolvedModuleGraph, name: &str) -> Optio
 /// required to bootstrap those queries (§C.2), and a resolution that
 /// finds no usable endpoint fails the deploy rather than guessing.
 #[allow(clippy::too_many_lines)]
+fn notify_event_webhook(event: &nscript_runtime::SignedEvent) -> Result<(), String> {
+    let url = env::var("NSCRIPT_MCP_EVENT_WEBHOOK_URL").ok();
+    let token = env::var("NSCRIPT_MCP_EVENT_WEBHOOK_TOKEN").ok();
+    if url.is_none() && token.is_none() {
+        return Ok(());
+    }
+    let (Some(url), Some(token)) = (url, token) else {
+        return Err("both event webhook URL and token must be configured".to_owned());
+    };
+    let lower = url.to_ascii_lowercase();
+    if url.contains('@')
+        || !(lower.starts_with("http://127.0.0.1:")
+            || lower.starts_with("http://localhost:")
+            || lower.starts_with("http://[::1]:"))
+    {
+        return Err("event webhook URL must use loopback HTTP".to_owned());
+    }
+    let tags = event
+        .unsigned
+        .wire_tags()
+        .into_iter()
+        .map(|tag| {
+            tag.into_iter()
+                .map(serde_json::Value::String)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let payload = serde_json::json!({
+        "id": &event.id,
+        "pubkey": &event.signer,
+        "kind": event.unsigned.kind,
+        "created_at": event.unsigned.created_at,
+        "content": &event.unsigned.content,
+        "tags": tags,
+    });
+    send_event_webhook(&url, &token, &payload)
+}
+
+fn send_event_webhook(url: &str, token: &str, payload: &serde_json::Value) -> Result<(), String> {
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(10)))
+        .build()
+        .new_agent();
+    let mut last_error = String::new();
+    for attempt in 0..3 {
+        let body = serde_json::to_string(payload).map_err(|error| error.to_string())?;
+        match agent
+            .post(url)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .send(body)
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = error.to_string(),
+        }
+        if attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(250 * (attempt + 1)));
+        }
+    }
+    Err(format!(
+        "event webhook delivery failed after 3 attempts: {last_error}"
+    ))
+}
+
+fn queue_event_webhook(
+    event: &nscript_runtime::SignedEvent,
+    state_dir: Option<&Path>,
+) -> Result<(), String> {
+    let Some(state_dir) = state_dir else {
+        return Err("cannot persist failed callback without deploy --state-dir".to_owned());
+    };
+    fs::create_dir_all(state_dir).map_err(|error| error.to_string())?;
+    let path = state_dir.join("event-webhook-outbox.jsonl");
+    let tags = event
+        .unsigned
+        .wire_tags()
+        .into_iter()
+        .map(|tag| {
+            tag.into_iter()
+                .map(serde_json::Value::String)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let payload = serde_json::json!({"id":&event.id,"pubkey":&event.signer,"kind":event.unsigned.kind,"created_at":event.unsigned.created_at,"content":&event.unsigned.content,"tags":tags});
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    use std::io::Write as _;
+    let mut file = options.open(path).map_err(|error| error.to_string())?;
+    serde_json::to_writer(&mut file, &payload).map_err(|error| error.to_string())?;
+    file.write_all(b"\n").map_err(|error| error.to_string())
+}
+
+fn flush_event_webhook_outbox(state_dir: Option<&Path>) {
+    let (Ok(url), Ok(token), Some(state_dir)) = (
+        env::var("NSCRIPT_MCP_EVENT_WEBHOOK_URL"),
+        env::var("NSCRIPT_MCP_EVENT_WEBHOOK_TOKEN"),
+        state_dir,
+    ) else {
+        return;
+    };
+    let path = state_dir.join("event-webhook-outbox.jsonl");
+    let Ok(contents) = fs::read_to_string(&path) else {
+        return;
+    };
+    let mut remaining = Vec::new();
+    for line in contents.lines() {
+        let Ok(payload) = serde_json::from_str::<serde_json::Value>(line) else {
+            remaining.push(line.to_owned());
+            continue;
+        };
+        if send_event_webhook(&url, &token, &payload).is_err() {
+            remaining.push(line.to_owned());
+        }
+    }
+    if remaining.len() == contents.lines().count() {
+        return;
+    }
+    let temp = path.with_extension("jsonl.tmp");
+    let output = if remaining.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", remaining.join("\n"))
+    };
+    if fs::write(&temp, output).is_ok() {
+        let _ = fs::rename(temp, path);
+    }
+}
+
 fn deploy_program(arguments: &[String]) -> ExitCode {
     let (arguments, options) = match take_deploy_options(arguments) {
         Ok(taken) => taken,
@@ -1670,6 +1803,7 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
 
     let mut cycle_number: u64 = 0;
     loop {
+        flush_event_webhook_outbox(options.state_dir.as_deref());
         cycle_number += 1;
         let mut dispatched = 0_usize;
         let mut failed = 0_usize;
@@ -1724,10 +1858,28 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
                     &inputs,
                 ) {
                     Ok(None) => {}
-                    Ok(Some(Ok(_))) => dispatched += 1,
+                    Ok(Some(Ok(_))) => {
+                        dispatched += 1;
+                        if let Err(error) = notify_event_webhook(raw_event) {
+                            match queue_event_webhook(raw_event, options.state_dir.as_deref()) {
+                                Ok(()) => eprintln!("warning: {error}; event queued for retry"),
+                                Err(queue_error) => eprintln!("warning: {error}; {queue_error}"),
+                            }
+                        }
+                    }
                     Ok(Some(Err(error))) => {
                         dispatched += 1;
                         failed += 1;
+                        if let Err(webhook_error) = notify_event_webhook(raw_event) {
+                            match queue_event_webhook(raw_event, options.state_dir.as_deref()) {
+                                Ok(()) => {
+                                    eprintln!("warning: {webhook_error}; event queued for retry")
+                                }
+                                Err(queue_error) => {
+                                    eprintln!("warning: {webhook_error}; {queue_error}")
+                                }
+                            }
+                        }
                         eprintln!(
                             "error[R1004]: handler {} failed: {}",
                             handler.event_type,

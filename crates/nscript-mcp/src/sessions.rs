@@ -23,6 +23,8 @@ struct LiveConfig {
     signers: Map<String, Value>,
     inputs: Map<String, Value>,
     operation_command: Option<String>,
+    event_webhook_url: Option<String>,
+    event_webhook_token: Option<String>,
 }
 
 fn live_config() -> Result<LiveConfig, String> {
@@ -38,12 +40,32 @@ fn live_config() -> Result<LiveConfig, String> {
     let signers = env_json::<Map<String, Value>>("NSCRIPT_MCP_SIGNERS")?.unwrap_or_default();
     let inputs = env_json::<Map<String, Value>>("NSCRIPT_MCP_INPUTS")?.unwrap_or_default();
     let operation_command = env::var("NSCRIPT_MCP_OPERATION_COMMAND").ok();
+    let event_webhook_url = env::var("NSCRIPT_MCP_EVENT_WEBHOOK_URL").ok();
+    let event_webhook_token = env::var("NSCRIPT_MCP_EVENT_WEBHOOK_TOKEN").ok();
+    if event_webhook_url.is_some() != event_webhook_token.is_some() {
+        return Err(
+            "configure both NSCRIPT_MCP_EVENT_WEBHOOK_URL and NSCRIPT_MCP_EVENT_WEBHOOK_TOKEN"
+                .to_owned(),
+        );
+    }
+    if let Some(url) = &event_webhook_url {
+        let lower = url.to_ascii_lowercase();
+        if url.contains('@')
+            || !(lower.starts_with("http://127.0.0.1:")
+                || lower.starts_with("http://localhost:")
+                || lower.starts_with("http://[::1]:"))
+        {
+            return Err("NSCRIPT_MCP_EVENT_WEBHOOK_URL must use loopback HTTP".to_owned());
+        }
+    }
     Ok(LiveConfig {
         relays,
         allowed_relays,
         signers,
         inputs,
         operation_command,
+        event_webhook_url,
+        event_webhook_token,
     })
 }
 
@@ -474,6 +496,18 @@ fn spawn_record(record: &Value, config: &LiveConfig) -> Result<u32, String> {
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(stderr))
         .envs(signer_env)
+        .envs(
+            config
+                .event_webhook_url
+                .iter()
+                .map(|url| ("NSCRIPT_MCP_EVENT_WEBHOOK_URL", url)),
+        )
+        .envs(
+            config
+                .event_webhook_token
+                .iter()
+                .map(|token| ("NSCRIPT_MCP_EVENT_WEBHOOK_TOKEN", token)),
+        )
         .env(
             "NSCRIPT_MCP_SESSION_ID",
             record["id"].as_str().unwrap_or_default(),
