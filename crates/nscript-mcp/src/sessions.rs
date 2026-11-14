@@ -475,39 +475,7 @@ pub(crate) fn start(arguments: &Value, directories: &[String]) -> Result<Value, 
         .cloned()
         .unwrap_or_else(|| json!([]));
     let signers = selected_signers(&json!({"signer_refs":signer_refs}), &config)?;
-    input_environment(arguments, &config)?;
-    let raw_inputs = arguments
-        .get("inputs")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    for name in raw_inputs.keys() {
-        let lower = name.to_ascii_lowercase();
-        if [
-            "secret",
-            "token",
-            "password",
-            "passwd",
-            "credential",
-            "api_key",
-            "private_key",
-        ]
-        .iter()
-        .any(|marker| lower.contains(marker))
-        {
-            return Err(format!(
-                "durable session input `{name}` looks secret-bearing; configure it in NSCRIPT_MCP_INPUTS and pass its name through input_refs"
-            ));
-        }
-    }
-    if arguments.get("input_refs").is_some() {
-        let refs = arguments["input_refs"]
-            .as_object()
-            .ok_or_else(|| "input_refs must map input names to configured references".to_owned())?;
-        if refs.keys().any(|name| raw_inputs.contains_key(name)) {
-            return Err("an input cannot have both a raw value and an input_ref".to_owned());
-        }
-    }
+    validate_durable_session_inputs(arguments, &config)?;
     let source = arguments
         .get("source")
         .and_then(Value::as_str)
@@ -589,6 +557,43 @@ pub(crate) fn start(arguments: &Value, directories: &[String]) -> Result<Value, 
             Err(error)
         }
     }
+}
+
+fn validate_durable_session_inputs(arguments: &Value, config: &LiveConfig) -> Result<(), String> {
+    input_environment(arguments, config)?;
+    let raw_inputs = arguments
+        .get("inputs")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for name in raw_inputs.keys() {
+        let lower = name.to_ascii_lowercase();
+        if [
+            "secret",
+            "token",
+            "password",
+            "passwd",
+            "credential",
+            "api_key",
+            "private_key",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
+        {
+            return Err(format!(
+                "durable session input `{name}` looks secret-bearing; configure it in NSCRIPT_MCP_INPUTS and pass its name through input_refs"
+            ));
+        }
+    }
+    if let Some(refs) = arguments.get("input_refs") {
+        let refs = refs
+            .as_object()
+            .ok_or_else(|| "input_refs must map input names to configured references".to_owned())?;
+        if refs.keys().any(|name| raw_inputs.contains_key(name)) {
+            return Err("an input cannot have both a raw value and an input_ref".to_owned());
+        }
+    }
+    Ok(())
 }
 
 fn process_alive(pid: u32) -> bool {
