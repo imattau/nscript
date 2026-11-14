@@ -390,7 +390,7 @@ checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
 
 [[package]]
 name = "nscript-cli"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "nscript-host-crypto",
  "nscript-ir",
@@ -407,7 +407,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-host-crypto"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "base64 0.22.1",
  "chacha20",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-ir"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "nscript-modules",
  "nscript-semantics",
@@ -438,7 +438,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-lang"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "nscript-modules",
  "nscript-semantics",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-mcp"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "nscript-modules",
  "serde",
@@ -460,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-modules"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "nscript-syntax",
  "semver",
@@ -469,7 +469,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-runtime"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "nscript-modules",
  "nscript-semantics",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "nscript-semantics"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "nscript-modules",
  "nscript-syntax",
@@ -496,14 +496,14 @@ dependencies = [
 
 [[package]]
 name = "nscript-syntax"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "nscript-wasm"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "nscript-ir",
  "nscript-lang",

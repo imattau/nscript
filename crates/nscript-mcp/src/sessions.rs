@@ -153,7 +153,8 @@ fn make_deploy_args(
             format!("{name}={}", signer_environment_name(name)?),
         ]);
     }
-    if arguments.get("principal").is_none() {
+    let principal = arguments.get("principal").filter(|value| !value.is_null());
+    if principal.is_none() {
         let selected = arguments
             .get("principal_signer")
             .and_then(Value::as_str)
@@ -168,7 +169,7 @@ fn make_deploy_args(
             args.extend(["--as-signer".to_owned(), name]);
         }
     }
-    if let Some(principal) = arguments.get("principal") {
+    if let Some(principal) = principal {
         let principal = principal
             .as_str()
             .ok_or_else(|| "principal must be a string".to_owned())?;
