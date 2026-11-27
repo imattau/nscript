@@ -21,6 +21,7 @@ use semver::VersionReq;
 use sha2::{Digest, Sha256};
 
 mod ncc;
+mod publish;
 
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();

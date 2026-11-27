@@ -1,24 +1,20 @@
 //! Repository-facing `NCC-00` publication commands.
 
 use std::collections::BTreeSet;
-use std::env;
-use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use nscript_host_crypto::group_key::xonly_pubkey;
-use nscript_host_crypto::schnorr::{sign_random, verify};
+use crate::publish::{
+    EventToPublish, Failure, connect_relays, count_failures, finish, finish_publish, hex_encode,
+    load_signer, now, option_value, parse_u64, parse_usize, publish_event_list,
+};
 use nscript_ncc::{
     EndorsementMetadata, NccEntry, Status, SuccessionMetadata, SupportingEntry, build_document,
     build_endorsement, build_succession, build_supporting_document, discover, discover_supporting,
     parse_release_tag,
 };
-use nscript_runtime::{
-    RealRelayPool, RelayHost, SignedEvent, SubscriptionHost, SubscriptionRequest, UnsignedEvent,
-    compute_event_id,
-};
+use nscript_runtime::{SubscriptionHost, SubscriptionRequest, UnsignedEvent};
 use serde_json::json;
 
 /// Runs `nscript ncc <command>`.
@@ -40,37 +36,6 @@ pub fn run(arguments: &[String]) -> ExitCode {
         _ => {
             usage();
             ExitCode::from(2)
-        }
-    }
-}
-
-#[derive(Debug)]
-enum Failure {
-    Usage(String),
-    Runtime(String),
-}
-
-impl Failure {
-    fn message(&self) -> &str {
-        match self {
-            Self::Usage(message) | Self::Runtime(message) => message,
-        }
-    }
-
-    fn exit_code(&self) -> u8 {
-        match self {
-            Self::Usage(_) => 2,
-            Self::Runtime(_) => 1,
-        }
-    }
-}
-
-fn finish(result: Result<(), Failure>) -> ExitCode {
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(failure) => {
-            eprintln!("error: {}", failure.message());
-            ExitCode::from(failure.exit_code())
         }
     }
 }
@@ -156,32 +121,6 @@ impl Options {
             || self.succession_reason.is_some()
             || self.succession_content.is_some()
     }
-}
-
-struct EventToPublish {
-    label: String,
-    event: UnsignedEvent,
-}
-
-struct RelayResult {
-    relay: String,
-    accepted: bool,
-    detail: String,
-}
-
-struct PublishedEvent {
-    label: String,
-    kind: u16,
-    event_id: String,
-    accepted: usize,
-    total: usize,
-    relays: Vec<RelayResult>,
-}
-
-struct LocalSigner {
-    secret: [u8; 32],
-    public_key: [u8; 32],
-    public_key_hex: String,
 }
 
 struct DryRunSuccession {
@@ -348,7 +287,7 @@ fn publish_inner(arguments: &[String]) -> Result<(), Failure> {
         return Ok(());
     }
 
-    let signer = load_signer(&options)?;
+    let signer = load_signer(options.signer_key_env.as_deref())?;
     let mut pool = connect_relays(&options.relays)?;
     let require = options.require_accepted.unwrap_or(1);
     let mut results = publish_event_list(&events, &mut pool, &signer, options.json)?;
@@ -416,7 +355,7 @@ fn support_inner(arguments: &[String]) -> Result<(), Failure> {
         print_dry_run(&events, &options, None);
         return Ok(());
     }
-    let signer = load_signer(&options)?;
+    let signer = load_signer(options.signer_key_env.as_deref())?;
     let mut pool = connect_relays(&options.relays)?;
     let require = options.require_accepted.unwrap_or(1);
     let results = publish_event_list(&events, &mut pool, &signer, options.json)?;
@@ -437,7 +376,7 @@ fn succession_inner(arguments: &[String]) -> Result<(), Failure> {
         let author = if let Some(author) = &options.author {
             normalize_author(author)?
         } else {
-            let signer = load_signer(&options)?;
+            let signer = load_signer(options.signer_key_env.as_deref())?;
             let pubkey = signer.public_key_hex.clone();
             preloaded_signer = Some(signer);
             pubkey
@@ -473,7 +412,7 @@ fn succession_inner(arguments: &[String]) -> Result<(), Failure> {
     }
     let signer = match preloaded_signer {
         Some(signer) => signer,
-        None => load_signer(&options)?,
+        None => load_signer(options.signer_key_env.as_deref())?,
     };
     let mut pool = connect_relays(&options.relays)?;
     let require = options.require_accepted.unwrap_or(1);
@@ -526,7 +465,7 @@ fn endorse_inner(arguments: &[String]) -> Result<(), Failure> {
         print_dry_run(&events, &options, None);
         return Ok(());
     }
-    let signer = load_signer(&options)?;
+    let signer = load_signer(options.signer_key_env.as_deref())?;
     let mut pool = connect_relays(&options.relays)?;
     let require = options.require_accepted.unwrap_or(1);
     let results = publish_event_list(&events, &mut pool, &signer, options.json)?;
@@ -707,161 +646,6 @@ fn normalize_author(value: &str) -> Result<String, Failure> {
     Err(Failure::Usage(
         "author must be a 64-character pubkey or npub1...".to_owned(),
     ))
-}
-
-fn load_signer(options: &Options) -> Result<LocalSigner, Failure> {
-    let Some(key_name) = &options.signer_key_env else {
-        return Err(Failure::Usage(
-            "publishing needs --signer-key-env <environment-variable>".to_owned(),
-        ));
-    };
-    let raw_key = env::var(key_name).map_err(|_| {
-        Failure::Usage(format!(
-            "environment variable `{key_name}` is not set; pass --signer-key-env with the variable that holds the key"
-        ))
-    })?;
-    if raw_key.trim().is_empty() {
-        return Err(Failure::Usage(format!(
-            "environment variable `{key_name}` is empty"
-        )));
-    }
-    let secret = parse_secret_key(&raw_key).map_err(Failure::Runtime)?;
-    let public_key = xonly_pubkey(&secret)
-        .map_err(|error| Failure::Runtime(format!("invalid key: {error:?}")))?;
-    let public_key_hex = hex_encode(&public_key);
-    Ok(LocalSigner {
-        secret,
-        public_key,
-        public_key_hex,
-    })
-}
-
-fn connect_relays(relays: &[String]) -> Result<RealRelayPool, Failure> {
-    let mut pool = RealRelayPool::new();
-    let mut connected = 0_usize;
-    for relay in relays {
-        match pool.add_relay(relay.clone()) {
-            Ok(()) => {
-                connected += 1;
-                eprintln!("connected: {relay}");
-            }
-            Err(error) => eprintln!("warning: could not connect to {relay}: {error:?}"),
-        }
-    }
-    if connected == 0 {
-        return Err(Failure::Runtime(
-            "could not connect to any relay; no event was attempted".to_owned(),
-        ));
-    }
-    Ok(pool)
-}
-
-fn publish_event_list<R: RelayHost>(
-    events: &[EventToPublish],
-    pool: &mut R,
-    signer: &LocalSigner,
-    json_output: bool,
-) -> Result<Vec<PublishedEvent>, Failure> {
-    events
-        .iter()
-        .map(|event| publish_one(event, pool, signer, json_output))
-        .collect()
-}
-
-fn publish_one<R: RelayHost>(
-    event: &EventToPublish,
-    pool: &mut R,
-    signer: &LocalSigner,
-    json_output: bool,
-) -> Result<PublishedEvent, Failure> {
-    let signed_event = sign_event(
-        &event.event,
-        &signer.secret,
-        &signer.public_key,
-        &signer.public_key_hex,
-    )
-    .map_err(Failure::Runtime)?;
-    let report = pool.publish(0, &signed_event, "public").map_err(|error| {
-        Failure::Runtime(format!("publishing {} failed: {error:?}", event.label))
-    })?;
-    let accepted = report
-        .outcomes
-        .iter()
-        .filter(|outcome| outcome.accepted)
-        .count();
-    let total = report.outcomes.len();
-    if !json_output {
-        println!(
-            "{}: event {} accepted {accepted}/{total} relays",
-            event.label, signed_event.id
-        );
-        for outcome in &report.outcomes {
-            if !outcome.accepted {
-                eprintln!("  {}: {}", outcome.relay, outcome.detail);
-            }
-        }
-    }
-    Ok(PublishedEvent {
-        label: event.label.clone(),
-        kind: event.event.kind,
-        event_id: signed_event.id,
-        accepted,
-        total,
-        relays: report
-            .outcomes
-            .into_iter()
-            .map(|outcome| RelayResult {
-                relay: outcome.relay,
-                accepted: outcome.accepted,
-                detail: outcome.detail,
-            })
-            .collect(),
-    })
-}
-
-fn count_failures(results: &[PublishedEvent], require: usize) -> usize {
-    results
-        .iter()
-        .filter(|result| result.accepted < require)
-        .count()
-}
-
-fn finish_publish(
-    results: &[PublishedEvent],
-    require: usize,
-    json_output: bool,
-) -> Result<(), Failure> {
-    if json_output {
-        let published = results
-            .iter()
-            .map(|result| {
-                json!({
-                    "label": &result.label,
-                    "kind": result.kind,
-                    "event_id": &result.event_id,
-                    "accepted": result.accepted,
-                    "total": result.total,
-                    "relays": result.relays.iter().map(|relay| json!({
-                        "relay": &relay.relay,
-                        "accepted": relay.accepted,
-                        "detail": &relay.detail,
-                    })).collect::<Vec<_>>(),
-                })
-            })
-            .collect::<Vec<_>>();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({ "published": published }))
-                .expect("serializing a JSON value cannot fail")
-        );
-    }
-    let failures = count_failures(results, require);
-    if failures > 0 {
-        return Err(Failure::Runtime(format!(
-            "{failures} event(s) were accepted by fewer than {require} relay(s)"
-        )));
-    }
-    Ok(())
 }
 
 fn validate_publish_options(options: &Options) -> Result<(), Failure> {
@@ -1163,90 +947,6 @@ fn default_succession_content() -> String {
     "Steward acknowledges the authoritative NCC document.".to_owned()
 }
 
-fn sign_event(
-    unsigned: &UnsignedEvent,
-    secret: &[u8; 32],
-    public_key: &[u8; 32],
-    public_key_hex: &str,
-) -> Result<SignedEvent, String> {
-    let id = compute_event_id(public_key_hex, unsigned);
-    let id_bytes = decode_hex_32(&id)?;
-    let signature = sign_random(secret, &id_bytes)
-        .map_err(|error| format!("could not sign {}: {error:?}", unsigned.event_type))?;
-    if !verify(public_key, &id_bytes, &signature) {
-        return Err("the local signer produced a signature that does not verify".to_owned());
-    }
-    Ok(SignedEvent {
-        unsigned: unsigned.clone(),
-        signer: public_key_hex.to_owned(),
-        id,
-        signature: hex_encode(&signature),
-    })
-}
-
-fn parse_secret_key(raw: &str) -> Result<[u8; 32], String> {
-    let raw = raw.trim();
-    if raw.len() == 64 && raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return decode_hex_32(raw);
-    }
-    if raw.starts_with("nsec1") {
-        let (hrp, data) = bech32::decode(raw).map_err(|error| format!("invalid nsec: {error}"))?;
-        if hrp.to_string() != "nsec" {
-            return Err("the provided key is not an nsec".to_owned());
-        }
-        if data.len() != 32 {
-            return Err(format!(
-                "an nsec must decode to 32 bytes, found {}",
-                data.len()
-            ));
-        }
-        let mut key = [0_u8; 32];
-        key.copy_from_slice(&data);
-        return Ok(key);
-    }
-    Err("signing key must be 64 hexadecimal characters or an nsec1... string".to_owned())
-}
-
-fn decode_hex_32(text: &str) -> Result<[u8; 32], String> {
-    decode_hex::<32>(text)
-}
-
-fn decode_hex<const N: usize>(text: &str) -> Result<[u8; N], String> {
-    if text.len() != N * 2 {
-        return Err(format!(
-            "expected {} hexadecimal characters, found {}",
-            N * 2,
-            text.len()
-        ));
-    }
-    let mut bytes = [0_u8; N];
-    let (chunks, remainder) = text.as_bytes().as_chunks::<2>();
-    if !remainder.is_empty() {
-        return Err("the hexadecimal value has an odd number of characters".to_owned());
-    }
-    for (index, chunk) in chunks.iter().enumerate() {
-        let pair = std::str::from_utf8(chunk)
-            .map_err(|_| "the hexadecimal value contains non-UTF-8 bytes".to_owned())?;
-        bytes[index] = u8::from_str_radix(pair, 16)
-            .map_err(|_| format!("invalid hexadecimal byte `{pair}`"))?;
-    }
-    Ok(bytes)
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(output, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    output
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
-}
-
 fn repository(options: &Options) -> PathBuf {
     options.repo.clone().unwrap_or_else(|| PathBuf::from("."))
 }
@@ -1382,30 +1082,6 @@ fn parse_options(arguments: &[String]) -> Result<Options, Failure> {
     Ok(options)
 }
 
-fn option_value(arguments: &[String], index: &mut usize, flag: &str) -> Result<String, Failure> {
-    let Some(value) = arguments.get(*index + 1) else {
-        return Err(Failure::Usage(format!("{flag} needs a value")));
-    };
-    *index += 2;
-    Ok(value.clone())
-}
-
-fn parse_u64(value: &str, flag: &str) -> Result<u64, Failure> {
-    value.parse().map_err(|_| {
-        Failure::Usage(format!(
-            "{flag} expects a non-negative integer, found `{value}`"
-        ))
-    })
-}
-
-fn parse_usize(value: &str, flag: &str) -> Result<usize, Failure> {
-    value.parse().map_err(|_| {
-        Failure::Usage(format!(
-            "{flag} expects a non-negative integer, found `{value}`"
-        ))
-    })
-}
-
 fn usage() {
     eprintln!(
         "usage:\n  nscript ncc check [--repo <directory>] [--all | <ncc-id>... | --tag <tag>] [--json]\n  nscript ncc publish [--repo <directory>] [--all | <ncc-id>... | --tag <tag> | --version <version>] [--supporting] [--succession [--succession-reason <text>] [--succession-content <text>]] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--include-drafts] [--dry-run] [--json]\n  nscript ncc support [--repo <directory>] [--ncc <id>] [--slug <slug>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--dry-run] [--json]\n  nscript ncc succession --repo <directory> --ncc <id> --authoritative <event-id|latest> [--author <pubkey|npub>] [--steward <key>] [--previous <event-id>] [--reason <text>] [--effective-at <seconds>] [--content <text> | --content-file <path>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--dry-run] [--json]\n  nscript ncc latest --ncc <id> [--author <pubkey|npub>] --relay <wss://url>... [--json]\n  nscript ncc endorse --repo <directory> --ncc <id> --event <event-id|latest> [--author <pubkey|npub>] [--status <status>] [--role <role>]... [--implementation <text>] [--note <text>] [--topic <topic>]... [--content <text> | --content-file <path>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--dry-run] [--json]"
@@ -1415,7 +1091,13 @@ fn usage() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::publish::{
+        LocalSigner, decode_hex, decode_hex_32, parse_secret_key, publish_one, sign_event,
+    };
+    use nscript_host_crypto::group_key::xonly_pubkey;
+    use nscript_host_crypto::schnorr::verify;
     use nscript_ncc::{Metadata, SupportingMetadata};
+    use nscript_runtime::SignedEvent;
 
     #[test]
     fn parses_hex_and_nsec_keys() {
