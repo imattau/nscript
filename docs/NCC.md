@@ -109,7 +109,7 @@ The NCC repository uses `.github/workflows/ncc-publish.yml`:
 - `workflow_dispatch` can publish one convention or all of them, with an optional dry run;
 - the all-conventions dispatch passes `--include-drafts`, because several NCCs are still marked draft;
 - pull requests run `nscript ncc check --all` only;
-- the signing key comes from `NCC_PUBLISH_NSEC`, falling back to `NGIT_NSEC`;
+- the signing key is the existing `NGIT_NSEC` secret, so NCC events and the ngit mirror share one identity;
 - `nscript` is installed from a pinned commit.
 
 The workflow never runs for pull requests from forks with repository secrets.
