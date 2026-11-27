@@ -169,7 +169,11 @@ nscript ncc succession \
   --relay ... --signer-key-env ...
 ```
 
-`--authoritative` accepts a bare 64-character event id or `event:<id>`;
+`--authoritative` accepts a bare 64-character event id or `event:<id>`, or
+`latest`. `latest` queries the relays for the signer’s newest kind `30050`
+document for the NCC. Pass `--author <pubkey|npub>` to query a different
+steward without reading the signing key.
+
 `--steward` accepts bare hex, `pubkey:<hex>`, or `npub1...`.
 
 ## Publish an endorsement
@@ -187,6 +191,26 @@ nscript ncc endorse \
 
 `--role` is repeatable and must be `author`, `client`, or `user`. `--status`
 defaults to `published`.
+
+`--event` also accepts `latest`, but then `--author <pubkey|npub>` is required:
+endorsing “the latest” document across every author is ambiguous, so the
+endorser must name the document author.
+
+## Resolve the latest document
+
+```bash
+nscript ncc latest --ncc ncc-00 --relay ...
+nscript ncc latest --ncc ncc-00 --author npub1... --relay ... --json
+```
+
+`latest` queries every connected relay for kind `30050` events with the
+matching `d`, deduplicates them, and selects the greatest `created_at` with the
+lowest event id as the tie-break. It needs no signing key.
+
+`succession --authoritative latest` uses the signer’s pubkey as the author
+unless `--author` is supplied. `latest` is resolved before the dry run, so a
+succession dry run with `latest` needs relay access and either `--author` or a
+signing key to derive the author.
 
 ## Dry run
 
@@ -217,10 +241,11 @@ choice:
 | `succession` | publish a succession for an explicit event id |
 | `endorsement` | publish an endorsement for an explicit event id |
 | `all` | publish all documents and supporting documents |
+| `latest` | print the latest document event id for an NCC and optional author |
 
 - `ncc-*` tags publish the matching document and its supporting documents.
-- `workflow_dispatch` supplies the convention, event ids, roles, content, and
-  dry-run choice.
+- `workflow_dispatch` supplies the convention, event ids, author, roles,
+  content, and dry-run choice.
 - pull requests run `nscript ncc check --all` only.
 - the signing key is the existing `NGIT_NSEC` secret, so NCC events and the
   ngit mirror share one identity.
@@ -240,7 +265,6 @@ repository-facing front end. A drift test compares every builder’s tag set wit
 the module’s `NccDocument`, `NccSuccession`, `NccEndorsement`, and
 `NccSupportingDocument` declarations.
 
-Explicit event ids are required for succession and endorsement in this version.
-A later `nscript ncc latest` command can resolve the latest document from
-relays; `publish --succession` already auto-references the document it signs in
-the same run.
+`nscript ncc latest` resolves the newest document from relays for succession
+and endorsement. `publish --succession` still auto-references the document it
+signs in the same run, without a second relay query.

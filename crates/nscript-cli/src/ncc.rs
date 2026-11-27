@@ -15,7 +15,10 @@ use nscript_ncc::{
     build_endorsement, build_succession, build_supporting_document, discover, discover_supporting,
     parse_release_tag,
 };
-use nscript_runtime::{RealRelayPool, RelayHost, SignedEvent, UnsignedEvent, compute_event_id};
+use nscript_runtime::{
+    RealRelayPool, RelayHost, SignedEvent, SubscriptionHost, SubscriptionRequest, UnsignedEvent,
+    compute_event_id,
+};
 use serde_json::json;
 
 /// Runs `nscript ncc <command>`.
@@ -33,6 +36,7 @@ pub fn run(arguments: &[String]) -> ExitCode {
         Some("support") => finish(support_inner(&arguments[1..])),
         Some("succession") => finish(succession_inner(&arguments[1..])),
         Some("endorse") => finish(endorse_inner(&arguments[1..])),
+        Some("latest") => finish(latest_inner(&arguments[1..])),
         _ => {
             usage();
             ExitCode::from(2)
@@ -87,6 +91,7 @@ struct Options {
     dry_run: bool,
     json: bool,
     ncc: Option<String>,
+    author: Option<String>,
     slug: Option<String>,
     authoritative: Option<String>,
     event: Option<String>,
@@ -131,6 +136,7 @@ impl Options {
             || self.include_drafts
             || self.dry_run
             || self.ncc.is_some()
+            || self.author.is_some()
             || self.slug.is_some()
             || self.authoritative.is_some()
             || self.event.is_some()
@@ -426,12 +432,29 @@ fn succession_inner(arguments: &[String]) -> Result<(), Failure> {
         &options,
         "Steward acknowledges the authoritative NCC document.",
     )?;
-    let metadata = SuccessionMetadata {
-        d: d.clone(),
-        authoritative: options
+    let mut preloaded_signer = None;
+    let authoritative = if options.authoritative.as_deref() == Some("latest") {
+        let author = if let Some(author) = &options.author {
+            normalize_author(author)?
+        } else {
+            let signer = load_signer(&options)?;
+            let pubkey = signer.public_key_hex.clone();
+            preloaded_signer = Some(signer);
+            pubkey
+        };
+        let mut pool = connect_relays(&options.relays)?;
+        let relays = pool.relay_urls();
+        let latest = query_latest(&mut pool, &relays, &d, Some(&author))?;
+        format!("event:{}", latest.event_id)
+    } else {
+        options
             .authoritative
             .clone()
-            .expect("validated --authoritative"),
+            .expect("validated --authoritative")
+    };
+    let metadata = SuccessionMetadata {
+        d: d.clone(),
+        authoritative,
         steward: options.steward.clone(),
         previous: options.previous.clone(),
         reason: options.reason.clone(),
@@ -448,7 +471,10 @@ fn succession_inner(arguments: &[String]) -> Result<(), Failure> {
         print_dry_run(&events, &options, None);
         return Ok(());
     }
-    let signer = load_signer(&options)?;
+    let signer = match preloaded_signer {
+        Some(signer) => signer,
+        None => load_signer(&options)?,
+    };
     let mut pool = connect_relays(&options.relays)?;
     let require = options.require_accepted.unwrap_or(1);
     let results = publish_event_list(&events, &mut pool, &signer, options.json)?;
@@ -468,9 +494,21 @@ fn endorse_inner(arguments: &[String]) -> Result<(), Failure> {
         .map_err(|error| Failure::Usage(error.to_string()))?
         .unwrap_or(Status::Published);
     let content = content_text(&options, "Endorsed.")?;
+    let endorses = if options.event.as_deref() == Some("latest") {
+        let author = options.author.as_deref().ok_or_else(|| {
+            Failure::Usage("endorse --event latest needs --author <pubkey>".to_owned())
+        })?;
+        let author = normalize_author(author)?;
+        let mut pool = connect_relays(&options.relays)?;
+        let relays = pool.relay_urls();
+        let latest = query_latest(&mut pool, &relays, &d, Some(&author))?;
+        format!("event:{}", latest.event_id)
+    } else {
+        options.event.clone().expect("validated --event")
+    };
     let metadata = EndorsementMetadata {
         d: d.clone(),
-        endorses: options.event.clone().expect("validated --event"),
+        endorses,
         status,
         roles: options.roles.clone(),
         implementation: options.implementation.clone(),
@@ -493,6 +531,182 @@ fn endorse_inner(arguments: &[String]) -> Result<(), Failure> {
     let require = options.require_accepted.unwrap_or(1);
     let results = publish_event_list(&events, &mut pool, &signer, options.json)?;
     finish_publish(&results, require, options.json)
+}
+
+struct LatestDocument {
+    event_id: String,
+    author: String,
+    created_at: u64,
+    title: Option<String>,
+    status: Option<String>,
+}
+
+fn latest_inner(arguments: &[String]) -> Result<(), Failure> {
+    let options = parse_options(arguments)?;
+    validate_latest_options(&options)?;
+    let ncc = options.ncc.clone().expect("validated --ncc");
+    let author = options
+        .author
+        .as_deref()
+        .map(normalize_author)
+        .transpose()?;
+    let mut pool = connect_relays(&options.relays)?;
+    let relays = pool.relay_urls();
+    let latest = query_latest(&mut pool, &relays, &ncc, author.as_deref())?;
+    if options.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "ncc": &ncc,
+                "author": &latest.author,
+                "event_id": &latest.event_id,
+                "created_at": latest.created_at,
+                "title": &latest.title,
+                "status": &latest.status,
+            }))
+            .expect("serializing a JSON value cannot fail")
+        );
+    } else {
+        println!("latest {ncc} document: {}", latest.event_id);
+        println!("  author: {}", latest.author);
+        println!("  created_at: {}", latest.created_at);
+        if let Some(title) = &latest.title {
+            println!("  title: {title}");
+        }
+        if let Some(status) = &latest.status {
+            println!("  status: {status}");
+        }
+    }
+    Ok(())
+}
+
+fn query_latest<S: SubscriptionHost>(
+    host: &mut S,
+    relays: &[String],
+    ncc: &str,
+    author: Option<&str>,
+) -> Result<LatestDocument, Failure> {
+    let mut events = BTreeSet::new();
+    let mut candidates = Vec::new();
+    for relay in relays {
+        let request = SubscriptionRequest {
+            event_type: "NccDocument".to_owned(),
+            relayset: Some(relay.clone()),
+            kinds: vec![30050],
+            tag_equals: vec![("d".to_owned(), ncc.to_owned())],
+            cursor: None,
+            author: author.map(str::to_owned),
+            since: None,
+            limit: Some(50),
+        };
+        match host.subscribe(0, &request) {
+            Ok(handle) => {
+                match host.poll(0, &handle) {
+                    Ok(batch) => {
+                        for event in batch.events {
+                            if event.unsigned.kind == 30050 && events.insert(event.id.clone()) {
+                                candidates.push(event);
+                            }
+                        }
+                    }
+                    Err(error) => eprintln!("warning: query on {relay} failed: {error:?}"),
+                }
+                let _ = host.unsubscribe(0, &handle);
+            }
+            Err(error) => eprintln!("warning: could not subscribe on {relay}: {error:?}"),
+        }
+    }
+    let latest = candidates
+        .into_iter()
+        .max_by(|left, right| {
+            left.unsigned
+                .created_at
+                .cmp(&right.unsigned.created_at)
+                .then_with(|| right.id.cmp(&left.id))
+        })
+        .ok_or_else(|| {
+            Failure::Runtime(format!(
+                "no kind 30050 document found for d={ncc}{}",
+                author.map_or_else(String::new, |author| format!(" and author {author}"))
+            ))
+        })?;
+    Ok(LatestDocument {
+        event_id: latest.id,
+        author: latest.signer,
+        created_at: latest.unsigned.created_at,
+        title: tag_value(&latest.unsigned, "title").map(str::to_owned),
+        status: tag_value(&latest.unsigned, "status").map(str::to_owned),
+    })
+}
+
+fn validate_latest_options(options: &Options) -> Result<(), Failure> {
+    if options.ncc.is_none() {
+        return Err(Failure::Usage("latest needs --ncc <id>".to_owned()));
+    }
+    if options.relays.is_empty() {
+        return Err(Failure::Usage(
+            "latest needs at least one --relay <wss://url>".to_owned(),
+        ));
+    }
+    if options.all
+        || options.tag.is_some()
+        || !options.ids.is_empty()
+        || options.version.is_some()
+        || options.published_at.is_some()
+        || options.require_accepted.is_some()
+        || options.include_drafts
+        || options.dry_run
+        || options.slug.is_some()
+        || options.authoritative.is_some()
+        || options.event.is_some()
+        || options.steward.is_some()
+        || options.previous.is_some()
+        || options.reason.is_some()
+        || options.effective_at.is_some()
+        || options.status.is_some()
+        || !options.roles.is_empty()
+        || options.implementation.is_some()
+        || options.note.is_some()
+        || !options.topics.is_empty()
+        || options.content.is_some()
+        || options.content_file.is_some()
+        || options.supporting
+        || options.succession
+        || options.succession_reason.is_some()
+        || options.succession_content.is_some()
+        || options.signer_key_env.is_some()
+    {
+        return Err(Failure::Usage(
+            "latest accepts --ncc, --author, --relay, --repo, and --json".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_author(value: &str) -> Result<String, Failure> {
+    let value = value.trim();
+    let bare = value.strip_prefix("pubkey:").unwrap_or(value);
+    if bare.len() == 64 && bare.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(bare.to_ascii_lowercase());
+    }
+    let npub = value.strip_prefix("npub:").unwrap_or(value);
+    if npub.starts_with("npub1") {
+        let (hrp, data) = bech32::decode(npub)
+            .map_err(|error| Failure::Usage(format!("invalid npub: {error}")))?;
+        if hrp.to_string() != "npub" {
+            return Err(Failure::Usage("author is not an npub".to_owned()));
+        }
+        if data.len() != 32 {
+            return Err(Failure::Usage(format!(
+                "an npub must decode to 32 bytes, found {}",
+                data.len()
+            )));
+        }
+        return Ok(hex_encode(&data));
+    }
+    Err(Failure::Usage(
+        "author must be a 64-character pubkey or npub1...".to_owned(),
+    ))
 }
 
 fn load_signer(options: &Options) -> Result<LocalSigner, Failure> {
@@ -529,7 +743,7 @@ fn connect_relays(relays: &[String]) -> Result<RealRelayPool, Failure> {
         match pool.add_relay(relay.clone()) {
             Ok(()) => {
                 connected += 1;
-                println!("connected: {relay}");
+                eprintln!("connected: {relay}");
             }
             Err(error) => eprintln!("warning: could not connect to {relay}: {error:?}"),
         }
@@ -733,6 +947,11 @@ fn validate_endorse_options(options: &Options) -> Result<(), Failure> {
     if options.ncc.is_none() || options.event.is_none() {
         return Err(Failure::Usage(
             "endorse needs --ncc <id> and --event <event-id>".to_owned(),
+        ));
+    }
+    if options.event.as_deref() == Some("latest") && options.author.is_none() {
+        return Err(Failure::Usage(
+            "endorse --event latest needs --author <pubkey>".to_owned(),
         ));
     }
     if options.all
@@ -1085,6 +1304,9 @@ fn parse_options(arguments: &[String]) -> Result<Options, Failure> {
             "--ncc" => {
                 options.ncc = Some(option_value(arguments, &mut index, argument)?);
             }
+            "--author" => {
+                options.author = Some(option_value(arguments, &mut index, argument)?);
+            }
             "--slug" => {
                 options.slug = Some(option_value(arguments, &mut index, argument)?);
             }
@@ -1186,7 +1408,7 @@ fn parse_usize(value: &str, flag: &str) -> Result<usize, Failure> {
 
 fn usage() {
     eprintln!(
-        "usage:\n  nscript ncc check [--repo <directory>] [--all | <ncc-id>... | --tag <tag>] [--json]\n  nscript ncc publish [--repo <directory>] [--all | <ncc-id>... | --tag <tag> | --version <version>] [--supporting] [--succession [--succession-reason <text>] [--succession-content <text>]] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--include-drafts] [--dry-run] [--json]\n  nscript ncc support [--repo <directory>] [--ncc <id>] [--slug <slug>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--dry-run] [--json]\n  nscript ncc succession --repo <directory> --ncc <id> --authoritative <event-id> [--steward <key>] [--previous <event-id>] [--reason <text>] [--effective-at <seconds>] [--content <text> | --content-file <path>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--dry-run] [--json]\n  nscript ncc endorse --repo <directory> --ncc <id> --event <event-id> [--status <status>] [--role <role>]... [--implementation <text>] [--note <text>] [--topic <topic>]... [--content <text> | --content-file <path>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--dry-run] [--json]"
+        "usage:\n  nscript ncc check [--repo <directory>] [--all | <ncc-id>... | --tag <tag>] [--json]\n  nscript ncc publish [--repo <directory>] [--all | <ncc-id>... | --tag <tag> | --version <version>] [--supporting] [--succession [--succession-reason <text>] [--succession-content <text>]] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--include-drafts] [--dry-run] [--json]\n  nscript ncc support [--repo <directory>] [--ncc <id>] [--slug <slug>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--dry-run] [--json]\n  nscript ncc succession --repo <directory> --ncc <id> --authoritative <event-id|latest> [--author <pubkey|npub>] [--steward <key>] [--previous <event-id>] [--reason <text>] [--effective-at <seconds>] [--content <text> | --content-file <path>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--dry-run] [--json]\n  nscript ncc latest --ncc <id> [--author <pubkey|npub>] --relay <wss://url>... [--json]\n  nscript ncc endorse --repo <directory> --ncc <id> --event <event-id|latest> [--author <pubkey|npub>] [--status <status>] [--role <role>]... [--implementation <text>] [--note <text>] [--topic <topic>]... [--content <text> | --content-file <path>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--dry-run] [--json]"
     );
 }
 
@@ -1233,6 +1455,79 @@ mod tests {
             &decode_hex_32(&signed.id).unwrap(),
             &decode_hex::<64>(&signed.signature).unwrap()
         ));
+    }
+
+    fn signed_document(id: &str, created_at: u64) -> SignedEvent {
+        SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "NccDocument".to_owned(),
+                kind: 30050,
+                content: String::new(),
+                tags: vec![
+                    ("d".to_owned(), "ncc-00".to_owned()),
+                    ("title".to_owned(), format!("title-{created_at}")),
+                    ("status".to_owned(), "published".to_owned()),
+                ],
+                created_at,
+            },
+            signer: "b".repeat(64),
+            id: id.to_owned(),
+            signature: "sig".to_owned(),
+        }
+    }
+
+    #[test]
+    fn query_latest_selects_the_newest_document() {
+        let mut relay = nscript_runtime::FakeRelayHost::default();
+        relay.queued_events.insert(
+            1,
+            vec![
+                signed_document("old", 1_766_000_000),
+                signed_document("new", 1_766_000_100),
+            ],
+        );
+        let latest = query_latest(
+            &mut relay,
+            &["wss://relay.example".to_owned()],
+            "ncc-00",
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        )
+        .unwrap();
+        assert_eq!(latest.event_id, "new");
+        assert_eq!(latest.title.as_deref(), Some("title-1766000100"));
+        assert_eq!(latest.status.as_deref(), Some("published"));
+    }
+
+    #[test]
+    fn query_latest_breaks_ties_by_lowest_event_id() {
+        let mut relay = nscript_runtime::FakeRelayHost::default();
+        relay.queued_events.insert(
+            1,
+            vec![
+                signed_document("bbbb", 1_766_000_000),
+                signed_document("aaaa", 1_766_000_000),
+            ],
+        );
+        let latest = query_latest(
+            &mut relay,
+            &["wss://relay.example".to_owned()],
+            "ncc-00",
+            None,
+        )
+        .unwrap();
+        assert_eq!(latest.event_id, "aaaa");
+    }
+
+    #[test]
+    fn normalizes_author_pubkeys_and_npubs() {
+        let hex = "b5d34eedc7d8f81ceaa5ed377b5a2d534ee949fae0c5ab3bae0a576aa7475cbf";
+        assert_eq!(normalize_author(hex).unwrap(), hex);
+        assert_eq!(
+            normalize_author("npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q")
+                .unwrap(),
+            hex
+        );
+        assert!(normalize_author("not-an-author").is_err());
     }
 
     #[test]
