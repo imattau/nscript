@@ -1,0 +1,27 @@
+// NCC-00 supporting-document publication: the document is addressed by its own
+// `d` and pinned to the convention with `for`.
+use ncc00
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish NccSupportingDocument to public
+    sign NccSupportingDocument with account
+    relay public
+}
+
+publish NccSupportingDocument {
+    d: "ncc-00-implementation";
+    for: "ncc-00";
+    title: "Implementation";
+    published_at: 1766012345;
+    status: "published";
+    type: "implementation";
+    lang: "en";
+    t: ["nostr"];
+    authors: ["npub1test"];
+    license: "MIT";
+    content: "# Implementation\n";
+} to public with account

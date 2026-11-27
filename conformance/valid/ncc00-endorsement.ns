@@ -1,0 +1,25 @@
+// NCC-00 endorsement publication: the endorsed document reference lowers to
+// the required `endorses` tag, with optional role, implementation, note, and
+// topic tags.
+use ncc00
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish NccEndorsement to public
+    sign NccEndorsement with account
+    relay public
+}
+
+publish NccEndorsement {
+    d: "ncc-00";
+    endorses: "event:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    status: "published";
+    role: ["client"];
+    implementation: "NScript";
+    note: "Used";
+    t: ["nostr"];
+    content: "Endorsed.";
+} to public with account

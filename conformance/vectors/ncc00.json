@@ -6,17 +6,50 @@
       "kind": 30050,
       "content": "# NCC-00\n",
       "tags": [
-        ["d", "ncc-00"],
-        ["title", "Publishing Nostr Community Conventions on Nostr"],
-        ["published_at", "1766012345"],
-        ["status", "published"],
-        ["summary", "How NCCs are published and revised using Nostr."],
-        ["t", "nostr"],
-        ["t", "conventions"],
-        ["lang", "en"],
-        ["version", "1.0.0"],
-        ["license", "MIT"],
-        ["authors", "npub1example"]
+        [
+          "d",
+          "ncc-00"
+        ],
+        [
+          "title",
+          "Publishing Nostr Community Conventions on Nostr"
+        ],
+        [
+          "published_at",
+          "1766012345"
+        ],
+        [
+          "status",
+          "published"
+        ],
+        [
+          "summary",
+          "How NCCs are published and revised using Nostr."
+        ],
+        [
+          "t",
+          "nostr"
+        ],
+        [
+          "t",
+          "conventions"
+        ],
+        [
+          "lang",
+          "en"
+        ],
+        [
+          "version",
+          "1.0.0"
+        ],
+        [
+          "license",
+          "MIT"
+        ],
+        [
+          "authors",
+          "npub1example"
+        ]
       ]
     },
     {
@@ -24,12 +57,96 @@
       "kind": 30053,
       "content": "# NScript implements NCC-00 and NCC-07\n",
       "tags": [
-        ["d", "nscript-implements"],
-        ["for", "ncc-00"],
-        ["title", "NScript NCC implementation ledger"],
-        ["published_at", "1766012345"],
-        ["status", "published"],
-        ["type", "implementation"]
+        [
+          "d",
+          "nscript-implements"
+        ],
+        [
+          "for",
+          "ncc-00"
+        ],
+        [
+          "title",
+          "NScript NCC implementation ledger"
+        ],
+        [
+          "published_at",
+          "1766012345"
+        ],
+        [
+          "status",
+          "published"
+        ],
+        [
+          "type",
+          "implementation"
+        ]
+      ]
+    },
+    {
+      "type": "succession",
+      "kind": 30051,
+      "content": "Acknowledged.",
+      "tags": [
+        [
+          "d",
+          "ncc-00"
+        ],
+        [
+          "authoritative",
+          "event:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "steward",
+          "pubkey:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        [
+          "previous",
+          "event:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ],
+        [
+          "reason",
+          "Refresh"
+        ],
+        [
+          "effective_at",
+          "1766012999"
+        ]
+      ]
+    },
+    {
+      "type": "endorsement",
+      "kind": 30052,
+      "content": "Endorsed.",
+      "tags": [
+        [
+          "d",
+          "ncc-00"
+        ],
+        [
+          "endorses",
+          "event:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        ],
+        [
+          "status",
+          "published"
+        ],
+        [
+          "role",
+          "client"
+        ],
+        [
+          "implementation",
+          "NScript"
+        ],
+        [
+          "note",
+          "Used"
+        ],
+        [
+          "t",
+          "nostr"
+        ]
       ]
     }
   ]
