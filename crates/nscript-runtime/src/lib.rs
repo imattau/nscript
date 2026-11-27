@@ -16451,6 +16451,100 @@ mod tests {
     }
 
     #[test]
+    fn simulate_event_lowers_repeated_typed_tags_in_a_handler_publication() {
+        let module_source = r#"module gitmod @ 0.1.0
+language ">=0.1.0 <0.2.0"
+tag BranchRef {
+    wire: "refs"
+    field name: Text at 1
+    field commit: Text at 2
+}
+event State {
+    kind: 30618
+    mode: addressable
+    content: Text as text
+    tags: List<Tag> = []
+    field d: Text
+    field refs: List<BranchRef>
+}
+"#;
+        let (descriptor, diagnostics) = nscript_modules::parse_module(module_source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut registry = nscript_modules::ModuleRegistry::with_builtins();
+        registry
+            .register(
+                descriptor.expect("module descriptor"),
+                nscript_modules::ModuleOrigin::File("gitmod.nsm".into()),
+            )
+            .expect("register");
+        let graph = registry
+            .resolve(&[
+                nscript_modules::ModuleDependency {
+                    name: "gitmod".to_owned(),
+                    requirement: semver::VersionReq::STAR,
+                },
+                nscript_modules::ModuleDependency {
+                    name: "nip01".to_owned(),
+                    requirement: semver::VersionReq::STAR,
+                },
+                nscript_modules::ModuleDependency {
+                    name: "nip46".to_owned(),
+                    requirement: semver::VersionReq::STAR,
+                },
+            ])
+            .expect("resolve modules");
+
+        let source = "use gitmod\nuse nip01\nuse nip46\nsigner account = nip46()\nrelayset public = configured\npermissions {\n read Note from public\n publish State to public\n sign State with account\n relay public\n}\non Note {\n publish State { d: \"demo\", refs: [BranchRef { name: \"refs/heads/main\", commit: \"aaa\" }, BranchRef { name: \"refs/tags/v1\", commit: \"bbb\" }] } to public with account\n}\n";
+        let (program, mut diagnostics) = nscript_syntax::parse_program(source);
+        diagnostics.extend(nscript_semantics::analyze_with_modules(&program, &graph));
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (checked, diagnostics) = nscript_semantics::check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut checked = checked.expect("program checks");
+        nscript_semantics::bind_module_events(&graph, &mut checked);
+
+        let event = SignedEvent {
+            unsigned: UnsignedEvent {
+                event_type: "Note".to_owned(),
+                kind: 1,
+                content: "trigger".to_owned(),
+                tags: Vec::new(),
+                created_at: 100,
+            },
+            signer: "alice".to_owned(),
+            id: "typed-list".to_owned(),
+            signature: "sig".to_owned(),
+        };
+        let mut relay = FakeRelayHost::default();
+        let mut storage = InMemoryStorage::default();
+        let mut log = FakeLogHost::default();
+        let mut operations = eval::SimulatedOperations::default();
+        let report =
+            Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::simulate_event(
+                &program,
+                &checked,
+                &mut relay,
+                &mut storage,
+                &mut log,
+                &mut operations,
+                None,
+                &event,
+            )
+            .expect("handler publishes the state event");
+        assert_eq!(report.dispatched, 1);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        let published = report.published.last().expect("one published event");
+        assert_eq!(
+            published.unsigned.tags,
+            [
+                ("d".to_owned(), "demo".to_owned()),
+                ("refs".to_owned(), "refs/heads/main\u{1f}aaa".to_owned()),
+                ("refs".to_owned(), "refs/tags/v1\u{1f}bbb".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
     fn simulate_event_reports_a_failing_handler_without_hiding_the_others() {
         let source = "permissions {\n    log\n}\non Note {\n    print(me)\n}\non Note {\n    print(\"second\")\n}";
         let (report, _) = simulate(source, &preview_event("x"), None);

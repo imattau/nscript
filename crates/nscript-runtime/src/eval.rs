@@ -1094,6 +1094,42 @@ impl<H: EvalHost> Interpreter<'_, H> {
         }
     }
 
+    /// Lowers one typed tag record through the event's declared tag schema.
+    /// Used for a single tag field and for every element of a repeated
+    /// `List<TagType>` field.
+    fn lower_typed_tag_record(
+        &mut self,
+        event: &str,
+        field: &str,
+        tag_type: &str,
+        fields: Vec<(String, Value)>,
+    ) -> Result<(String, String), Stop> {
+        let values = fields
+            .into_iter()
+            .map(|(name, value)| {
+                let rendered = match value {
+                    Value::Text(value) | Value::PubKey(value) => value,
+                    Value::Int(value) => value.to_string(),
+                    Value::Bool(value) => value.to_string(),
+                    Value::Unit => String::new(),
+                    other => {
+                        return Err(fail(format!(
+                            "tag slot `{name}` must be scalar, found a {}",
+                            other.kind()
+                        )));
+                    }
+                };
+                Ok((name, rendered))
+            })
+            .collect::<Result<BTreeMap<_, _>, Stop>>()?;
+        let Some((wire, value)) = self.host.lower_typed_tag(event, field, tag_type, &values) else {
+            return Err(fail(format!(
+                "`{field}` has no tag schema for `{tag_type}` in event `{event}`"
+            )));
+        };
+        Ok((wire, value))
+    }
+
     /// Shared by `publish <record> [to <relayset>] [with <signer>]` and
     /// `send <record> [with <signer>]`: evaluate the record, resolve the
     /// relayset/signer name (falling back to `defaults { ... }` when the
@@ -1164,39 +1200,22 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 _ => match value {
                     Value::List(items) => {
                         for item in items {
-                            tags.push(publish_tag_pair(&field, item)?);
+                            match item {
+                                Value::Record {
+                                    name: tag_type,
+                                    fields,
+                                } => tags.push(
+                                    self.lower_typed_tag_record(&name, &field, &tag_type, fields)?,
+                                ),
+                                other => tags.push(publish_tag_pair(&field, other)?),
+                            }
                         }
                     }
                     Value::Record {
                         name: tag_type,
                         fields,
                     } => {
-                        let values = fields
-                            .into_iter()
-                            .map(|(name, value)| {
-                                let rendered = match value {
-                                    Value::Text(value) | Value::PubKey(value) => value,
-                                    Value::Int(value) => value.to_string(),
-                                    Value::Bool(value) => value.to_string(),
-                                    Value::Unit => String::new(),
-                                    other => {
-                                        return Err(fail(format!(
-                                            "tag slot `{name}` must be scalar, found a {}",
-                                            other.kind()
-                                        )));
-                                    }
-                                };
-                                Ok((name, rendered))
-                            })
-                            .collect::<Result<BTreeMap<_, _>, Stop>>()?;
-                        let Some((wire, value)) =
-                            self.host.lower_typed_tag(&name, &field, &tag_type, &values)
-                        else {
-                            return Err(fail(format!(
-                                "`{field}` has no tag schema for `{tag_type}` in event `{name}`"
-                            )));
-                        };
-                        tags.push((wire, value));
+                        tags.push(self.lower_typed_tag_record(&name, &field, &tag_type, fields)?);
                     }
                     other => tags.push(publish_tag_pair(&field, other)?),
                 },

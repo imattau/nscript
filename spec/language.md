@@ -191,6 +191,11 @@ signed, so the tag reaches relays with every column while an ordinary value
 is unchanged. A reader splits the same way — the `ncc10` and `ncc11`
 extractors do — and a `publish` of a plain value still emits two columns.
 
+A repeated typed tag is a `List<TagType>` field: one wire tag per element, in
+source order, each lowered through the same schema. At top level every element
+must be a literal record, because startup does not execute computed tag values;
+a handler's `publish` may compute them from `event` and other run-time values.
+
 Tags are algebraic values, not lists of strings. For example,
 `Person(alice)` and `ReplyTo(parent)` lower according to their module definition.
 Unknown tags are preserved as `RawTag` when reading but require the explicit

@@ -54,8 +54,10 @@ otherwise it returns the declared validation error at runtime.
 Events declare a fixed kind, storage mode, typed content encoding, and allowed
 tag union. Tags declare a fixed wire name and positional fields or literals.
 Optional trailing fields may be omitted; skipped optional positions before a
-later value lower to the declared empty representation. Each wire position is
-assigned exactly once. Dynamic tag names, arbitrary JSON templates, and code
+later value lower to the declared empty representation. A field binds a tag
+schema directly (`root: WebRoot`) or as a repeated list (`refs:
+List<BranchRef>`); a list field lowers one tag per element. Each wire position
+is assigned exactly once. Dynamic tag names, arbitrary JSON templates, and code
 execution are forbidden. A program's own `publish` record lowering (field name
 to tag name) is specified in the language document; this section governs the
 module-declared tag unions those programs import.

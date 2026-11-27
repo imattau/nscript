@@ -1237,11 +1237,19 @@ pub fn bind_module_events(graph: &ResolvedModuleGraph, checked: &mut CheckedProg
         for event in &module.descriptor.events {
             let mut tag_fields = BTreeMap::new();
             for field in &event.fields {
+                // A field is bound to one tag schema when its declared type is
+                // that tag, either directly (`WebRoot`) or as a repeated list
+                // (`List<BranchRef>`). A list lowers one tag per element.
+                let field_type = field
+                    .type_name
+                    .strip_prefix("List<")
+                    .and_then(|inner| inner.strip_suffix('>'))
+                    .unwrap_or(&field.type_name);
                 if let Some(tag) = module
                     .descriptor
                     .tags
                     .iter()
-                    .find(|tag| tag.name == field.type_name)
+                    .find(|tag| tag.name == field_type)
                 {
                     let mut slots = tag
                         .slots
@@ -1268,7 +1276,7 @@ pub fn bind_module_events(graph: &ResolvedModuleGraph, checked: &mut CheckedProg
                     tag_fields.insert(
                         field.name.clone(),
                         (
-                            field.type_name.clone(),
+                            field_type.to_owned(),
                             CheckedTagDefinition {
                                 wire_name: tag.wire_name.clone(),
                                 slots,
@@ -2249,10 +2257,12 @@ impl<'a> Checker<'a> {
                 continue;
             }
             let computable = match &field.value {
-                ExprKind::List(items) => items.iter().all(|item| literal_wire_text(item).is_some()),
-                ExprKind::Construct { fields, .. } => fields
-                    .iter()
-                    .all(|(_, item)| literal_wire_text(item).is_some()),
+                ExprKind::List(items) => {
+                    let scalars = items.iter().all(|item| literal_wire_text(item).is_some());
+                    let tags = items.iter().all(literal_tag_construct);
+                    scalars || tags
+                }
+                ExprKind::Construct { .. } => literal_tag_construct(field),
                 _ => literal_wire_text(field).is_some(),
             };
             if !computable {
@@ -2401,6 +2411,40 @@ fn literal_wire_text(expression: &Expr) -> Option<String> {
     }
 }
 
+/// Whether `expression` is a tag record whose every slot is a literal.
+fn literal_tag_construct(expression: &Expr) -> bool {
+    matches!(
+        &expression.value,
+        ExprKind::Construct { fields, .. }
+            if fields
+                .iter()
+                .all(|(_, value)| literal_wire_text(value).is_some())
+    )
+}
+
+/// A literal typed-tag record lowered to its pre-binding publication tag.
+fn literal_typed_tag(field: &str, expression: &Expr) -> Option<CheckedPublicationTag> {
+    let ExprKind::Construct {
+        name: type_name,
+        fields,
+    } = &expression.value
+    else {
+        return None;
+    };
+    let values = fields
+        .iter()
+        .filter_map(|(slot, value)| literal_wire_text(value).map(|text| (slot.value.clone(), text)))
+        .collect::<BTreeMap<_, _>>();
+    if values.len() != fields.len() {
+        return None;
+    }
+    Some(CheckedPublicationTag::Typed {
+        field: field.to_owned(),
+        tag_type: type_name.value.clone(),
+        values,
+    })
+}
+
 fn literal_json_content(expression: &Expr) -> Option<String> {
     literal_json_value(expression).and_then(|value| serde_json::to_string(&value).ok())
 }
@@ -2459,6 +2503,12 @@ fn literal_publication_tag_values(value: &Expr) -> Vec<CheckedPublicationTag> {
                                 value,
                             }
                         }));
+                    } else {
+                        tags.extend(
+                            items
+                                .iter()
+                                .filter_map(|item| literal_typed_tag(&name.value, item)),
+                        );
                     }
                 }
                 _ => {
@@ -2467,24 +2517,8 @@ fn literal_publication_tag_values(value: &Expr) -> Vec<CheckedPublicationTag> {
                             field: name.value.clone(),
                             value: text,
                         });
-                    } else if let ExprKind::Construct {
-                        name: type_name,
-                        fields,
-                    } = &field.value
-                    {
-                        let values = fields
-                            .iter()
-                            .filter_map(|(slot, value)| {
-                                literal_wire_text(value).map(|text| (slot.value.clone(), text))
-                            })
-                            .collect::<BTreeMap<_, _>>();
-                        if values.len() == fields.len() {
-                            tags.push(CheckedPublicationTag::Typed {
-                                field: name.value.clone(),
-                                tag_type: type_name.value.clone(),
-                                values,
-                            });
-                        }
+                    } else if let Some(tag) = literal_typed_tag(&name.value, field) {
+                        tags.push(tag);
                     }
                 }
             }
@@ -2829,6 +2863,73 @@ event ClawstrPost {
         assert_eq!(
             checked.publications[0].tags,
             [("I".to_owned(), "https://clawstr.com/c/nostr".to_owned())]
+        );
+    }
+
+    #[test]
+    fn module_tag_typed_list_fields_lower_to_repeated_wire_tags() {
+        let module_source = r#"module gitmod @ 0.1.0
+language ">=0.1.0 <0.2.0"
+tag BranchRef {
+    wire: "refs"
+    field name: Text at 1
+    field commit: Text at 2
+}
+event State {
+    kind: 30618
+    mode: addressable
+    content: Text as text
+    tags: List<Tag> = []
+    field d: Text
+    field refs: List<BranchRef>
+}
+"#;
+        let (descriptor, diagnostics) = parse_module(module_source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut registry = ModuleRegistry::with_builtins();
+        registry
+            .register(
+                descriptor.expect("module descriptor"),
+                ModuleOrigin::File("gitmod.nsm".into()),
+            )
+            .expect("register");
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "gitmod".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .expect("resolve module");
+        let source = r#"use gitmod
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions {
+    publish State to public
+    sign State with account
+    relay public
+}
+publish State {
+    d: "demo",
+    refs: [
+        BranchRef { name: "refs/heads/main", commit: "aaa" },
+        BranchRef { name: "refs/tags/v1", commit: "bbb" },
+    ],
+} to public with account
+"#;
+        let (program, mut diagnostics) = parse_program(source);
+        diagnostics.extend(analyze_with_modules(&program, &graph));
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let (checked, diagnostics) = check(&program);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let mut checked = checked.expect("checks");
+        bind_module_events(&graph, &mut checked);
+        assert_eq!(
+            checked.publications[0].tags,
+            [
+                ("d".to_owned(), "demo".to_owned()),
+                ("refs".to_owned(), "refs/heads/main\u{1f}aaa".to_owned()),
+                ("refs".to_owned(), "refs/tags/v1\u{1f}bbb".to_owned()),
+            ]
         );
     }
 
