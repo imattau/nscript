@@ -54,14 +54,14 @@ export function createClient(instance) {
     nappletCheck(source, capabilityCeiling = ["outbox"], modules = [], principal = undefined, limit = undefined) {
       return call({ op: "napplet_check", source, capability_ceiling: capabilityCeiling, modules, principal, limit });
     },
-    nappletEvent(source, event, capabilityCeiling = ["outbox"], modules = [], principal = undefined) {
-      return call({ op: "napplet_event", source, event, capability_ceiling: capabilityCeiling, modules, principal });
+    nappletEvent(source, event, capabilityCeiling = ["outbox"], modules = [], principal = undefined, now = undefined, inputs = undefined) {
+      return call({ op: "napplet_event", source, event, capability_ceiling: capabilityCeiling, modules, principal, now, inputs });
     },
-    nappletOpen(source, capabilityCeiling = ["outbox"], modules = [], principal = undefined, limit = undefined) {
-      return call({ op: "napplet_open", source, capability_ceiling: capabilityCeiling, modules, principal, limit });
+    nappletOpen(source, capabilityCeiling = ["outbox"], modules = [], principal = undefined, limit = undefined, now = undefined, inputs = undefined) {
+      return call({ op: "napplet_open", source, capability_ceiling: capabilityCeiling, modules, principal, limit, now, inputs });
     },
-    nappletEval(session, event) {
-      return call({ op: "napplet_eval", session, event });
+    nappletEval(session, event, now = undefined) {
+      return call({ op: "napplet_eval", session, event, now });
     },
     nappletClose(session) {
       return call({ op: "napplet_close", session });

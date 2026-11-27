@@ -43,9 +43,26 @@ handle. It deduplicates and bounds pending events, event size, and execution
 rate.
 
 The script never receives the NAP namespace. The adapter never exposes
-publishing, signing, storage, schedules, inputs, keys, or module operations
-other than the `lens` presentation module. The shell remains authoritative for
-grants.
+publishing, signing, storage, schedules, scalar inputs, keys, or module
+operations other than the `lens` presentation module. The shell remains
+authoritative for grants.
+
+A lens may declare identity-backed lists:
+
+```nostr
+input follows: List<PubKey> from identity.follows
+input mutes: List<PubKey> from identity.mutes
+```
+
+`start` resolves those through the shell's `identity` domain
+(`getFollows`, `getMutes`, `getBlocked`) before opening the session, and the
+review marks `identity` as required. Use the exported `resolveInputs(review,
+identity)` helper to resolve the same lists yourself, or pass pre-resolved
+`inputs` to `start`. Missing data is an activation error, not an empty list.
+
+A lens may read wall time with `now` if its source grants `clock`. The adapter
+supplies `Math.floor(Date.now() / 1000)` for each evaluation by default; pass a
+`now` function to `createNScriptNapplet` to use another clock.
 
 `start` reports every matching event through `onDecision`, including an empty
 `decisions` array for notes that should stay visible. Evaluation failures are

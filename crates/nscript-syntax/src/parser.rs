@@ -346,11 +346,26 @@ impl Parser<'_> {
         let name = self.take_name()?;
         self.expect_symbol(':')?;
         let type_ref = self.parse_type()?;
+        let source = if self.eat_word("from") {
+            let first = self.take_name()?;
+            let mut value = first.value;
+            let mut span = first.span;
+            while self.eat_symbol('.') {
+                let next = self.take_name()?;
+                value.push('.');
+                value.push_str(&next.value);
+                span = span.join(next.span);
+            }
+            Some(Spanned { value, span })
+        } else {
+            None
+        };
         let span = start.join(type_ref.span);
         self.terminator();
         Some(Item::Input(InputDeclaration {
             name,
             type_ref,
+            source,
             span,
         }))
     }

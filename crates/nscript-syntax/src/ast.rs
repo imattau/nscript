@@ -115,6 +115,8 @@ pub struct StoreDeclaration {
 pub struct InputDeclaration {
     pub name: Spanned<String>,
     pub type_ref: TypeRef,
+    /// Optional host source such as `identity.follows`.
+    pub source: Option<Spanned<String>>,
     pub span: Span,
 }
 

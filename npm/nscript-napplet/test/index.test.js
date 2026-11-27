@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createNScriptNapplet } from "../src/index.js";
+import { createNScriptNapplet, resolveInputs } from "../src/index.js";
 
-function mockRuntime({ available = true, checked = true, ready = true } = {}) {
+function mockRuntime({ available = true, checked = true, ready = true, now } = {}) {
   let onEvent;
   let closedSubscription = false;
   let closedSession = false;
   let receivedPrincipal;
   let receivedFilters;
   let receivedCeiling;
+  let receivedNow;
   const napplet = available
     ? {
         outbox: {
@@ -40,9 +41,10 @@ function mockRuntime({ available = true, checked = true, ready = true } = {}) {
         },
       };
     },
-    nappletOpen(_source, ceiling, _modules, principal) {
+    nappletOpen(_source, ceiling, _modules, principal, _limit, currentNow) {
       receivedCeiling = ceiling;
       receivedPrincipal = principal;
+      receivedNow = currentNow;
       return {
         ok: true,
         result: {
@@ -57,7 +59,8 @@ function mockRuntime({ available = true, checked = true, ready = true } = {}) {
         },
       };
     },
-    nappletEval(_session, event) {
+    nappletEval(_session, event, currentNow) {
+      receivedNow = currentNow;
       return {
         ok: true,
         result: {
@@ -75,13 +78,19 @@ function mockRuntime({ available = true, checked = true, ready = true } = {}) {
     nappletClose() { closedSession = true; },
   };
   return {
-    host: createNScriptNapplet({ napplet, compiler, capabilityCeiling: ["outbox", "identity"] }),
+    host: createNScriptNapplet({
+      napplet,
+      compiler,
+      capabilityCeiling: ["outbox", "identity"],
+      ...(now ? { now } : {}),
+    }),
     emit(event) { onEvent({ event }); },
     isClosed() { return closedSubscription; },
     isSessionClosed() { return closedSession; },
     principal() { return receivedPrincipal; },
     filters() { return receivedFilters; },
     ceiling() { return receivedCeiling; },
+    now() { return receivedNow; },
   };
 }
 
@@ -119,6 +128,18 @@ test("start uses the derived mentions filter and reports decisions", async () =>
   assert.equal(mock.isSessionClosed(), true);
 });
 
+test("start forwards the current time to open and each evaluation", async () => {
+  const mock = mockRuntime({ now: () => 12345 });
+  const subscription = await mock.host.start("source", {
+    principal: "abcdef",
+    onDecision() {},
+  });
+  mock.emit({ id: "event-1", kind: 1, content: "spam", tags: [["p", "abcdef"]] });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(mock.now(), 12345);
+  subscription.stop();
+});
+
 test("start fails clearly when the shell omits a required domain", async () => {
   const mock = mockRuntime({ available: false });
   await assert.rejects(
@@ -134,4 +155,27 @@ test("start refuses a script that needs a principal when none is connected", asy
     /Connect a signer/,
   );
   assert.equal(mock.isSessionClosed(), true);
+});
+
+
+test("resolveInputs fetches declared identity lists and filters malformed keys", async () => {
+  const key = "a".repeat(64);
+  const inputs = await resolveInputs(
+    { inputs: { mutes: "identity.mutes", follows: "identity.follows" } },
+    {
+      async getMutes() { return [key, "not-a-key", { pubkey: "b".repeat(64) }]; },
+      async getFollows() { return { pubkeys: [key] }; },
+    },
+  );
+  assert.deepEqual(inputs, {
+    mutes: [key, "b".repeat(64)],
+    follows: [key],
+  });
+});
+
+test("resolveInputs explains a missing identity method", async () => {
+  await assert.rejects(
+    () => resolveInputs({ inputs: { mutes: "identity.mutes" } }, {}),
+    /identity\.getMutes/,
+  );
 });

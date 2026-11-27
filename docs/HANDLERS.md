@@ -31,6 +31,8 @@ applies inside a handler exactly as it does outside one.
 | declared `input` values | host-provided values are bound in handlers and schedules |
 | `print(x)`, `len(x)`, `text(x)` | `text(x)` renders any value the same way `print` does, as `Text` — the explicit conversion `+` needs to concatenate a non-`Text` value, e.g. `"count: " + text(n)` |
 | `starts_with`, `ends_with`, `strip_prefix`, `lowercase`, `trim`, `contains_any` | text helpers; `contains_any(text, list)` is case-sensitive and true when any list element is a substring, so case-insensitive rules use `contains_any(lowercase(text), [...])` |
+| `is_reply(event)`, `has_tag(event, name, value)`, `tag_values(event, name)`, `mentions(event)`, `hashtags(event)`, `root(event)` | NIP-10/tag helpers over the delivered event; `mentions` keeps valid 64-hex `p` values and `hashtags` keeps non-empty `t` values |
+| `now` | host Unix time in seconds; requires `clock` |
 | `publish <record> [to <relayset>] [with <signer>]` | see below |
 | user `fn`s | recursion allowed; a function sees only its own parameters |
 | `module.operation(args)` and the Layer 3 forms that lower to it | arguments become typed `OperationValue`s (`PubKey`, `Text`, `Integer`, `StreamMessage`, records) |
@@ -66,7 +68,8 @@ event sim-event (Note, kind 1)
 | `--event <json>` | deliver one event; repeatable |
 | `--events <file>` | one JSON event per line, or a single JSON array |
 | `--as <key>` | the value of `me`; a handler that uses `me` without it fails, and says so |
-| `--input <name>=<value>` | provide a declared scalar input to handlers and schedules; repeat for multiple inputs |
+| `--input <name>=<value>` | provide a declared input to handlers and schedules; repeat for multiple inputs. Scalars use their literal form, and `List<PubKey>` uses comma-separated keys |
+| `--now <seconds>` | set the simulator clock backing `now`; defaults to a fixed timestamp |
 
 Declared inputs can also parameterize subscription filters. For example,
 `on posts where tags.c contains subclaw` binds the `subclaw` input when the

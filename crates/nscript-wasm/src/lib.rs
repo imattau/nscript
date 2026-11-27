@@ -209,6 +209,8 @@ struct NappletSession {
     loaded: Loaded,
     checked: CheckedProgram,
     principal: Option<String>,
+    inputs: BTreeMap<String, eval::Value>,
+    now: u64,
 }
 
 thread_local! {
@@ -814,6 +816,7 @@ fn napplet_check_result(
 ) -> Value {
     let requested = footprint(&loaded.program, checked, &loaded.graph, &[]);
     let needs_principal = nscript_napplet::principal_required(&loaded.program, checked);
+    let identity_required = nscript_napplet::identity_required(checked);
     let filters = nscript_napplet::handler_filters(checked, principal);
     let ready = !needs_principal || principal.is_some();
     let subscriptions = if ready {
@@ -821,18 +824,30 @@ fn napplet_check_result(
     } else {
         Vec::new()
     };
+    let mut requires = nscript_napplet::LENS_REQUIRED_DOMAINS.to_vec();
+    if identity_required {
+        requires.push("identity");
+    }
+    let optional = nscript_napplet::LENS_OPTIONAL_DOMAINS
+        .iter()
+        .copied()
+        .filter(|domain| !identity_required || *domain != "identity")
+        .collect::<Vec<_>>();
     json!({
         "checked": true,
         "diagnostics": [],
         "footprint": requested,
-        "requires": nscript_napplet::LENS_REQUIRED_DOMAINS,
-        "optional": nscript_napplet::LENS_OPTIONAL_DOMAINS,
+        "requires": requires,
+        "optional": optional,
         "ceiling": ceiling,
         "profile": "lens-v1",
         "principal_required": needs_principal,
+        "identity_required": identity_required,
         "ready": ready,
         "subscriptions": subscriptions,
         "scope": scope_json(&filters, principal),
+        "inputs": checked.input_sources,
+        "input_types": checked.input_types,
         "decision_ops": nscript_napplet::LENS_OPERATIONS,
         "module": napplet_module_json(loaded),
     })
@@ -926,12 +941,14 @@ fn evaluate_event(
     checked: &CheckedProgram,
     principal: Option<&str>,
     event: &SignedEvent,
+    inputs: &BTreeMap<String, eval::Value>,
+    now: u64,
 ) -> String {
     let mut relay = FakeRelayHost::default();
     let mut storage = InMemoryStorage::default();
     let mut logs = FakeLogHost::default();
     let mut operations = simulated_operations(&loaded.graph);
-    match Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::simulate_event(
+    match Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::simulate_event_with_inputs_at(
         &loaded.program,
         checked,
         &mut relay,
@@ -940,6 +957,8 @@ fn evaluate_event(
         &mut operations,
         principal,
         event,
+        inputs,
+        now,
     ) {
         Ok(report) => {
             let (decisions, mut decision_failures) = decisions_json(&report.operations);
@@ -977,6 +996,13 @@ fn evaluate_event(
             }],
         })),
     }
+}
+
+fn request_now(request: &Value) -> u64 {
+    request
+        .get("now")
+        .and_then(Value::as_u64)
+        .unwrap_or(1_700_000_000)
 }
 
 fn event_limit(request: &Value) -> u64 {
@@ -1020,7 +1046,18 @@ fn handle_napplet_event(source: &str, modules: &[ModuleSource], request: &Value)
     let Some(event) = parse_test_event(request.get("event")) else {
         return error_response("napplet_event requires an `event` object");
     };
-    evaluate_event(&loaded, &checked, principal.as_deref(), &event)
+    let inputs = match parse_declared_inputs(request, &checked) {
+        Ok(inputs) => inputs,
+        Err(message) => return error_response(&message),
+    };
+    evaluate_event(
+        &loaded,
+        &checked,
+        principal.as_deref(),
+        &event,
+        &inputs,
+        request_now(request),
+    )
 }
 
 fn handle_napplet_open(source: &str, modules: &[ModuleSource], request: &Value) -> String {
@@ -1032,6 +1069,10 @@ fn handle_napplet_open(source: &str, modules: &[ModuleSource], request: &Value) 
     let (loaded, checked) = match checked_napplet_program(source, modules, &ceiling) {
         Ok(program) => program,
         Err(diagnostics) => return ok(napplet_not_checked(&diagnostics, &ceiling)),
+    };
+    let inputs = match parse_declared_inputs(request, &checked) {
+        Ok(inputs) => inputs,
+        Err(message) => return error_response(&message),
     };
     let result = napplet_check_result(
         &loaded,
@@ -1059,6 +1100,8 @@ fn handle_napplet_open(source: &str, modules: &[ModuleSource], request: &Value) 
                 loaded,
                 checked,
                 principal,
+                inputs,
+                now: request_now(request),
             },
         );
     });
@@ -1081,11 +1124,17 @@ fn handle_napplet_eval(request: &Value) -> String {
         let Some(session) = sessions.get(&id) else {
             return error_response("unknown napplet session");
         };
+        let now = request
+            .get("now")
+            .and_then(Value::as_u64)
+            .unwrap_or(session.now);
         evaluate_event(
             &session.loaded,
             &session.checked,
             session.principal.as_deref(),
             &event,
+            &session.inputs,
+            now,
         )
     })
 }
@@ -1110,12 +1159,39 @@ fn parse_inputs(value: Option<&Value>) -> Option<BTreeMap<String, eval::Value>> 
                 eval::Value::Text(value.to_owned())
             } else if let Some(value) = value.as_i64() {
                 eval::Value::Int(value)
+            } else if let Some(values) = value.as_array() {
+                eval::Value::List(
+                    values
+                        .iter()
+                        .map(|item| item.as_str().map(|item| eval::Value::Text(item.to_owned())))
+                        .collect::<Option<Vec<_>>>()?,
+                )
             } else {
                 eval::Value::Bool(value.as_bool()?)
             };
             Some((name.clone(), value))
         })
         .collect()
+}
+
+fn parse_declared_inputs(
+    request: &Value,
+    checked: &CheckedProgram,
+) -> Result<BTreeMap<String, eval::Value>, String> {
+    let Some(inputs) = parse_inputs(request.get("inputs")) else {
+        return Err("inputs must be scalar values or string arrays".to_owned());
+    };
+    for name in inputs.keys() {
+        if !checked.inputs.contains_key(name) {
+            return Err(format!("input `{name}` is not declared by the program"));
+        }
+    }
+    for name in checked.inputs.keys() {
+        if !inputs.contains_key(name) {
+            return Err(format!("missing input `{name}`"));
+        }
+    }
+    Ok(inputs)
 }
 
 fn simulated_operations(graph: &nscript_modules::ResolvedModuleGraph) -> eval::SimulatedOperations {
@@ -1691,6 +1767,123 @@ on Note where tags.p contains me {
             .to_string(),
         );
         assert_eq!(after["ok"], false);
+    }
+
+    #[test]
+    fn napplet_eval_uses_the_supplied_clock() {
+        let source = r#"use nip01
+use lens
+relayset public = configured
+permissions {
+    read Note from public
+    relay public
+    view
+    clock
+}
+on Note {
+    if now > 1000 {
+        lens.hide("future")
+    }
+}
+"#;
+        let opened = result(
+            &serde_json::json!({
+                "op": "napplet_open",
+                "source": source,
+                "now": 2000
+            })
+            .to_string(),
+        );
+        assert_eq!(opened["result"]["checked"], true);
+        let session = opened["result"]["session"].as_u64().unwrap();
+        let event = serde_json::json!({
+            "id": "one",
+            "pubkey": "author",
+            "kind": 1,
+            "content": "hello",
+            "created_at": 0
+        });
+        let evaluated = result(
+            &serde_json::json!({
+                "op": "napplet_eval",
+                "session": session,
+                "event": event
+            })
+            .to_string(),
+        );
+        assert_eq!(evaluated["result"]["decisions"][0]["action"], "hide");
+
+        let evaluated = result(
+            &serde_json::json!({
+                "op": "napplet_eval",
+                "session": session,
+                "event": event,
+                "now": 500
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            evaluated["result"]["decisions"].as_array().unwrap().len(),
+            0
+        );
+        let _ =
+            result(&serde_json::json!({ "op": "napplet_close", "session": session }).to_string());
+    }
+
+    #[test]
+    fn napplet_passes_identity_list_inputs_to_the_session() {
+        let source = r#"use nip01
+use lens
+relayset public = configured
+input mutes: List<PubKey> from identity.mutes
+permissions {
+    read Note from public
+    relay public
+    view
+    identity
+}
+on Note where tags.p contains me {
+    if event.author in mutes {
+        lens.hide("muted author")
+    }
+}
+"#;
+        let opened = result(
+            &serde_json::json!({
+                "op": "napplet_open",
+                "source": source,
+                "principal": "me",
+                "inputs": { "mutes": ["muted-author"] }
+            })
+            .to_string(),
+        );
+        assert_eq!(opened["result"]["checked"], true);
+        assert_eq!(opened["result"]["identity_required"], true);
+        assert!(
+            opened["result"]["requires"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|domain| domain == "identity")
+        );
+        let session = opened["result"]["session"].as_u64().unwrap();
+        let evaluated = result(
+            &serde_json::json!({
+                "op": "napplet_eval",
+                "session": session,
+                "event": {
+                    "id": "one",
+                    "pubkey": "muted-author",
+                    "kind": 1,
+                    "content": "hello",
+                    "tags": [["p", "me"]]
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(evaluated["result"]["decisions"][0]["action"], "hide");
+        let _ =
+            result(&serde_json::json!({ "op": "napplet_close", "session": session }).to_string());
     }
 
     #[test]

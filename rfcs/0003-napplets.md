@@ -55,11 +55,13 @@ embedded by an applet must never gain more authority than that applet.
 ## Implemented prototype boundary
 
 The first implementation supports one adapter profile: read-only `Note`
-handlers with `read Note from public`, `relay public`, optional `log`, and
-`view`. The shared `nscript-napplet` Rust crate validates that profile, derives
-NIP-01 outbox filters from the checked handler predicates, and maps the profile
-to the required `outbox` domain. `identity` and `storage` are optional
-enclosing-applet domains.
+handlers with `read Note from public`, `relay public`, optional `log` and
+`clock`, `view`, and optional source-backed viewer lists (`identity.follows`,
+`identity.mutes`, `identity.blocked`). The shared `nscript-napplet` Rust crate
+validates that profile, derives NIP-01 outbox filters from the checked handler
+predicates, and maps the profile to the required `outbox` domain. `identity`
+becomes required when a script declares an identity-backed input and is
+otherwise optional; `storage` is optional.
 
 The browser ABI keeps a bounded cache of checked programs (`napplet_open`,
 `napplet_eval`, `napplet_close`), passes the shell-user principal into

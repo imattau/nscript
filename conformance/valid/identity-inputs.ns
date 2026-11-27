@@ -1,0 +1,23 @@
+use nip01
+
+relayset public = configured
+
+input follows: List<PubKey> from identity.follows
+input mutes: List<PubKey> from identity.mutes
+
+permissions {
+    read Note from public
+    relay public
+    log
+    identity
+}
+
+on Note {
+    if event.author in follows {
+        print("someone you follow")
+    }
+
+    if event.author in mutes {
+        print("muted")
+    }
+}

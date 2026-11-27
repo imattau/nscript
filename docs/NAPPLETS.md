@@ -10,6 +10,7 @@ The first adapter profile is the read-only **lens** profile:
 - one or more `on Note` handlers;
 - `read Note from public` and `relay public`;
 - optional `log` for debugging;
+- optional `clock` for `now`;
 - `view` for the built-in `lens` presentation module;
 - no publishing, signing, storage, schedules, inputs, keys, or third-party
   module operations.
@@ -86,9 +87,9 @@ CLI before it is pasted into an applet.
 
 The applet shows the checked footprint, derived filters, required/optional NAP
 domains, and diagnostics before activation. `outbox` is required. `identity`
-and `storage` are optional enclosing-applet domains; a missing required domain
-is an explicit unavailable state, never a fallback to direct network or storage
-access.
+is required when the script declares an identity-backed input and optional
+otherwise; `storage` is optional. A missing required domain is an explicit
+unavailable state, never a fallback to direct network or storage access.
 
 See [`examples/napplet-lens/`](../examples/napplet-lens/) for the reference
 applet and [`npm/nscript-napplet/`](../npm/nscript-napplet/) for the embedding
@@ -120,3 +121,37 @@ covers a manifest's `R` set, and `nip5d.missing_domains` names the exact gap.
 `screenshot`, `preview`, and the source tags. [`spec/nostr.md`](../spec/nostr.md)
 documents the event declarations and functions, and the same
 `nscript-nip5d` validator backs `nscript napplet build`.
+
+## Viewer lists
+
+A lens can declare an explicit viewer input instead of hand-maintaining a
+public-key list:
+
+```nostr
+input follows: List<PubKey> from identity.follows
+input mutes: List<PubKey> from identity.mutes
+
+permissions {
+    read Note from public
+    relay public
+    view
+    identity
+}
+
+on Note {
+    if event.author in mutes {
+        lens.hide("muted author")
+    }
+
+    if event.author in follows {
+        lens.pin("someone you follow")
+    }
+}
+```
+
+The `from` clause is the capability request: `identity` becomes a required
+domain in the review, and `@nscript/napplet` resolves the declared lists
+through the shell's `identity` domain (`getFollows`, `getMutes`, `getBlocked`)
+before opening the session. Missing data is a clear activation failure, not an
+empty list, so a broken identity bridge cannot silently change what a rule
+hides or pins.

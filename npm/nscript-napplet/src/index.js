@@ -2,6 +2,47 @@ const DEFAULT_FILTERS = [{ kinds: [1], limit: 50 }];
 const MAX_EVENT_BYTES = 256_000;
 const MAX_PENDING_EVENTS = 100;
 const EVENT_INTERVAL_MS = 40;
+const IDENTITY_LISTS = {
+  follows: "getFollows",
+  mutes: "getMutes",
+  blocked: "getBlocked",
+};
+
+function identityList(result, method) {
+  const values = Array.isArray(result)
+    ? result
+    : Array.isArray(result?.pubkeys)
+      ? result.pubkeys
+      : Array.isArray(result?.items)
+        ? result.items
+        : null;
+  if (!values) throw new Error(`identity.${method} did not return a list of public keys.`);
+  return values
+    .map((value) => (typeof value === "string" ? value : value?.pubkey))
+    .filter((value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value));
+}
+
+/**
+ * Resolves the identity-backed list inputs a checked lens declares.
+ *
+ * @param {{inputs?: Record<string, string>}} review
+ * @param {object} identity the shell's `napplet.identity` domain
+ * @returns {Promise<Record<string, string[]>>}
+ */
+export async function resolveInputs(review, identity) {
+  const inputs = {};
+  for (const [name, source] of Object.entries(review?.inputs ?? {})) {
+    if (typeof source !== "string" || !source.startsWith("identity.")) continue;
+    const list = source.slice("identity.".length);
+    const method = IDENTITY_LISTS[list];
+    if (!method) throw new Error(`Unsupported identity input source '${source}'.`);
+    if (!identity || typeof identity[method] !== "function") {
+      throw new Error(`The shell does not provide identity.${method} for '${source}'.`);
+    }
+    inputs[name] = identityList(await identity[method](), method);
+  }
+  return inputs;
+}
 
 /**
  * Creates an embeddable checked NScript "lens" runtime for a napplet.
@@ -25,9 +66,13 @@ export function createNScriptNapplet({
   capabilityCeiling = ["outbox"],
   filters = DEFAULT_FILTERS,
   limit = 50,
+  now = () => Math.floor(Date.now() / 1000),
 }) {
   if (!compiler || typeof compiler.nappletCheck !== "function") {
     throw new TypeError("compiler must provide nappletCheck");
+  }
+  if (typeof now !== "function") {
+    throw new TypeError("now must be a function returning Unix seconds");
   }
   if (!Array.isArray(capabilityCeiling) || capabilityCeiling.some((domain) => typeof domain !== "string")) {
     throw new TypeError("capabilityCeiling must be an array of NAP domain names");
@@ -52,7 +97,7 @@ export function createNScriptNapplet({
     }
   }
 
-  function open(source, { principal, limit: requestedLimit } = {}) {
+  function open(source, { principal, limit: requestedLimit, inputs } = {}) {
     if (typeof compiler.nappletOpen === "function") {
       const response = compiler.nappletOpen(
         source,
@@ -60,6 +105,8 @@ export function createNScriptNapplet({
         [],
         principal,
         requestedLimit ?? limit,
+        now(),
+        inputs,
       );
       if (!response.ok) throw new Error(response.error?.message ?? "NScript open failed.");
       const result = response.result;
@@ -73,13 +120,13 @@ export function createNScriptNapplet({
     return { result, session: null };
   }
 
-  function evaluate(session, source, event, principal) {
+  function evaluate(session, source, event, principal, inputs) {
     if (session == null) {
-      const response = compiler.nappletEvent(source, event, ceiling, [], principal);
+      const response = compiler.nappletEvent(source, event, ceiling, [], principal, now(), inputs);
       if (!response.ok) throw new Error(response.error?.message ?? "NScript event evaluation failed.");
       return response.result;
     }
-    const response = compiler.nappletEval(session, event);
+    const response = compiler.nappletEval(session, event, now());
     if (!response.ok) throw new Error(response.error?.message ?? "NScript event evaluation failed.");
     return response.result;
   }
@@ -98,6 +145,8 @@ export function createNScriptNapplet({
     {
       principal,
       limit: requestedLimit,
+      inputs,
+      identity = napplet?.identity,
       onDecision,
       onAccepted,
       onLog = () => {},
@@ -107,7 +156,16 @@ export function createNScriptNapplet({
     if (typeof onDecision !== "function" && typeof onAccepted !== "function") {
       throw new TypeError("start requires an onDecision or onAccepted callback");
     }
-    const { result, session } = open(source, { principal, limit: requestedLimit });
+    let resolvedInputs = inputs;
+    if (resolvedInputs == null) {
+      const review = check(source, { principal, limit: requestedLimit });
+      resolvedInputs = await resolveInputs(review, identity);
+    }
+    const { result, session } = open(source, {
+      principal,
+      limit: requestedLimit,
+      inputs: resolvedInputs,
+    });
     if (!result.checked) {
       close(session);
       throw new Error(result.diagnostics?.[0]?.message ?? "Fix NScript diagnostics before activation.");
@@ -140,7 +198,7 @@ export function createNScriptNapplet({
     };
     const dispatch = (event) => {
       if (!active) return;
-      const eventResult = evaluate(session, source, event, principal);
+      const eventResult = evaluate(session, source, event, principal, resolvedInputs);
       if (!eventResult.checked || eventResult.diagnostics?.length) {
         throw new Error(eventResult.diagnostics?.[0]?.message ?? "NScript event program was rejected.");
       }

@@ -5,12 +5,14 @@ import { presentEvent, sortItems } from "./decide.js";
 import "./style.css";
 import mentionsPreset from "../presets/mentions.ns?raw";
 import followingPreset from "../presets/following.ns?raw";
+import personalPreset from "../presets/personal.ns?raw";
 import topicPreset from "../presets/topic.ns?raw";
 import blankPreset from "../presets/blank.ns?raw";
 
 const PRESETS = {
   mentions: mentionsPreset,
   following: followingPreset,
+  personal: personalPreset,
   topic: topicPreset,
   blank: blankPreset,
 };

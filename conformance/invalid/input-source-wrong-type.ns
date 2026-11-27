@@ -1,0 +1,11 @@
+// error: E1303 input-source-wrong-type
+permissions {
+    identity
+    log
+}
+
+input follows: Text from identity.follows
+
+on Note {
+    print(follows)
+}

@@ -1,0 +1,32 @@
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+    clock
+}
+
+on Note {
+    if is_reply(event) {
+        print("reply to " + root(event))
+    }
+
+    if has_tag(event, "t", "nostr") {
+        print("nostr topic")
+    }
+
+    for mention in mentions(event) {
+        print("mention " + text(mention))
+    }
+
+    for hashtag in hashtags(event) {
+        print("tag " + hashtag)
+    }
+
+    if now - event.created_at > 86400 {
+        print("older than a day")
+    }
+}

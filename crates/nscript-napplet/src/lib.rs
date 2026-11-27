@@ -70,7 +70,10 @@ pub fn validate_lens_profile(program: &Program, checked: &CheckedProgram) -> Res
                         operation,
                         argument: None,
                         scope: None,
-                    } if matches!(operation.value.as_str(), "log" | "view") => {}
+                    } if matches!(
+                        operation.value.as_str(),
+                        "log" | "view" | "clock" | "identity"
+                    ) => {}
                     _ => permissions_supported = false,
                 }
             }
@@ -80,6 +83,10 @@ pub fn validate_lens_profile(program: &Program, checked: &CheckedProgram) -> Res
     let items_supported = program.ast.items.iter().all(|item| match item {
         Item::Use(import) => matches!(import.path.as_str(), "nip01" | "lens"),
         Item::RelaySet(_) | Item::Permissions(_) | Item::Function(_) => true,
+        Item::Input(declaration) => declaration
+            .source
+            .as_ref()
+            .is_some_and(|source| source.value.starts_with("identity.")),
         Item::Statement(statement) => matches!(&statement.value, StatementKind::On { .. }),
         _ => false,
     });
@@ -90,10 +97,12 @@ pub fn validate_lens_profile(program: &Program, checked: &CheckedProgram) -> Res
                 && handler.tag_equals_inputs.is_empty()
                 && handler.body_items <= 256
         });
-    let effects_supported = checked
-        .effects
-        .iter()
-        .all(|effect| matches!(effect, Effect::Relay | Effect::Log));
+    let effects_supported = checked.effects.iter().all(|effect| {
+        matches!(
+            effect,
+            Effect::Relay | Effect::Log | Effect::Clock | Effect::Identity
+        )
+    });
     let operations_supported = checked
         .operation_calls
         .iter()
@@ -108,13 +117,19 @@ pub fn validate_lens_profile(program: &Program, checked: &CheckedProgram) -> Res
         && checked.publications.is_empty()
         && checked.schedules.is_empty()
         && checked.keys.is_empty()
-        && checked.inputs.is_empty()
+        && checked.inputs.iter().all(|(name, type_name)| {
+            type_name == "List"
+                && checked
+                    .input_sources
+                    .get(name)
+                    .is_some_and(|source| source.starts_with("identity."))
+        })
         && program.publishes.is_empty();
 
     if program_supported {
         Ok(())
     } else {
-        Err("lens scripts may only read Note events from `public`, use `nip01` and `lens`, and make local view decisions; publishing, signing, storage, schedules, inputs, keys, and other module operations are unsupported".to_owned())
+        Err("lens scripts may only read Note events from `public`, use `nip01` and `lens`, read `now` with `clock`, read follows/mutes/blocked lists from `identity`, and make local view decisions; publishing, signing, storage, schedules, scalar inputs, keys, and other module operations are unsupported".to_owned())
     }
 }
 
@@ -143,6 +158,16 @@ pub fn principal_required(program: &Program, checked: &CheckedProgram) -> bool {
             _ => None,
         })
         .any(|function| function.body.iter().any(item_uses_principal))
+}
+
+/// Whether the program declares an input backed by the viewer's identity
+/// lists, which makes the `identity` NAP domain required rather than optional.
+#[must_use]
+pub fn identity_required(checked: &CheckedProgram) -> bool {
+    checked
+        .input_sources
+        .values()
+        .any(|source| source.starts_with("identity."))
 }
 
 /// Derives one NIP-01 outbox filter per checked handler.
@@ -459,6 +484,52 @@ on Note {
         let filters = handler_filters(&checked, None);
         assert_eq!(filters[0].tags.len(), 0);
         assert!(filters[0].authors.is_empty());
+    }
+
+    #[test]
+    fn accepts_now_with_the_clock_permission() {
+        let source = r#"use nip01
+use lens
+relayset public = configured
+permissions {
+    read Note from public
+    relay public
+    view
+    clock
+}
+on Note {
+    if now - event.created_at > 86400 {
+        lens.hide("older than a day")
+    }
+}
+"#;
+        let (program, checked) = checked(source);
+        assert!(validate_lens_profile(&program, &checked).is_ok());
+    }
+
+    #[test]
+    fn accepts_identity_list_inputs_and_requires_the_domain() {
+        let source = r#"use nip01
+use lens
+relayset public = configured
+input mutes: List<PubKey> from identity.mutes
+permissions {
+    read Note from public
+    relay public
+    view
+    identity
+}
+on Note where tags.p contains me {
+    if event.author in mutes {
+        lens.hide("muted author")
+    }
+}
+"#;
+        let (program, checked) = checked(source);
+        assert!(validate_lens_profile(&program, &checked).is_ok());
+        assert!(identity_required(&checked));
+        assert_eq!(checked.input_types["mutes"], "List<PubKey>");
+        assert_eq!(checked.input_sources["mutes"], "identity.mutes");
     }
 
     #[test]

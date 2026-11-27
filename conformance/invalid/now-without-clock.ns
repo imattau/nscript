@@ -1,0 +1,8 @@
+// error: E3001 now-without-clock
+permissions {
+    log
+}
+
+on Note {
+    print(text(now))
+}

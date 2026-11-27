@@ -1,0 +1,10 @@
+// error: E3001 input-source-without-permission
+permissions {
+    log
+}
+
+input mutes: List<PubKey> from identity.mutes
+
+on Note {
+    print(text(len(mutes)))
+}

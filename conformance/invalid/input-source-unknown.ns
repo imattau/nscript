@@ -1,0 +1,11 @@
+// error: E1303 input-source-unknown
+permissions {
+    identity
+    log
+}
+
+input follows: List<PubKey> from identity.following
+
+on Note {
+    print(text(len(follows)))
+}

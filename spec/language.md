@@ -72,6 +72,13 @@ These pure built-ins are available in every program:
 | `lowercase(text)` | Unicode-aware lowercase `Text` |
 | `trim(text)` | `Text` without leading or trailing whitespace |
 | `contains_any(text, needles)` | `Bool`; true when `text` contains any element of the `List<Text>` |
+| `is_reply(event)` | `Bool`; true when the event's `e` tags follow the NIP-10 reply heuristic |
+| `has_tag(event, name, value)` | `Bool`; true when a tag has that name and first value |
+| `tag_values(event, name)` | `List<Text>` of the first value of every matching tag |
+| `mentions(event)` | `List<PubKey>` of valid `p` tag values |
+| `hashtags(event)` | `List<Text>` of non-empty `t` tag values |
+| `root(event)` | `Text` root event id from the `e` tags, or empty text |
+| `now` | `Int` host Unix time in seconds; requires `clock` |
 
 `contains_any` is case-sensitive. Rules that should ignore case combine it with
 `lowercase`:
@@ -81,6 +88,18 @@ if contains_any(lowercase(trim(event.content)), ["airdrop", "giveaway"]) {
     print("promotion")
 }
 ```
+
+`is_reply` uses NIP-10 in this order:
+
+1. Any `e` tag marked `reply` makes the event a reply.
+2. A `root` marker alone does not.
+3. With no markers, any `e` tag makes it a reply; its last `e` tag is the
+   target.
+4. No `e` tag means the event is not a reply.
+
+`root(event)` returns the `e` tag marked `root`; without one it returns the
+first `e` tag, which is NIP-10's positional root. `now` is wall time and
+therefore requires the `clock` permission. Event `created_at` values do not.
 
 The `contains` and `in` operators also test substrings and list membership.
 
@@ -186,10 +205,12 @@ NScript has no exceptions.
 
 The compiler infers a closed effect set for every function. Standard effects are
 `Relay`, `Sign`, `Encrypt`, `Decrypt`, `Storage`, `HTTP`, `Filesystem`, `Payment`,
-`Clock`, `Log`, and `View`. `View` is a local presentation effect: an operation
-that records a UI decision without publishing, signing, storing, or fetching
-anything. Pure functions have an empty set. Effects propagate through calls and
-generic callbacks. Recursion is permitted but subject to host resource limits.
+`Clock`, `Log`, `View`, and `Identity`. `View` is a local presentation effect: an
+operation that records a UI decision without publishing, signing, storing, or
+fetching anything. `Identity` is the viewer's social graph supplied through a
+source-backed input. Pure functions have an empty set. Effects propagate through
+calls and generic callbacks. Recursion is permitted but subject to host resource
+limits.
 
 Every reachable effect must be covered by a top-level permission. Unused
 permissions produce a warning. Dynamically constructing authority is forbidden.
@@ -374,6 +395,22 @@ expected to supply unambiguously; a host MAY refuse to run a program
 declaring an `input` of any other type. A program with an undeclared or
 mistyped `input` value fails provisioning rather than running with a
 guessed or missing value.
+
+An input may name a host source instead:
+
+```nostr
+input follows: List<PubKey> from identity.follows
+input mutes: List<PubKey> from identity.mutes
+```
+
+The source clause is the capability request. The initial sources are
+`identity.follows`, `identity.mutes`, and `identity.blocked`; each requires
+`permissions { identity }` and a `List<PubKey>` type. The host resolves the
+list once before the program runs. Missing, unavailable, or malformed viewer
+data is a provisioning failure, never a silent empty list. A source-backed
+input is otherwise an ordinary value, so `event.author in mutes` works in a
+handler body. Other input types remain host-portable only for scalar values;
+a host MAY reject a source-backed input it cannot resolve.
 
 ## 10. Pattern matching
 

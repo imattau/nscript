@@ -19,6 +19,7 @@ pub enum Effect {
     Log,
     Http,
     SecretKey,
+    Identity,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -191,6 +192,11 @@ pub struct CheckedProgram {
     /// `input` declarations: name to the declared type's name. The host
     /// must supply a value of that type for each before the program runs.
     pub inputs: BTreeMap<String, String>,
+    /// `input` declarations: name to the full rendered type, including type
+    /// arguments (`List<PubKey>`), so hosts can parse list-valued inputs.
+    pub input_types: BTreeMap<String, String>,
+    /// `input ... from <source>` declarations: name to the host source.
+    pub input_sources: BTreeMap<String, String>,
     /// Every event type the program or its imported modules declares, by
     /// name. `infer` resolves the program's own `event` declarations;
     /// [`bind_module_events`] adds the imported modules' `event`
@@ -483,6 +489,64 @@ fn declared_inputs(program: &Program) -> BTreeMap<String, String> {
             ))
         })
         .collect()
+}
+
+/// `input` declarations: name to the full rendered type, type arguments
+/// included, so a host can tell `List<PubKey>` from `Text`.
+fn declared_input_types(program: &Program) -> BTreeMap<String, String> {
+    program
+        .ast
+        .items
+        .iter()
+        .filter_map(|item| {
+            let Item::Input(declaration) = item else {
+                return None;
+            };
+            Some((
+                declaration.name.value.clone(),
+                render_type(&declaration.type_ref),
+            ))
+        })
+        .collect()
+}
+
+/// `input ... from <source>` declarations: name to the host source.
+fn declared_input_sources(program: &Program) -> BTreeMap<String, String> {
+    program
+        .ast
+        .items
+        .iter()
+        .filter_map(|item| {
+            let Item::Input(declaration) = item else {
+                return None;
+            };
+            Some((
+                declaration.name.value.clone(),
+                declaration.source.as_ref()?.value.clone(),
+            ))
+        })
+        .collect()
+}
+
+fn render_type(type_ref: &TypeRef) -> String {
+    if type_ref.arguments.is_empty() {
+        type_ref.name.clone()
+    } else {
+        let arguments = type_ref
+            .arguments
+            .iter()
+            .map(render_type)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("{}<{arguments}>", type_ref.name)
+    }
+}
+
+fn is_pubkey_list(type_ref: &TypeRef) -> bool {
+    type_ref.name == "List"
+        && type_ref.arguments.len() == 1
+        && type_ref.arguments[0].name == "PubKey"
+        && type_ref.arguments[0].arguments.is_empty()
 }
 
 /// `key name = host("label")` declarations: name to label.
@@ -1105,6 +1169,8 @@ pub fn infer(program: &Program) -> (CheckedProgram, Vec<Diagnostic>) {
             handlers: checker.handlers,
             keys: declared_keys(program),
             inputs: declared_inputs(program),
+            input_types: declared_input_types(program),
+            input_sources: declared_input_sources(program),
             events: program_events(program),
         },
         checker.diagnostics,
@@ -1498,7 +1564,7 @@ fn effect_capability(effect: &Effect) -> (CapabilityCategory, &'static str, Stri
         ),
         Effect::Clock => (
             CapabilityCategory::System,
-            "Schedules and timers",
+            "Wall clock and schedules",
             "clock".to_owned(),
         ),
         Effect::Log => (
@@ -1515,6 +1581,11 @@ fn effect_capability(effect: &Effect) -> (CapabilityCategory, &'static str, Stri
             CapabilityCategory::Secrets,
             "Secret key access",
             "secret_key".to_owned(),
+        ),
+        Effect::Identity => (
+            CapabilityCategory::Nostr,
+            "Read the viewer's identity lists",
+            "identity".to_owned(),
         ),
     }
 }
@@ -1618,7 +1689,53 @@ impl<'a> Checker<'a> {
             handler_depth: 0,
         };
         checker.collect_permissions();
+        checker.check_input_sources();
         checker
+    }
+
+    fn check_input_sources(&mut self) {
+        for item in &self.program.ast.items {
+            let Item::Input(declaration) = item else {
+                continue;
+            };
+            let Some(source) = &declaration.source else {
+                continue;
+            };
+            let Some(list) = source.value.strip_prefix("identity.") else {
+                self.diagnostics.push(Diagnostic {
+                    code: "E1303",
+                    message: format!(
+                        "unsupported input source `{}`; only identity.follows, identity.mutes, and identity.blocked are available",
+                        source.value
+                    ),
+                    span: source.span,
+                });
+                continue;
+            };
+            if !matches!(list, "follows" | "mutes" | "blocked") {
+                self.diagnostics.push(Diagnostic {
+                    code: "E1303",
+                    message: format!(
+                        "unknown identity list `{list}`; use follows, mutes, or blocked"
+                    ),
+                    span: source.span,
+                });
+                continue;
+            }
+            if !is_pubkey_list(&declaration.type_ref) {
+                self.diagnostics.push(Diagnostic {
+                    code: "E1303",
+                    message: format!(
+                        "input `{}` from `{}` must be declared as List<PubKey>",
+                        declaration.name.value, source.value
+                    ),
+                    span: declaration.span,
+                });
+                continue;
+            }
+            self.effects.insert(Effect::Identity);
+            self.require_named(declaration.span, "identity");
+        }
     }
 
     fn collect_permissions(&mut self) {
@@ -1973,6 +2090,10 @@ impl<'a> Checker<'a> {
             ExprKind::Member { value, .. }
             | ExprKind::Propagate(value)
             | ExprKind::Unary { value, .. } => self.check_expr(value, locals),
+            ExprKind::Identifier(name) if name == "now" => {
+                self.effects.insert(Effect::Clock);
+                self.require_named(expression.span, "clock");
+            }
             ExprKind::Binary { left, right, .. }
             | ExprKind::Assign {
                 target: left,

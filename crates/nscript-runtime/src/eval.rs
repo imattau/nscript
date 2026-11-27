@@ -36,6 +36,15 @@ pub trait EvalHost {
     /// The program's principal, the value of `me`. `None` if not configured.
     fn principal(&self) -> Option<String>;
 
+    /// The host's current Unix time in seconds, backing `now`.
+    ///
+    /// `None` means the host has no clock. The checker requires the `clock`
+    /// permission before a program may read `now`, so a host that provisions
+    /// that permission should answer this.
+    fn now(&self) -> Option<i64> {
+        None
+    }
+
     /// A module operation call, already gated by the host's policy.
     ///
     /// # Errors
@@ -374,13 +383,34 @@ fn fail(message: impl Into<String>) -> Stop {
     })
 }
 
-/// Evaluate a pure built-in by name.
+/// Whether `name` is a pure built-in rather than a script `fn`.
 ///
-/// `None` means the name is not a built-in, so the caller falls through to a
-/// script `fn`. Keeping these out of [`Interpreter::call`] leaves that dispatch
-/// readable as the set grows.
-fn evaluate_builtin(name: &str, arguments: &[Value]) -> Option<Result<Value, Stop>> {
-    Some(match name {
+/// Keeping these out of [`Interpreter::call`] leaves that dispatch readable as
+/// the set grows.
+fn is_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "text"
+            | "starts_with"
+            | "strip_prefix"
+            | "ends_with"
+            | "lowercase"
+            | "trim"
+            | "contains_any"
+            | "len"
+            | "is_reply"
+            | "has_tag"
+            | "tag_values"
+            | "mentions"
+            | "hashtags"
+            | "root"
+    )
+}
+
+/// Evaluate a pure built-in. The caller checks [`is_builtin`] first.
+#[allow(clippy::too_many_lines)]
+fn evaluate_builtin(name: &str, arguments: &[Value]) -> Result<Value, Stop> {
+    match name {
         // `+` deliberately stays strict (two `Text`s or two `Int`s, per
         // `arithmetic`) rather than silently coercing. `text(value)` is the
         // explicit conversion a script reaches for instead, e.g.
@@ -420,12 +450,12 @@ fn evaluate_builtin(name: &str, arguments: &[Value]) -> Option<Result<Value, Sto
             [Value::Text(value), Value::List(items)] => {
                 for item in items {
                     let Value::Text(needle) = item else {
-                        return Some(Err(fail(
+                        return Err(fail(
                             "`contains_any` takes a text and a list of text values",
-                        )));
+                        ));
                     };
                     if value.contains(needle.as_str()) {
-                        return Some(Ok(Value::Bool(true)));
+                        return Ok(Value::Bool(true));
                     }
                 }
                 Ok(Value::Bool(false))
@@ -441,8 +471,156 @@ fn evaluate_builtin(name: &str, arguments: &[Value]) -> Option<Result<Value, Sto
             )),
             _ => Err(fail("`len` takes a list or text")),
         },
-        _ => return None,
-    })
+        "is_reply" => match arguments {
+            [event] => {
+                let e_tags = event_e_tags(event_tags(event)?)?;
+                if e_tags.is_empty() {
+                    return Ok(Value::Bool(false));
+                }
+                let mut any_marker = false;
+                let mut reply_marker = false;
+                for columns in &e_tags {
+                    let marker = columns.get(2).copied().unwrap_or("");
+                    if !marker.is_empty() {
+                        any_marker = true;
+                        if marker == "reply" {
+                            reply_marker = true;
+                        }
+                    }
+                }
+                Ok(Value::Bool(reply_marker || !any_marker))
+            }
+            _ => Err(fail("`is_reply` takes an event")),
+        },
+        "has_tag" => match arguments {
+            [event, Value::Text(name), Value::Text(wanted)] => {
+                let tags = event_tags(event)?;
+                for item in tags {
+                    let (tag_name, columns) = tag_parts(item)?;
+                    if tag_name == name
+                        && columns
+                            .first()
+                            .is_some_and(|value| *value == wanted.as_str())
+                    {
+                        return Ok(Value::Bool(true));
+                    }
+                }
+                Ok(Value::Bool(false))
+            }
+            _ => Err(fail("`has_tag` takes an event, a tag name and a value")),
+        },
+        "tag_values" => match arguments {
+            [event, Value::Text(name)] => {
+                let tags = event_tags(event)?;
+                let mut values = Vec::new();
+                for item in tags {
+                    let (tag_name, columns) = tag_parts(item)?;
+                    if tag_name == name {
+                        values.push(Value::Text(
+                            columns.first().copied().unwrap_or("").to_owned(),
+                        ));
+                    }
+                }
+                Ok(Value::List(values))
+            }
+            _ => Err(fail("`tag_values` takes an event and a tag name")),
+        },
+        "mentions" => match arguments {
+            [event] => {
+                let tags = event_tags(event)?;
+                let mut mentions: Vec<String> = Vec::new();
+                for item in tags {
+                    let (tag_name, columns) = tag_parts(item)?;
+                    let Some(value) = columns.first().copied() else {
+                        continue;
+                    };
+                    if tag_name == "p"
+                        && is_hex_64(value)
+                        && !mentions.iter().any(|mention| mention == value)
+                    {
+                        mentions.push(value.to_owned());
+                    }
+                }
+                Ok(Value::List(
+                    mentions.into_iter().map(Value::PubKey).collect(),
+                ))
+            }
+            _ => Err(fail("`mentions` takes an event")),
+        },
+        "hashtags" => match arguments {
+            [event] => {
+                let tags = event_tags(event)?;
+                let mut hashtags: Vec<String> = Vec::new();
+                for item in tags {
+                    let (tag_name, columns) = tag_parts(item)?;
+                    let Some(value) = columns.first().copied() else {
+                        continue;
+                    };
+                    if tag_name == "t"
+                        && !value.is_empty()
+                        && !hashtags.iter().any(|hashtag| hashtag == value)
+                    {
+                        hashtags.push(value.to_owned());
+                    }
+                }
+                Ok(Value::List(hashtags.into_iter().map(Value::Text).collect()))
+            }
+            _ => Err(fail("`hashtags` takes an event")),
+        },
+        "root" => match arguments {
+            [event] => {
+                let e_tags = event_e_tags(event_tags(event)?)?;
+                let Some(first) = e_tags.first() else {
+                    return Ok(Value::Text(String::new()));
+                };
+                for columns in &e_tags {
+                    if columns.get(2).copied() == Some("root") {
+                        let id = columns.first().copied().unwrap_or("");
+                        return Ok(Value::Text(id.to_owned()));
+                    }
+                }
+                Ok(Value::Text(first.first().copied().unwrap_or("").to_owned()))
+            }
+            _ => Err(fail("`root` takes an event")),
+        },
+        _ => Err(fail(format!("unknown built-in `{name}`"))),
+    }
+}
+
+fn is_hex_64(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn event_tags(value: &Value) -> Result<&[Value], Stop> {
+    let Value::Record { fields, .. } = value else {
+        return Err(fail("expected an event record"));
+    };
+    let Some((_, Value::List(tags))) = fields.iter().find(|(name, _)| name == "tags") else {
+        return Err(fail("event record has no `tags` list"));
+    };
+    Ok(tags)
+}
+
+fn tag_parts(value: &Value) -> Result<(&str, Vec<&str>), Stop> {
+    let Value::Text(text) = value else {
+        return Err(fail("event tags must be text"));
+    };
+    let (name, rest) = text.split_once('=').unwrap_or((text.as_str(), ""));
+    Ok((name, rest.split('\u{1f}').collect()))
+}
+
+fn event_e_tags(tags: &[Value]) -> Result<Vec<Vec<&str>>, Stop> {
+    let mut e_tags = Vec::new();
+    for item in tags {
+        let (name, columns) = tag_parts(item)?;
+        if name == "e" {
+            e_tags.push(columns);
+        }
+    }
+    Ok(e_tags)
 }
 
 enum Flow {
@@ -1061,6 +1239,13 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 .map(Value::PubKey)
                 .ok_or_else(|| fail("`me` is not configured"));
         }
+        if name == "now" {
+            return self
+                .host
+                .now()
+                .map(Value::Int)
+                .ok_or_else(|| fail("`now` is not available from this host"));
+        }
         Err(fail(format!("unknown name `{name}`")))
     }
 
@@ -1124,8 +1309,8 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 })
             }
             ExprKind::Identifier(name) => {
-                if let Some(result) = evaluate_builtin(name, &arguments) {
-                    return result;
+                if is_builtin(name) {
+                    return evaluate_builtin(name, &arguments);
                 }
                 self.call_function(name, arguments)
             }
@@ -1505,6 +1690,10 @@ where
 
     fn principal(&self) -> Option<String> {
         self.principal.clone()
+    }
+
+    fn now(&self) -> Option<i64> {
+        i64::try_from(self.runtime.clock.now()).ok()
     }
 
     fn lower_typed_tag(
@@ -3523,6 +3712,43 @@ mod tests {
         assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
         let messages: Vec<_> = log.records.iter().map(|r| r.message.as_str()).collect();
         assert_eq!(messages, ["false", "mixed", "padded", "true", "false"]);
+    }
+
+    #[test]
+    fn note_helpers_follow_nip10_and_expose_tags_and_time() {
+        let source = "permissions {\n    log\n    clock\n}\n\non Note {\n    print(text(is_reply(event)))\n    print(text(has_tag(event, \"t\", \"nostr\")))\n    print(text(len(tag_values(event, \"t\"))))\n    print(text(len(mentions(event))))\n    print(text(len(hashtags(event))))\n    print(root(event))\n    print(text(now))\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = runtime();
+        let policy = policy_for(&checked);
+        let event = event_from_json(&serde_json::json!({
+            "content": "a reply",
+            "tags": [
+                ["e", "root-id", "", "root"],
+                ["e", "reply-id", "", "reply"],
+                ["p", "1".repeat(64)],
+                ["p", "2".repeat(64)],
+                ["t", "nostr"],
+                ["t", "nostr"]
+            ]
+        }))
+        .unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &event,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        let messages: Vec<_> = log.records.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(messages, ["true", "true", "2", "2", "1", "root-id", "0"]);
     }
 
     /// What one evaluated cycle produced.

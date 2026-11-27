@@ -1,0 +1,28 @@
+use nip01
+use lens
+
+relayset public = configured
+
+input follows: List<PubKey> from identity.follows
+input mutes: List<PubKey> from identity.mutes
+
+permissions {
+    read Note from public
+    relay public
+    view
+    identity
+}
+
+on Note {
+    if event.author in mutes {
+        lens.hide("muted author")
+    }
+
+    if event.content contains "airdrop" or event.content contains "giveaway" {
+        lens.hide("promotion")
+    }
+
+    if event.author in follows {
+        lens.pin("someone you follow")
+    }
+}

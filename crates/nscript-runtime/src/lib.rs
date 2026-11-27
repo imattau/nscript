@@ -11598,13 +11598,47 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
         event: &SignedEvent,
         inputs: &BTreeMap<String, eval::Value>,
     ) -> Result<SimulationReport, RuntimeError> {
+        Self::simulate_event_with_inputs_at(
+            program,
+            checked,
+            relay,
+            storage,
+            log,
+            operations,
+            principal,
+            event,
+            inputs,
+            1_700_000_000,
+        )
+    }
+
+    /// Like [`Runtime::simulate_event_with_inputs`], with an explicit clock
+    /// value for `now`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first subscription, polling, idempotency, storage, logging,
+    /// or handler-body failure.
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_event_with_inputs_at(
+        program: &nscript_syntax::Program,
+        checked: &CheckedProgram,
+        relay: &mut FakeRelayHost,
+        storage: &mut InMemoryStorage,
+        log: &mut FakeLogHost,
+        operations: &mut eval::SimulatedOperations,
+        principal: Option<&str>,
+        event: &SignedEvent,
+        inputs: &BTreeMap<String, eval::Value>,
+        now: u64,
+    ) -> Result<SimulationReport, RuntimeError> {
         let mut runtime = Self::new(
             FakeRelayHost {
                 relays: [("fake://public".to_owned(), true)].into_iter().collect(),
                 ..FakeRelayHost::default()
             },
             FakeSignerHost::default(),
-            FakeClock { now: 1_700_000_000 },
+            FakeClock { now },
             RecordingAudit::default(),
         );
         let subscriptions =

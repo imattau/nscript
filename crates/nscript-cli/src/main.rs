@@ -8,7 +8,8 @@ use std::{
 
 use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_hex, parse_module};
 use nscript_napplet::{
-    LENS_OPTIONAL_DOMAINS, LENS_REQUIRED_DOMAINS, principal_required, validate_lens_profile,
+    LENS_OPTIONAL_DOMAINS, LENS_REQUIRED_DOMAINS, identity_required, principal_required,
+    validate_lens_profile,
 };
 use nscript_nip5d::{
     NAMED_KIND, Tag, first_tag_value, optional_domains, required_domains, validate_manifest,
@@ -64,7 +65,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--as-signer <name>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]... [--input-env <name>=<environment-variable>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--now <seconds>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--as-signer <name>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]... [--input-env <name>=<environment-variable>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             eprintln!(
                 "  nscript napplet requirements [-M <directory>]... <file.ns> [--output <file.json>]\n  nscript napplet build <project-directory> [--source <file.ns>] [-M <directory>]... [--verify-reproducible]"
@@ -132,6 +133,19 @@ fn napplet_requirements(arguments: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let needs_principal = principal_required(&program, &checked);
+    let identity_required = identity_required(&checked);
+    let mut required_domains = LENS_REQUIRED_DOMAINS
+        .iter()
+        .map(|domain| (*domain).to_owned())
+        .collect::<Vec<_>>();
+    if identity_required {
+        required_domains.push("identity".to_owned());
+    }
+    let optional_domains = LENS_OPTIONAL_DOMAINS
+        .iter()
+        .filter(|domain| !identity_required || **domain != "identity")
+        .map(|domain| (*domain).to_owned())
+        .collect::<Vec<_>>();
     let handlers = nscript_napplet::handler_filters(&checked, None);
     let filters = handlers
         .iter()
@@ -198,11 +212,12 @@ fn napplet_requirements(arguments: &[String]) -> ExitCode {
             .and_then(|name| name.to_str())
             .unwrap_or(source),
         "profile": "lens-v1",
-        "requires": LENS_REQUIRED_DOMAINS,
-        "optional": LENS_OPTIONAL_DOMAINS,
+        "requires": required_domains,
+        "optional": optional_domains,
         "principal_required": needs_principal,
         "scope": scope,
         "filters": filters,
+        "inputs": checked.input_sources,
         "module": module,
         "footprint": nscript_semantics::footprint(&program, &checked, &graph, &[]),
     });
@@ -966,6 +981,8 @@ struct RunOptions {
     /// `(name, raw value)` pairs for declared `input`s, resolved against the
     /// checked program's declared types by [`resolve_inputs`].
     inputs: Vec<(String, String)>,
+    /// The clock value backing `now`; defaults to the simulator's fixed time.
+    now: Option<u64>,
 }
 
 /// Separates `--event <json>`, `--events <file>`, `--as <key>`,
@@ -979,7 +996,10 @@ fn take_run_options(arguments: &[String]) -> Result<(Vec<String>, RunOptions), S
     let mut index = 0;
     while index < arguments.len() {
         let flag = arguments[index].as_str();
-        if !matches!(flag, "--event" | "--events" | "--as" | "--fail" | "--input") {
+        if !matches!(
+            flag,
+            "--event" | "--events" | "--as" | "--fail" | "--input" | "--now"
+        ) {
             rest.push(arguments[index].clone());
             index += 1;
             continue;
@@ -1025,6 +1045,11 @@ fn take_run_options(arguments: &[String]) -> Result<(Vec<String>, RunOptions), S
                 };
                 options.inputs.push((name.to_owned(), raw.to_owned()));
             }
+            "--now" => {
+                options.now = Some(value.parse::<u64>().map_err(|_| {
+                    format!("--now expects a Unix timestamp in seconds, found {value}")
+                })?);
+            }
             _ => options.principal = Some(value.clone()),
         }
         index += 2;
@@ -1035,11 +1060,11 @@ fn take_run_options(arguments: &[String]) -> Result<(Vec<String>, RunOptions), S
 /// Resolves `--input name=value` pairs against the checked program's
 /// declared `input`s, parsing each raw CLI string into the declared type.
 ///
-/// Only the scalar types a CLI flag can unambiguously carry are supported:
-/// `Text`, `Integer`/`Int`, `Bool`, `PubKey`. A declared `input` of any other
-/// type, a missing required input, an unknown `--input` name, or a value
-/// that does not parse as its declared type is refused rather than guessed
-/// at.
+/// Only the types a CLI flag can unambiguously carry are supported:
+/// `Text`, `Integer`/`Int`, `Bool`, `PubKey`, and comma-separated
+/// `List<PubKey>`. A declared `input` of any other type, a missing required
+/// input, an unknown `--input` name, or a value that does not parse as its
+/// declared type is refused rather than guessed at.
 fn resolve_inputs(
     raw: &[(String, String)],
     checked: &nscript_semantics::CheckedProgram,
@@ -1063,7 +1088,11 @@ fn resolve_inputs(
             let raw = supplied
                 .get(name.as_str())
                 .ok_or_else(|| format!("missing --input {name}=<value> ({type_name})"))?;
-            let value = match type_name.as_str() {
+            let full_type = checked
+                .input_types
+                .get(name)
+                .map_or(type_name.as_str(), String::as_str);
+            let value = match full_type {
                 "Text" => Value::Text((*raw).to_owned()),
                 "Integer" | "Int" => Value::Int(
                     raw.parse()
@@ -1074,9 +1103,16 @@ fn resolve_inputs(
                         .map_err(|_| format!("--input {name} expects true or false, found {raw}"))?,
                 ),
                 "PubKey" => Value::PubKey((*raw).to_owned()),
+                "List<PubKey>" => Value::List(
+                    raw.split(',')
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(|value| Value::PubKey(value.to_owned()))
+                        .collect(),
+                ),
                 other => {
                     return Err(format!(
-                        "input `{name}` declares type `{other}`, which no CLI flag can supply (only Text, Integer, Bool, and PubKey can)"
+                        "input `{name}` declares type `{other}`, which no CLI flag can supply (only Text, Integer, Bool, PubKey, and List<PubKey> can)"
                     ));
                 }
             };
@@ -1507,7 +1543,9 @@ fn run_program(arguments: &[String]) -> ExitCode {
         ..Default::default()
     };
     let signer = nscript_runtime::FakeSignerHost::default();
-    let clock = nscript_runtime::FakeClock { now: 1_700_000_000 };
+    let clock = nscript_runtime::FakeClock {
+        now: options.now.unwrap_or(1_700_000_000),
+    };
     let audit = nscript_runtime::RecordingAudit::default();
     let mut runtime = nscript_runtime::Runtime::new(relay, signer, clock, audit);
     let mut checked = checked.expect("checked program");
