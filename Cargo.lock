@@ -395,6 +395,7 @@ dependencies = [
  "nscript-host-crypto",
  "nscript-ir",
  "nscript-modules",
+ "nscript-napplet",
  "nscript-runtime",
  "nscript-semantics",
  "nscript-syntax",
@@ -468,6 +469,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nscript-napplet"
+version = "0.3.14"
+dependencies = [
+ "nscript-lang",
+ "nscript-semantics",
+ "nscript-syntax",
+]
+
+[[package]]
 name = "nscript-runtime"
 version = "0.3.14"
 dependencies = [
@@ -508,6 +518,7 @@ dependencies = [
  "nscript-ir",
  "nscript-lang",
  "nscript-modules",
+ "nscript-napplet",
  "nscript-runtime",
  "nscript-semantics",
  "nscript-syntax",

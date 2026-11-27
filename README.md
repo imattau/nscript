@@ -73,6 +73,13 @@ checks, permission and effect inspection, and dry event simulation.
 - [`examples/concord-stream-moderation-bot.ns`](examples/concord-stream-moderation-bot.ns)
   is a moderation bot for encrypted group chat. See
   [`docs/CONCORD-BOT.md`](docs/CONCORD-BOT.md) for what works today.
+- [`examples/napplet-lens/`](examples/napplet-lens/) is the read-only
+  **NScript Lens** napplet: editable, checked NScript rules scope an outbox
+  query and produce local hide/label/pin/flag decisions.
+- `nscript napplet requirements <file.ns>` derives the supported NAP domains,
+  handler filters, and module hash; `nscript napplet build <project-directory>`
+  writes the requirements and runs the project's Vite build. The reusable
+  embedding API is in [`npm/nscript-napplet/`](npm/nscript-napplet/).
 - [`examples/service-operator-bot.ns`](examples/service-operator-bot.ns) shows
   several Nostr community conventions working together.
 
@@ -90,6 +97,10 @@ explains exactly which, and [`ROADMAP.md`](ROADMAP.md) lists what comes next.
 - [`spec/`](spec/): the formal language and runtime specification.
 - [`docs/`](docs/): guides for deployment, Concord, signing and packaging.
 - [`rfcs/`](rfcs/): proposals, including package distribution.
+- [`rfcs/0003-napplets.md`](rfcs/0003-napplets.md): proposed napplet host
+  adapter and reference applet roadmap.
+- [`docs/NAPPLETS.md`](docs/NAPPLETS.md): the implemented lens profile, query
+  scoping, decisions, and browser session ABI.
 - [`conformance/`](conformance/): example programs and tests that any
   implementation must pass.
 - [`PLAN.md`](PLAN.md): the implementation history and original phase plan.

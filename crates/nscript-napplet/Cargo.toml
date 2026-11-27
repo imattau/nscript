@@ -1,0 +1,18 @@
+[package]
+name = "nscript-napplet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Capability mapping for NScript napplet integrations"
+
+[dependencies]
+nscript-semantics = { path = "../nscript-semantics" }
+nscript-syntax = { path = "../nscript-syntax" }
+
+[dev-dependencies]
+nscript-lang = { path = "../nscript-lang" }
+
+[lints]
+workspace = true

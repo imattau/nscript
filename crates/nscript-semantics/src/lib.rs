@@ -1530,6 +1530,8 @@ fn operation_category(permission: &str, effects: &[String]) -> CapabilityCategor
         CapabilityCategory::Secrets
     } else if effects.iter().any(|effect| effect == "Storage") {
         CapabilityCategory::Storage
+    } else if effects.iter().any(|effect| effect == "View") {
+        CapabilityCategory::System
     } else {
         CapabilityCategory::Nostr
     }

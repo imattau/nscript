@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="A programmable, shell-mediated NScript lens for your Nostr mentions and following feed." />
+    <title>NScript Lens</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <div class="brand">
+          <p class="eyebrow">NSCRIPT · NAPPLET</p>
+          <h1>Lens</h1>
+          <p class="lede">Your mentions and feed, filtered by rules you can read, review, and change.</p>
+        </div>
+        <div class="identity-card">
+          <span class="status-line"><span id="status-dot"></span><span id="status">Loading runtime…</span></span>
+          <strong id="identity-name">No signer connected</strong>
+          <span id="identity-key" class="muted">Mentions rules need a signer.</span>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <div class="editor-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">RULE PROGRAM</p>
+              <h2>NScript</h2>
+            </div>
+            <div class="actions">
+              <select id="preset" aria-label="Rule preset">
+                <option value="mentions">Quiet mentions</option>
+                <option value="following">Following lens</option>
+                <option value="topic">Nostr topic</option>
+                <option value="blank">Blank mentions rule</option>
+              </select>
+              <button id="stop" class="quiet" disabled>Stop</button>
+              <button id="activate" class="primary" disabled>Activate lens</button>
+            </div>
+          </div>
+
+          <div class="scope-row">
+            <span class="scope-chip" id="scope-chip">Reading: checking…</span>
+            <span class="scope-note" id="scope-note">The handler predicate becomes the shell query.</span>
+          </div>
+
+          <textarea id="source" spellcheck="false" aria-label="NScript lens rule"></textarea>
+
+          <div class="editor-footer">
+            <span id="compile-state">Checking source…</span>
+            <span>Read-only · no publishing or signing</span>
+          </div>
+        </div>
+
+        <aside class="info-card">
+          <p class="eyebrow">REVIEW</p>
+          <h2>What this rule can do</h2>
+          <div id="review-summary" class="review-summary">Checking…</div>
+          <div id="footprint" class="footprint"></div>
+          <div class="shell-capability">
+            <span class="cap-icon">↗</span>
+            <div>
+              <strong id="domains">outbox</strong>
+              <span id="domains-note">Relay reads stay behind the shell.</span>
+            </div>
+          </div>
+          <div id="diagnostics" class="diagnostics" hidden></div>
+          <p id="storage-note" class="storage-note">Rules are saved through shell storage when available.</p>
+        </aside>
+      </section>
+
+      <section class="feed-section">
+        <div class="section-heading feed-heading">
+          <div>
+            <p class="eyebrow">LIVE LENS</p>
+            <h2>Results <span id="count" class="count">0</span></h2>
+          </div>
+          <div class="feed-tabs" role="tablist" aria-label="Result filter">
+            <button class="tab active" data-filter="all" role="tab" aria-selected="true">All</button>
+            <button class="tab" data-filter="labeled" role="tab" aria-selected="false">Labeled</button>
+            <button class="tab" data-filter="hidden" role="tab" aria-selected="false">Hidden</button>
+          </div>
+        </div>
+
+        <div class="stats" id="stats">
+          <span><strong id="stat-scanned">0</strong> scanned</span>
+          <span><strong id="stat-kept">0</strong> kept</span>
+          <span><strong id="stat-hidden">0</strong> hidden</span>
+          <span><strong id="stat-labeled">0</strong> labeled</span>
+          <span><strong id="stat-errors">0</strong> errors</span>
+        </div>
+
+        <p id="feed-hint" class="feed-hint">Activate a checked rule to start the lens.</p>
+        <div id="feed" class="feed-grid">
+          <div class="empty-state">Nothing here yet. The shell supplies notes; your rule decides what to show.</div>
+        </div>
+      </section>
+
+      <footer>
+        NScript runs in a WebAssembly sandbox. The shell supplies relay reads and identity; the rule never sees keys, relays, or the shell namespace.
+      </footer>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

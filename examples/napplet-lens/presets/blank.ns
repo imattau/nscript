@@ -1,0 +1,14 @@
+use nip01
+use lens
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    view
+}
+
+on Note where tags.p contains me {
+    lens.label("inbox", "mention")
+}

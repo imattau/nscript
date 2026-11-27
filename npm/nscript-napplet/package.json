@@ -1,0 +1,13 @@
+{
+  "name": "@nscript/napplet",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Checked NScript lens runtime for napplets",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

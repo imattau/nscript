@@ -378,6 +378,7 @@ const BUILTINS: &[(&str, &str)] = &[
         "nipa3",
         include_str!("../../../modules/std/nipa3/0.1.0.nsm"),
     ),
+    ("lens", include_str!("../../../modules/std/lens/0.1.0.nsm")),
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -862,7 +863,7 @@ mod tests {
     fn discovers_standard_layout() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../modules/std");
         let mut registry = ModuleRegistry::default();
-        assert_eq!(registry.load_root(&root).unwrap(), 93);
+        assert_eq!(registry.load_root(&root).unwrap(), 94);
     }
 
     /// Every built-in module's declared name (a type, event, tag, error,

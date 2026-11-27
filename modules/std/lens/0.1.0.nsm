@@ -1,0 +1,8 @@
+module lens @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/imattau/nscript/blob/main/rfcs/0003-napplets.md"
+
+operation hide(reason: Text) -> Bool effect View permission view
+operation label(name: Text, value: Text) -> Bool effect View permission view
+operation pin(reason: Text) -> Bool effect View permission view
+operation flag(reason: Text) -> Bool effect View permission view

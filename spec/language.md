@@ -160,9 +160,10 @@ NScript has no exceptions.
 
 The compiler infers a closed effect set for every function. Standard effects are
 `Relay`, `Sign`, `Encrypt`, `Decrypt`, `Storage`, `HTTP`, `Filesystem`, `Payment`,
-`Clock`, and `Log`. Pure functions have an empty set. Effects propagate through
-calls and generic callbacks. Recursion is permitted but subject to host resource
-limits.
+`Clock`, `Log`, and `View`. `View` is a local presentation effect: an operation
+that records a UI decision without publishing, signing, storing, or fetching
+anything. Pure functions have an empty set. Effects propagate through calls and
+generic callbacks. Recursion is permitted but subject to host resource limits.
 
 Every reachable effect must be covered by a top-level permission. Unused
 permissions produce a warning. Dynamically constructing authority is forbidden.

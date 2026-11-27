@@ -17,14 +17,17 @@
 //!
 //! Requests and responses are JSON. A response is `{"ok":true,"result":…}` or
 //! `{"ok":false,"error":{"message":…}}`. Supported operations: `version`,
-//! `analyze`, `inspect`, `ir`, `compile`, and `run`.
+//! `analyze`, `inspect`, `ir`, `compile`, `run`, `napplet_check`,
+//! `napplet_event`, `napplet_open`, `napplet_eval`, and `napplet_close`.
 
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use nscript_runtime::{
     FakeClock, FakeLogHost, FakeOperationHost, FakeRelayHost, FakeSignerHost, FakeTimerHost,
-    InMemoryStorage, OperationPolicy, RecordingAudit, Runtime, SignedEvent, UnsignedEvent, eval,
+    InMemoryStorage, OperationPolicy, OperationValue, RecordingAudit, Runtime, SignedEvent,
+    UnsignedEvent, eval,
 };
 use nscript_semantics::{CheckedProgram, bind_module_events, check, footprint, infer};
 use nscript_syntax::{Diagnostic, Program};
@@ -172,6 +175,11 @@ fn process_request(request: &str) -> String {
         "completions" => handle_completions(source, &modules, &value),
         "hover" => handle_hover(source, &modules, &value),
         "test_event" => handle_test_event(source, &modules, &value),
+        "napplet_check" => handle_napplet_check(source, &modules, &value),
+        "napplet_event" => handle_napplet_event(source, &modules, &value),
+        "napplet_open" => handle_napplet_open(source, &modules, &value),
+        "napplet_eval" => handle_napplet_eval(&value),
+        "napplet_close" => handle_napplet_close(&value),
         "manifest" => handle_manifest(source, &modules, &value),
         "lock" => handle_lock(source, &modules),
         other => error_response(&format!("unknown operation `{other}`")),
@@ -193,6 +201,20 @@ struct Loaded {
     program: Program,
     graph: nscript_modules::ResolvedModuleGraph,
     diagnostics: Vec<Diagnostic>,
+}
+
+const MAX_NAPP_LEVEL_SESSIONS: usize = 8;
+
+struct NappletSession {
+    loaded: Loaded,
+    checked: CheckedProgram,
+    principal: Option<String>,
+}
+
+thread_local! {
+    static NAPPLET_SESSIONS: RefCell<BTreeMap<u64, NappletSession>> =
+        const { RefCell::new(BTreeMap::new()) };
+    static NEXT_NAPLET_SESSION: Cell<u64> = const { Cell::new(1) };
 }
 
 #[must_use]
@@ -611,6 +633,471 @@ fn handle_test_event(source: &str, modules: &[ModuleSource], request: &Value) ->
     }
 }
 
+/// Checks an `NScript` program against the intentionally small authority surface
+/// available to the reference napplet. The shell still makes the final grant
+/// decision; this check prevents the applet from accepting scripts that need
+/// capabilities it cannot mediate.
+fn checked_napplet_program(
+    source: &str,
+    modules: &[ModuleSource],
+    ceiling: &[String],
+) -> Result<(Loaded, CheckedProgram), Vec<Value>> {
+    let loaded = load(source, modules);
+    if !loaded.diagnostics.is_empty() {
+        return Err(diagnostics_json(&loaded.diagnostics));
+    }
+    let (checked_result, diagnostics) = check(&loaded.program);
+    if !diagnostics.is_empty() {
+        return Err(diagnostics_json(&diagnostics));
+    }
+    let Some(mut checked) = checked_result else {
+        return Err(vec![napplet_diagnostic(
+            "NAPPLET000",
+            "program did not type-check",
+        )]);
+    };
+    bind_module_events(&loaded.graph, &mut checked);
+
+    if let Err(message) = nscript_napplet::validate_lens_profile(&loaded.program, &checked) {
+        return Err(vec![napplet_diagnostic("NAPPLET001", &message)]);
+    }
+    if let Err(message) = nscript_napplet::check_capability_ceiling(
+        nscript_napplet::LENS_REQUIRED_DOMAINS.iter().copied(),
+        ceiling,
+    ) {
+        return Err(vec![napplet_diagnostic("NAPPLET003", &message)]);
+    }
+    Ok((loaded, checked))
+}
+
+fn napplet_diagnostic(code: &'static str, message: &str) -> Value {
+    json!({
+        "code": code,
+        "severity": "error",
+        "message": message,
+        "line": 0,
+        "column": 0,
+        "start": 0,
+        "end": 0,
+    })
+}
+
+fn capability_ceiling(request: &Value) -> Result<Vec<String>, String> {
+    let Some(value) = request.get("capability_ceiling") else {
+        return Ok(nscript_napplet::LENS_REQUIRED_DOMAINS
+            .iter()
+            .map(|domain| (*domain).to_owned())
+            .collect());
+    };
+    let Some(domains) = value.as_array() else {
+        return Err("`capability_ceiling` must be an array of NAP domain names".to_owned());
+    };
+    domains
+        .iter()
+        .map(|domain| {
+            domain
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "`capability_ceiling` must contain only strings".to_owned())
+        })
+        .collect()
+}
+
+fn request_principal(request: &Value) -> Option<String> {
+    request
+        .get("principal")
+        .and_then(Value::as_str)
+        .filter(|principal| !principal.is_empty())
+        .map(str::to_owned)
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    let mut rendered = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(rendered, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    rendered
+}
+
+fn napplet_module_json(loaded: &Loaded) -> Value {
+    loaded
+        .graph
+        .modules
+        .get("lens")
+        .map_or(Value::Null, |registered| {
+            json!({
+                "name": "lens",
+                "version": registered.descriptor.id.version.to_string(),
+                "sha256": hex_digest(&registered.descriptor.canonical_hash),
+            })
+        })
+}
+
+fn scope_json(filters: &[nscript_napplet::HandlerFilter], principal: Option<&str>) -> Value {
+    if filters.is_empty() {
+        return json!({
+            "kind": "none",
+            "label": "No readable Note handler",
+        });
+    }
+    if principal.is_none() && filters.iter().any(|filter| filter.uses_principal) {
+        return json!({
+            "kind": "principal",
+            "label": "Connect a signer to read mentions",
+        });
+    }
+    let mentions = filters.iter().all(|filter| {
+        principal.is_some_and(|principal| {
+            filter
+                .tags
+                .iter()
+                .any(|(name, value)| name == "p" && value == principal)
+        })
+    });
+    if mentions {
+        json!({ "kind": "mentions", "label": "Notes mentioning you" })
+    } else if filters
+        .iter()
+        .all(|filter| filter.authors.is_empty() && filter.tags.is_empty())
+    {
+        json!({ "kind": "following", "label": "Your shell outbox feed" })
+    } else {
+        json!({ "kind": "custom", "label": "Notes matching your handler filters" })
+    }
+}
+
+fn filters_json(filters: &[nscript_napplet::HandlerFilter], limit: u64) -> Vec<Value> {
+    nscript_napplet::lower_filters(filters, limit)
+        .into_iter()
+        .map(|filter| {
+            let mut object = serde_json::Map::new();
+            object.insert(
+                "kinds".to_owned(),
+                Value::Array(
+                    filter
+                        .kinds
+                        .iter()
+                        .map(|kind| json!(*kind))
+                        .collect::<Vec<_>>(),
+                ),
+            );
+            if !filter.authors.is_empty() {
+                object.insert(
+                    "authors".to_owned(),
+                    Value::Array(
+                        filter
+                            .authors
+                            .iter()
+                            .map(|author| json!(author))
+                            .collect::<Vec<_>>(),
+                    ),
+                );
+            }
+            for (name, values) in filter.tags {
+                object.insert(
+                    name,
+                    Value::Array(values.iter().map(|value| json!(value)).collect::<Vec<_>>()),
+                );
+            }
+            object.insert("limit".to_owned(), json!(filter.limit));
+            Value::Object(object)
+        })
+        .collect()
+}
+
+fn napplet_check_result(
+    loaded: &Loaded,
+    checked: &CheckedProgram,
+    ceiling: &[String],
+    principal: Option<&str>,
+    limit: u64,
+) -> Value {
+    let requested = footprint(&loaded.program, checked, &loaded.graph, &[]);
+    let needs_principal = nscript_napplet::principal_required(&loaded.program, checked);
+    let filters = nscript_napplet::handler_filters(checked, principal);
+    let ready = !needs_principal || principal.is_some();
+    let subscriptions = if ready {
+        filters_json(&filters, limit)
+    } else {
+        Vec::new()
+    };
+    json!({
+        "checked": true,
+        "diagnostics": [],
+        "footprint": requested,
+        "requires": nscript_napplet::LENS_REQUIRED_DOMAINS,
+        "optional": nscript_napplet::LENS_OPTIONAL_DOMAINS,
+        "ceiling": ceiling,
+        "profile": "lens-v1",
+        "principal_required": needs_principal,
+        "ready": ready,
+        "subscriptions": subscriptions,
+        "scope": scope_json(&filters, principal),
+        "decision_ops": nscript_napplet::LENS_OPERATIONS,
+        "module": napplet_module_json(loaded),
+    })
+}
+
+fn napplet_not_checked(diagnostics: &[Value], ceiling: &[String]) -> Value {
+    json!({
+        "checked": false,
+        "diagnostics": diagnostics,
+        "footprint": null,
+        "requires": nscript_napplet::LENS_REQUIRED_DOMAINS,
+        "optional": nscript_napplet::LENS_OPTIONAL_DOMAINS,
+        "ceiling": ceiling,
+        "profile": "lens-v1",
+        "principal_required": false,
+        "ready": false,
+        "subscriptions": [],
+        "scope": { "kind": "none", "label": "Fix the script first" },
+        "decision_ops": nscript_napplet::LENS_OPERATIONS,
+        "module": null,
+    })
+}
+
+fn operation_text(value: &OperationValue) -> Option<&str> {
+    match value {
+        OperationValue::Text(text) | OperationValue::PubKey(text) => Some(text),
+        _ => None,
+    }
+}
+
+fn bounded(value: &str, max: usize) -> String {
+    value.chars().take(max).collect()
+}
+
+fn decisions_json(operations: &[eval::SimulatedCall]) -> (Vec<Value>, Vec<Value>) {
+    let mut decisions = Vec::new();
+    let mut failures = Vec::new();
+    for call in operations {
+        if call.module != "lens" {
+            continue;
+        }
+        let argument = |index: usize| {
+            call.arguments
+                .get(index)
+                .and_then(operation_text)
+                .map(|value| bounded(value, 200))
+        };
+        let decision = match call.operation.as_str() {
+            "hide" => argument(0).map(|reason| {
+                json!({
+                    "action": "hide",
+                    "reason": reason,
+                })
+            }),
+            "pin" => argument(0).map(|reason| {
+                json!({
+                    "action": "pin",
+                    "reason": reason,
+                })
+            }),
+            "flag" => argument(0).map(|reason| {
+                json!({
+                    "action": "flag",
+                    "reason": reason,
+                })
+            }),
+            "label" => match (argument(0), argument(1)) {
+                (Some(name), Some(value)) => Some(json!({
+                    "action": "label",
+                    "name": bounded(&name, 64),
+                    "value": value,
+                })),
+                _ => None,
+            },
+            _ => None,
+        };
+        match decision {
+            Some(decision) if decisions.len() < 32 => decisions.push(decision),
+            Some(_) => {}
+            None => failures.push(json!({
+                "handler": "lens",
+                "error": format!("malformed `lens.{}` decision", call.operation),
+            })),
+        }
+    }
+    (decisions, failures)
+}
+
+fn evaluate_event(
+    loaded: &Loaded,
+    checked: &CheckedProgram,
+    principal: Option<&str>,
+    event: &SignedEvent,
+) -> String {
+    let mut relay = FakeRelayHost::default();
+    let mut storage = InMemoryStorage::default();
+    let mut logs = FakeLogHost::default();
+    let mut operations = simulated_operations(&loaded.graph);
+    match Runtime::<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit>::simulate_event(
+        &loaded.program,
+        checked,
+        &mut relay,
+        &mut storage,
+        &mut logs,
+        &mut operations,
+        principal,
+        event,
+    ) {
+        Ok(report) => {
+            let (decisions, mut decision_failures) = decisions_json(&report.operations);
+            decision_failures.extend(report.failures.iter().map(|failure| {
+                json!({
+                    "handler": failure.handler,
+                    "error": format!("{:?}", failure.error),
+                })
+            }));
+            ok(json!({
+                "checked": true,
+                "diagnostics": [],
+                "accepted": report.dispatched > 0 && report.failures.is_empty(),
+                "matched": report.dispatched > 0,
+                "dispatched": report.dispatched,
+                "decisions": decisions,
+                "logs": report.logs.iter().take(20).map(|record| json!({
+                    "level": record.level,
+                    "message": bounded(&record.message, 500),
+                })).collect::<Vec<_>>(),
+                "failures": decision_failures,
+            }))
+        }
+        Err(error) => ok(json!({
+            "checked": true,
+            "diagnostics": [napplet_diagnostic("NAPPLET002", &format!("event could not be evaluated: {error:?}"))],
+            "accepted": false,
+            "matched": true,
+            "dispatched": 0,
+            "decisions": [],
+            "logs": [],
+            "failures": [{
+                "handler": "lens",
+                "error": format!("{error:?}"),
+            }],
+        })),
+    }
+}
+
+fn event_limit(request: &Value) -> u64 {
+    request
+        .get("limit")
+        .and_then(Value::as_u64)
+        .filter(|limit| (1..=200).contains(limit))
+        .unwrap_or(50)
+}
+
+fn handle_napplet_check(source: &str, modules: &[ModuleSource], request: &Value) -> String {
+    let ceiling = match capability_ceiling(request) {
+        Ok(ceiling) => ceiling,
+        Err(error) => return error_response(&error),
+    };
+    let principal = request_principal(request);
+    match checked_napplet_program(source, modules, &ceiling) {
+        Ok((loaded, checked)) => ok(napplet_check_result(
+            &loaded,
+            &checked,
+            &ceiling,
+            principal.as_deref(),
+            event_limit(request),
+        )),
+        Err(diagnostics) => ok(napplet_not_checked(&diagnostics, &ceiling)),
+    }
+}
+
+fn handle_napplet_event(source: &str, modules: &[ModuleSource], request: &Value) -> String {
+    let ceiling = match capability_ceiling(request) {
+        Ok(ceiling) => ceiling,
+        Err(error) => return error_response(&error),
+    };
+    let principal = request_principal(request);
+    let (loaded, checked) = match checked_napplet_program(source, modules, &ceiling) {
+        Ok(program) => program,
+        Err(diagnostics) => {
+            return ok(napplet_not_checked(&diagnostics, &ceiling));
+        }
+    };
+    let Some(event) = parse_test_event(request.get("event")) else {
+        return error_response("napplet_event requires an `event` object");
+    };
+    evaluate_event(&loaded, &checked, principal.as_deref(), &event)
+}
+
+fn handle_napplet_open(source: &str, modules: &[ModuleSource], request: &Value) -> String {
+    let ceiling = match capability_ceiling(request) {
+        Ok(ceiling) => ceiling,
+        Err(error) => return error_response(&error),
+    };
+    let principal = request_principal(request);
+    let (loaded, checked) = match checked_napplet_program(source, modules, &ceiling) {
+        Ok(program) => program,
+        Err(diagnostics) => return ok(napplet_not_checked(&diagnostics, &ceiling)),
+    };
+    let result = napplet_check_result(
+        &loaded,
+        &checked,
+        &ceiling,
+        principal.as_deref(),
+        event_limit(request),
+    );
+    let id = NEXT_NAPLET_SESSION.with(|next| {
+        let id = next.get();
+        next.set(id.saturating_add(1));
+        id
+    });
+    NAPPLET_SESSIONS.with(|sessions| {
+        let mut sessions = sessions.borrow_mut();
+        if sessions.len() >= MAX_NAPP_LEVEL_SESSIONS
+            && let Some((oldest, _)) = sessions.iter().next()
+        {
+            let oldest = *oldest;
+            sessions.remove(&oldest);
+        }
+        sessions.insert(
+            id,
+            NappletSession {
+                loaded,
+                checked,
+                principal,
+            },
+        );
+    });
+    let mut result = result;
+    if let Some(object) = result.as_object_mut() {
+        object.insert("session".to_owned(), json!(id));
+    }
+    ok(result)
+}
+
+fn handle_napplet_eval(request: &Value) -> String {
+    let Some(id) = request.get("session").and_then(Value::as_u64) else {
+        return error_response("napplet_eval requires a numeric `session`");
+    };
+    let Some(event) = parse_test_event(request.get("event")) else {
+        return error_response("napplet_eval requires an `event` object");
+    };
+    NAPPLET_SESSIONS.with(|sessions| {
+        let sessions = sessions.borrow();
+        let Some(session) = sessions.get(&id) else {
+            return error_response("unknown napplet session");
+        };
+        evaluate_event(
+            &session.loaded,
+            &session.checked,
+            session.principal.as_deref(),
+            &event,
+        )
+    })
+}
+
+fn handle_napplet_close(request: &Value) -> String {
+    let Some(id) = request.get("session").and_then(Value::as_u64) else {
+        return error_response("napplet_close requires a numeric `session`");
+    };
+    let removed = NAPPLET_SESSIONS.with(|sessions| sessions.borrow_mut().remove(&id).is_some());
+    ok(json!({ "closed": removed }))
+}
+
 fn parse_inputs(value: Option<&Value>) -> Option<BTreeMap<String, eval::Value>> {
     let Some(value) = value else {
         return Some(BTreeMap::new());
@@ -677,6 +1164,12 @@ fn parse_test_event(value: Option<&Value>) -> Option<SignedEvent> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let signer = value
+        .get("signer")
+        .or_else(|| value.get("pubkey"))
+        .and_then(Value::as_str)
+        .unwrap_or("alice")
+        .to_owned();
     Some(SignedEvent {
         unsigned: UnsignedEvent {
             event_type: as_text("event_type", "Note"),
@@ -685,7 +1178,7 @@ fn parse_test_event(value: Option<&Value>) -> Option<SignedEvent> {
             tags,
             created_at: value.get("created_at").and_then(Value::as_u64).unwrap_or(0),
         },
-        signer: as_text("signer", "alice"),
+        signer,
         id: as_text("id", "test-event"),
         signature: as_text("signature", "sig"),
     })
@@ -1042,6 +1535,231 @@ mod tests {
         assert!(response["result"]["executed"].as_bool().unwrap());
         assert_eq!(response["result"]["report"]["dispatched"], 1);
         assert_eq!(response["result"]["report"]["logs"][0]["message"], "hello");
+    }
+
+    #[test]
+    fn napplet_check_reports_the_required_outbox_domain() {
+        let source = include_str!("../../../examples/napplet-lens/filter.ns");
+        let response =
+            result(&serde_json::json!({ "op": "napplet_check", "source": source }).to_string());
+        assert_eq!(response["result"]["checked"], true);
+        assert_eq!(response["result"]["requires"][0], "outbox");
+    }
+
+    #[test]
+    fn napplet_check_enforces_the_enclosing_capability_ceiling() {
+        let source = include_str!("../../../examples/napplet-lens/filter.ns");
+        let response = result(
+            &serde_json::json!({
+                "op": "napplet_check",
+                "source": source,
+                "capability_ceiling": []
+            })
+            .to_string(),
+        );
+        assert_eq!(response["result"]["checked"], false);
+        assert_eq!(response["result"]["diagnostics"][0]["code"], "NAPPLET003");
+    }
+
+    #[test]
+    fn napplet_event_returns_structured_lens_decisions() {
+        let source = include_str!("../../../examples/napplet-lens/filter.ns");
+        let labeled = serde_json::json!({
+            "op": "napplet_event",
+            "source": source,
+            "principal": "me",
+            "event": { "id": "one", "pubkey": "author", "kind": 1, "content": "nostr note", "tags": [["p", "me"]] }
+        });
+        let hidden = serde_json::json!({
+            "op": "napplet_event",
+            "source": source,
+            "principal": "me",
+            "event": { "id": "two", "pubkey": "author", "kind": 1, "content": "airdrop now", "tags": [["p", "me"]] }
+        });
+        let plain = serde_json::json!({
+            "op": "napplet_event",
+            "source": source,
+            "principal": "me",
+            "event": { "id": "three", "pubkey": "author", "kind": 1, "content": "hello", "tags": [["p", "me"]] }
+        });
+        let labeled = result(&labeled.to_string());
+        assert_eq!(labeled["result"]["accepted"], true);
+        assert_eq!(labeled["result"]["decisions"][0]["action"], "label");
+        assert_eq!(labeled["result"]["decisions"][0]["value"], "nostr");
+        let hidden = result(&hidden.to_string());
+        assert_eq!(hidden["result"]["decisions"][0]["action"], "hide");
+        assert_eq!(hidden["result"]["decisions"][0]["reason"], "promotion");
+        let plain = result(&plain.to_string());
+        assert_eq!(plain["result"]["accepted"], true);
+        assert_eq!(plain["result"]["decisions"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn napplet_check_rejects_programs_outside_the_filter_profile() {
+        let source = include_str!("../../../examples/napplet-lens/filter.ns");
+        let source = source.replace(
+            "relayset public = configured",
+            "relayset public = configured\ninput extra: Text",
+        );
+        let response =
+            result(&serde_json::json!({ "op": "napplet_check", "source": source }).to_string());
+        assert_eq!(response["result"]["checked"], false);
+        assert_eq!(response["result"]["diagnostics"][0]["code"], "NAPPLET001");
+    }
+
+    #[test]
+    fn napplet_check_derives_mentions_filters_and_requires_a_principal() {
+        let source = r#"use nip01
+use lens
+relayset public = configured
+permissions {
+    read Note from public
+    relay public
+    view
+}
+on Note where tags.p contains me {
+    if event.content contains "spam" {
+        lens.hide("promotion")
+    }
+}
+"#;
+        let without =
+            result(&serde_json::json!({ "op": "napplet_check", "source": source }).to_string());
+        assert_eq!(without["result"]["checked"], true);
+        assert_eq!(without["result"]["principal_required"], true);
+        assert_eq!(without["result"]["ready"], false);
+        assert_eq!(without["result"]["scope"]["kind"], "principal");
+        assert_eq!(
+            without["result"]["subscriptions"].as_array().unwrap().len(),
+            0
+        );
+
+        let with = result(
+            &serde_json::json!({
+                "op": "napplet_check",
+                "source": source,
+                "principal": "abcdef"
+            })
+            .to_string(),
+        );
+        assert_eq!(with["result"]["ready"], true);
+        assert_eq!(with["result"]["scope"]["kind"], "mentions");
+        assert_eq!(with["result"]["subscriptions"][0]["#p"][0], "abcdef");
+        assert_eq!(with["result"]["module"]["name"], "lens");
+    }
+
+    #[test]
+    fn napplet_sessions_reuse_the_checked_program() {
+        let source = include_str!("../../../examples/napplet-lens/filter.ns");
+        let opened = result(
+            &serde_json::json!({
+                "op": "napplet_open",
+                "source": source,
+                "principal": "me"
+            })
+            .to_string(),
+        );
+        assert_eq!(opened["result"]["checked"], true);
+        let session = opened["result"]["session"].as_u64().unwrap();
+
+        let event = serde_json::json!({
+            "id": "one",
+            "pubkey": "author",
+            "kind": 1,
+            "content": "airdrop now",
+            "tags": [["p", "me"]]
+        });
+        let evaluated = result(
+            &serde_json::json!({
+                "op": "napplet_eval",
+                "session": session,
+                "event": event
+            })
+            .to_string(),
+        );
+        assert_eq!(evaluated["result"]["decisions"][0]["action"], "hide");
+
+        let closed =
+            result(&serde_json::json!({ "op": "napplet_close", "session": session }).to_string());
+        assert_eq!(closed["result"]["closed"], true);
+        let after = result(
+            &serde_json::json!({
+                "op": "napplet_eval",
+                "session": session,
+                "event": event
+            })
+            .to_string(),
+        );
+        assert_eq!(after["ok"], false);
+    }
+
+    #[test]
+    fn napplet_pins_a_priority_author_inside_a_mentions_handler() {
+        let source = r#"use nip01
+use lens
+relayset public = configured
+permissions {
+    read Note from public
+    relay public
+    view
+}
+on Note where tags.p contains me {
+    if text(event.author) in ["priority"] {
+        lens.pin("priority contact")
+    }
+}
+"#;
+        let response = result(
+            &serde_json::json!({
+                "op": "napplet_event",
+                "source": source,
+                "principal": "me",
+                "event": {
+                    "id": "one",
+                    "pubkey": "priority",
+                    "kind": 1,
+                    "content": "hello",
+                    "tags": [["p", "me"]]
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(response["result"]["accepted"], true);
+        assert_eq!(response["result"]["decisions"][0]["action"], "pin");
+    }
+
+    #[test]
+    fn napplet_reports_a_failed_evaluation_without_dropping_the_note() {
+        let source = r#"use nip01
+use lens
+relayset public = configured
+permissions {
+    read Note from public
+    relay public
+    view
+}
+on Note {
+    let broken = 1 / 0
+    lens.hide("never")
+}
+"#;
+        let response = result(
+            &serde_json::json!({
+                "op": "napplet_event",
+                "source": source,
+                "event": {
+                    "id": "one",
+                    "pubkey": "author",
+                    "kind": 1,
+                    "content": "hello",
+                    "tags": []
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(response["result"]["matched"], true);
+        assert_eq!(response["result"]["decisions"].as_array().unwrap().len(), 0);
+        assert_eq!(response["result"]["failures"].as_array().unwrap().len(), 1);
     }
 
     #[test]

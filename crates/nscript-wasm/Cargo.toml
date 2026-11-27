@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 nscript-ir = { path = "../nscript-ir" }
 nscript-lang = { path = "../nscript-lang" }
 nscript-modules = { path = "../nscript-modules" }
+nscript-napplet = { path = "../nscript-napplet" }
 nscript-runtime = { path = "../nscript-runtime", default-features = false }
 nscript-semantics = { path = "../nscript-semantics" }
 nscript-syntax = { path = "../nscript-syntax" }

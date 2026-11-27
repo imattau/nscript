@@ -1,0 +1,18 @@
+use nip01
+use lens
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    view
+}
+
+on Note where tags.t contains "nostr" {
+    lens.label("topic", "nostr")
+
+    if event.content contains "airdrop" {
+        lens.hide("promotion")
+    }
+}

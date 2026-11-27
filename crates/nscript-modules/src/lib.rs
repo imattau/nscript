@@ -470,6 +470,7 @@ impl Parser {
             "Payment",
             "Clock",
             "Log",
+            "View",
         ];
         for effect in &effects {
             if !allowed.contains(&effect.as_str()) {

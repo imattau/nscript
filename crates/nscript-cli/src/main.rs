@@ -3,10 +3,13 @@ use std::{
     fmt::Write as _,
     fs,
     path::{Path, PathBuf},
-    process::ExitCode,
+    process::{Command, ExitCode},
 };
 
 use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_hex, parse_module};
+use nscript_napplet::{
+    LENS_OPTIONAL_DOMAINS, LENS_REQUIRED_DOMAINS, principal_required, validate_lens_profile,
+};
 use nscript_runtime::{ClockHost, SubscriptionHost};
 use nscript_semantics::{analyze_with_modules, bind_module_events, check};
 use nscript_syntax::{Diagnostic, Program, parse_program};
@@ -31,6 +34,12 @@ fn main() -> ExitCode {
         [package, verify, rest @ ..] if package == "package" && verify == "verify" => {
             package_verify(rest)
         }
+        [napplet, command, rest @ ..] if napplet == "napplet" && command == "requirements" => {
+            napplet_requirements(rest)
+        }
+        [napplet, command, rest @ ..] if napplet == "napplet" && command == "build" => {
+            napplet_build(rest)
+        }
         [command, emit, format, rest @ ..]
             if command == "compile" && emit == "--emit" && format == "ir" =>
         {
@@ -54,9 +63,335 @@ fn main() -> ExitCode {
             eprintln!(
                 "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--as-signer <name>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]... [--input-env <name>=<environment-variable>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
+            eprintln!(
+                "  nscript napplet requirements [-M <directory>]... <file.ns> [--output <file.json>]\n  nscript napplet build <project-directory> [--source <file.ns>] [-M <directory>]... [--verify-reproducible]"
+            );
             ExitCode::from(2)
         }
     }
+}
+
+#[allow(clippy::too_many_lines)]
+fn napplet_requirements(arguments: &[String]) -> ExitCode {
+    let mut compiler_arguments = Vec::new();
+    let mut output = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--output" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    eprintln!("napplet requirements needs a path after --output");
+                    return ExitCode::from(2);
+                };
+                output = Some(path.clone());
+                index += 2;
+            }
+            "--json" => index += 1,
+            "-M" | "--module-path" => {
+                let Some(path) = arguments.get(index + 1) else {
+                    eprintln!("napplet requirements needs a directory after -M");
+                    return ExitCode::from(2);
+                };
+                compiler_arguments.extend([arguments[index].clone(), path.clone()]);
+                index += 2;
+            }
+            _ => {
+                compiler_arguments.push(arguments[index].clone());
+                index += 1;
+            }
+        }
+    }
+    let Some(source) = compiler_arguments.iter().find(|argument| {
+        Path::new(argument)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("ns"))
+    }) else {
+        eprintln!("napplet requirements needs an NScript source file");
+        return ExitCode::from(2);
+    };
+    let Ok((path, program, graph, mut diagnostics)) = load_program(&compiler_arguments) else {
+        return ExitCode::from(2);
+    };
+    diagnostics.extend(analyze_with_modules(&program, &graph));
+    if !diagnostics.is_empty() {
+        return finish(&path, diagnostics);
+    }
+    let (checked, typed_diagnostics) = check(&program);
+    if !typed_diagnostics.is_empty() {
+        return finish(&path, typed_diagnostics);
+    }
+    let Some(mut checked) = checked else {
+        return ExitCode::from(1);
+    };
+    bind_module_events(&graph, &mut checked);
+    if let Err(message) = validate_lens_profile(&program, &checked) {
+        eprintln!("{path}: error[NAPPLET001]: {message}");
+        return ExitCode::FAILURE;
+    }
+    let needs_principal = principal_required(&program, &checked);
+    let handlers = nscript_napplet::handler_filters(&checked, None);
+    let filters = handlers
+        .iter()
+        .enumerate()
+        .map(|(index, filter)| {
+            let mut object = serde_json::Map::new();
+            object.insert("kinds".to_owned(), serde_json::json!(filter.kinds));
+            if !filter.authors.is_empty() {
+                object.insert("authors".to_owned(), serde_json::json!(filter.authors));
+            }
+            if !filter.tags.is_empty() {
+                object.insert(
+                    "tags".to_owned(),
+                    serde_json::json!(
+                        filter
+                            .tags
+                            .iter()
+                            .map(|(name, value)| serde_json::json!([name, value]))
+                            .collect::<Vec<_>>()
+                    ),
+                );
+            }
+            if filter.uses_principal {
+                object.insert("uses_principal".to_owned(), serde_json::json!(true));
+                if let Some(handler) = checked.handlers.get(index)
+                    && !handler.tag_equals_principal.is_empty()
+                {
+                    object.insert(
+                        "principal_tags".to_owned(),
+                        serde_json::json!(handler.tag_equals_principal),
+                    );
+                }
+            }
+            serde_json::Value::Object(object)
+        })
+        .collect::<Vec<_>>();
+    let scope = if needs_principal
+        && !checked.handlers.is_empty()
+        && checked
+            .handlers
+            .iter()
+            .all(|handler| handler.tag_equals_principal.iter().any(|name| name == "p"))
+    {
+        "mentions"
+    } else if handlers
+        .iter()
+        .all(|filter| filter.authors.is_empty() && filter.tags.is_empty())
+    {
+        "following"
+    } else {
+        "custom"
+    };
+    let module = graph.modules.get("lens").map(|registered| {
+        serde_json::json!({
+            "name": "lens",
+            "version": registered.descriptor.id.version.to_string(),
+            "sha256": hash_hex(&registered.descriptor.canonical_hash),
+        })
+    });
+    let requirements = serde_json::json!({
+        "schema": "nscript.napplet-requirements/v2",
+        "source": Path::new(source)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(source),
+        "profile": "lens-v1",
+        "requires": LENS_REQUIRED_DOMAINS,
+        "optional": LENS_OPTIONAL_DOMAINS,
+        "principal_required": needs_principal,
+        "scope": scope,
+        "filters": filters,
+        "module": module,
+        "footprint": nscript_semantics::footprint(&program, &checked, &graph, &[]),
+    });
+    let rendered =
+        serde_json::to_string_pretty(&requirements).expect("napplet requirements are serializable");
+    if let Some(output) = output {
+        if fs::write(&output, format!("{rendered}\n")).is_err() {
+            eprintln!("could not write napplet requirements: {output}");
+            return ExitCode::FAILURE;
+        }
+    } else {
+        println!("{rendered}");
+    }
+    ExitCode::SUCCESS
+}
+
+fn napplet_build(arguments: &[String]) -> ExitCode {
+    let Some(project) = arguments.iter().find(|argument| !argument.starts_with('-')) else {
+        eprintln!("napplet build requires a project directory");
+        return ExitCode::from(2);
+    };
+    let project_path = PathBuf::from(project);
+    if !project_path.join("package.json").is_file() {
+        eprintln!("napplet project has no package.json: {project}");
+        return ExitCode::from(2);
+    }
+    let source_override = arguments
+        .windows(2)
+        .find(|pair| pair[0] == "--source")
+        .map(|pair| pair[1].clone());
+    let source_path = source_override.map_or_else(|| project_path.join("filter.ns"), PathBuf::from);
+    let requirements_path = project_path.join("nscript-napplet.json");
+    let mut requirement_arguments = vec![source_path.to_string_lossy().into_owned()];
+    requirement_arguments.extend([
+        "--output".to_owned(),
+        requirements_path.to_string_lossy().into_owned(),
+    ]);
+    let mut index = 0;
+    while index < arguments.len() {
+        if matches!(arguments[index].as_str(), "-M" | "--module-path") {
+            if let Some(path) = arguments.get(index + 1) {
+                requirement_arguments.extend([arguments[index].clone(), path.clone()]);
+                index += 2;
+                continue;
+            }
+            eprintln!("napplet build needs a directory after -M");
+            return ExitCode::from(2);
+        }
+        index += 1;
+    }
+    let result = napplet_requirements(&requirement_arguments);
+    if result != ExitCode::SUCCESS {
+        return result;
+    }
+    let status = Command::new("npm")
+        .args(["run", "build"])
+        .current_dir(&project_path)
+        .status();
+    match status {
+        Ok(status) if status.success() => {
+            let first_hash = match verify_napplet_artifact(&project_path, &requirements_path) {
+                Ok(hash) => hash,
+                Err(error) => {
+                    eprintln!("napplet build verification failed: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if arguments
+                .iter()
+                .any(|argument| argument == "--verify-reproducible")
+            {
+                let status = Command::new("npm")
+                    .args(["run", "build"])
+                    .current_dir(&project_path)
+                    .status();
+                if !status.is_ok_and(|status| status.success()) {
+                    eprintln!("second build failed during reproducibility check");
+                    return ExitCode::FAILURE;
+                }
+                match verify_napplet_artifact(&project_path, &requirements_path) {
+                    Ok(second_hash) if second_hash == first_hash => {}
+                    Ok(second_hash) => {
+                        eprintln!("reproducibility check failed: {first_hash} != {second_hash}");
+                        return ExitCode::FAILURE;
+                    }
+                    Err(error) => {
+                        eprintln!("reproducibility check failed: {error}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            println!(
+                "napplet built at {}",
+                project_path.join("dist/index.html").display()
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(status) => ExitCode::from(
+            status
+                .code()
+                .and_then(|code| u8::try_from(code).ok())
+                .unwrap_or(1),
+        ),
+        Err(error) => {
+            eprintln!("could not run npm in {project}: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn verify_napplet_artifact(project: &Path, requirements_path: &Path) -> Result<String, String> {
+    let requirements: serde_json::Value = serde_json::from_slice(
+        &fs::read(requirements_path)
+            .map_err(|error| format!("cannot read requirements: {error}"))?,
+    )
+    .map_err(|error| format!("invalid requirements JSON: {error}"))?;
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(project.join("dist/.nip5a-manifest.json"))
+            .map_err(|error| format!("cannot read manifest sidecar: {error}"))?,
+    )
+    .map_err(|error| format!("invalid NIP-5D manifest JSON: {error}"))?;
+    if manifest["kind"].as_u64() != Some(35_129) {
+        return Err("manifest sidecar is not a kind 35129 event".to_owned());
+    }
+    let mut required = requirements["requires"]
+        .as_array()
+        .ok_or_else(|| "requirements has no `requires` array".to_owned())?
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut optional = requirements
+        .get("optional")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let tags = manifest["tags"]
+        .as_array()
+        .ok_or_else(|| "manifest has no tags array".to_owned())?;
+    let mut manifest_required = tags
+        .iter()
+        .filter(|tag| tag[0].as_str() == Some("R"))
+        .filter_map(|tag| tag[1].as_str())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut manifest_optional = tags
+        .iter()
+        .filter(|tag| tag[0].as_str() == Some("O"))
+        .filter_map(|tag| tag[1].as_str())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    required.sort();
+    optional.sort();
+    manifest_required.sort();
+    manifest_optional.sort();
+    if required != manifest_required {
+        return Err(format!(
+            "manifest required domains {manifest_required:?} do not match checked requirements {required:?}"
+        ));
+    }
+    if optional != manifest_optional {
+        return Err(format!(
+            "manifest optional domains {manifest_optional:?} do not match checked requirements {optional:?}"
+        ));
+    }
+    let artifact = fs::read(project.join("dist/index.html"))
+        .map_err(|error| format!("cannot read built index.html: {error}"))?;
+    let digest = Sha256::digest(&artifact);
+    let mut expected_hash = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut expected_hash, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    let hash_tags = tags
+        .iter()
+        .filter(|tag| tag[0].as_str() == Some("x"))
+        .filter_map(|tag| tag[1].as_str())
+        .collect::<Vec<_>>();
+    if hash_tags != [expected_hash.as_str()]
+        || manifest["artifactHash"].as_str() != Some(expected_hash.as_str())
+    {
+        return Err("manifest artifact hash does not match dist/index.html".to_owned());
+    }
+    if manifest["content"].as_str().is_none_or(str::is_empty) {
+        return Err("manifest description is empty".to_owned());
+    }
+    Ok(expected_hash)
 }
 
 #[allow(clippy::too_many_lines)]

@@ -1,0 +1,32 @@
+use nip01
+use lens
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    view
+}
+
+on Note where tags.p contains me {
+    if event.content contains "airdrop" or event.content contains "giveaway" {
+        lens.hide("promotion")
+    }
+
+    if len(event.content) < 16 and event.content contains "http" {
+        lens.hide("link-only reply")
+    }
+
+    if event.content contains "nostr" {
+        lens.label("topic", "nostr")
+    }
+
+    if event.content contains "telegram" {
+        lens.flag("off-platform")
+    }
+
+    if text(event.author) in ["<your-priority-pubkey>"] {
+        lens.pin("priority contact")
+    }
+}

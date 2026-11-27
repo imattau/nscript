@@ -51,6 +51,21 @@ export function createClient(instance) {
     testEvent(source, event, principal = undefined, modules = []) {
       return call({ op: "test_event", source, event, principal, modules });
     },
+    nappletCheck(source, capabilityCeiling = ["outbox"], modules = [], principal = undefined, limit = undefined) {
+      return call({ op: "napplet_check", source, capability_ceiling: capabilityCeiling, modules, principal, limit });
+    },
+    nappletEvent(source, event, capabilityCeiling = ["outbox"], modules = [], principal = undefined) {
+      return call({ op: "napplet_event", source, event, capability_ceiling: capabilityCeiling, modules, principal });
+    },
+    nappletOpen(source, capabilityCeiling = ["outbox"], modules = [], principal = undefined, limit = undefined) {
+      return call({ op: "napplet_open", source, capability_ceiling: capabilityCeiling, modules, principal, limit });
+    },
+    nappletEval(session, event) {
+      return call({ op: "napplet_eval", session, event });
+    },
+    nappletClose(session) {
+      return call({ op: "napplet_close", session });
+    },
     compile(source, modules = []) {
       return call({ op: "compile", source, modules });
     },
@@ -71,6 +86,10 @@ export function createClient(instance) {
 
 export async function loadWasm(url) {
   const bytes = await (await fetch(url)).arrayBuffer();
+  return loadWasmBytes(bytes);
+}
+
+export async function loadWasmBytes(bytes) {
   const { instance } = await WebAssembly.instantiate(bytes, {});
   return createClient(instance);
 }

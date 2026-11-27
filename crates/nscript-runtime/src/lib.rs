@@ -11433,6 +11433,8 @@ impl Runtime<FakeRelayHost, FakeSignerHost, FakeClock, RecordingAudit> {
 mod tests {
     use super::*;
 
+    static FIXTURE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
     #[test]
     fn a_list_valued_field_normalizes_a_follow_or_relay_list() {
         let follow = OperationValue::Record {
@@ -16346,8 +16348,9 @@ mod tests {
     fn process_host_fixture(name: &str, response: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let path = std::env::temp_dir().join(format!(
-            "nscript-process-host-{name}-{}.sh",
-            std::process::id()
+            "nscript-process-host-{name}-{}-{}.sh",
+            std::process::id(),
+            FIXTURE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::write(
             &path,
