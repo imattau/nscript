@@ -487,6 +487,7 @@ name = "nscript-runtime"
 version = "0.3.14"
 dependencies = [
  "nscript-modules",
+ "nscript-nip5d",
  "nscript-semantics",
  "nscript-syntax",
  "rustls",

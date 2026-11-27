@@ -156,9 +156,7 @@ fn is_bare_domain(value: &str) -> bool {
 }
 
 fn is_queryless_identity(value: &str) -> bool {
-    !value.is_empty()
-        && !value.contains(['?', '#'])
-        && !value.chars().any(char::is_whitespace)
+    !value.is_empty() && !value.contains(['?', '#']) && !value.chars().any(char::is_whitespace)
 }
 
 fn is_http_origin(value: &str) -> bool {
@@ -168,9 +166,7 @@ fn is_http_origin(value: &str) -> bool {
     else {
         return false;
     };
-    !rest.is_empty()
-        && !rest.contains(['/', '?', '#'])
-        && !rest.chars().any(char::is_whitespace)
+    !rest.is_empty() && !rest.contains(['/', '?', '#']) && !rest.chars().any(char::is_whitespace)
 }
 
 fn is_source_location(value: &str) -> bool {
@@ -309,12 +305,9 @@ fn validate_media(tags: &[Tag], name: &str, diagnostics: &mut Vec<Diagnostic>) {
             ));
         }
         if let Some(dim) = fields.get("dim")
-            && !dim
-                .split_once('x')
-                .is_some_and(|(w, h)| {
-                    w.parse::<u32>().is_ok_and(|w| w > 0)
-                        && h.parse::<u32>().is_ok_and(|h| h > 0)
-                })
+            && !dim.split_once('x').is_some_and(|(w, h)| {
+                w.parse::<u32>().is_ok_and(|w| w > 0) && h.parse::<u32>().is_ok_and(|h| h > 0)
+            })
         {
             diagnostics.push(Diagnostic::warning(
                 "nip5d.media.dim",
@@ -420,10 +413,7 @@ fn validate_manifest_tags(kind: ManifestKind, tags: &[Tag], diagnostics: &mut Ve
         for identifier in tag(tags, "d") {
             validate_tag_shape(diagnostics, "d", identifier, 2);
             if value(identifier, 1).is_none_or(str::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    "nip5d.d",
-                    "`d` must not be empty",
-                ));
+                diagnostics.push(Diagnostic::error("nip5d.d", "`d` must not be empty"));
             }
         }
     } else if d_count != 0 {
@@ -684,7 +674,12 @@ pub fn validate_shell_handler(content: &str, tags: &[Tag]) -> Vec<Diagnostic> {
         let Some(raw) = value(kind, 1) else {
             continue;
         };
-        if raw.parse::<u64>().ok().and_then(ManifestKind::from_kind).is_none() {
+        if raw
+            .parse::<u64>()
+            .ok()
+            .and_then(ManifestKind::from_kind)
+            .is_none()
+        {
             diagnostics.push(Diagnostic::error(
                 "nip5d.shell.k",
                 format!("`k` must be 5129, 15129, or 35129, found {raw:?}"),
@@ -826,11 +821,7 @@ mod tests {
             tag(&["i", "napplet:feed/edit", "filters", "relays"]),
             tag(&["R", "relay"]),
             tag(&["O", "theme"]),
-            tag(&[
-                "icon",
-                &hash('b'),
-                "image/png",
-            ]),
+            tag(&["icon", &hash('b'), "image/png"]),
             tag(&["server", "https://blossom.example.com"]),
             tag(&["title", "My Napplet"]),
             tag(&["source", "https://github.com/example/my-napplet"]),
@@ -869,10 +860,7 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "nip5d.d")
         );
-        let snapshot = vec![
-            tag(&["d", "unexpected"]),
-            tag(&["x", &hash('a')]),
-        ];
+        let snapshot = vec![tag(&["d", "unexpected"]), tag(&["x", &hash('a')])];
         assert!(
             validate_manifest(SNAPSHOT_KIND, "description", &snapshot)
                 .iter()
@@ -885,10 +873,7 @@ mod tests {
         assert!(artifact_is_sha256(&hash('a')));
         assert!(!artifact_is_sha256(&hash('A')));
         assert!(!artifact_is_sha256("abc"));
-        let tags = vec![
-            tag(&["x", &hash('a')]),
-            tag(&["x", &hash('b')]),
-        ];
+        let tags = vec![tag(&["x", &hash('a')]), tag(&["x", &hash('b')])];
         assert!(
             validate_manifest(ROOT_KIND, "description", &tags)
                 .iter()
@@ -947,7 +932,12 @@ mod tests {
             tag(&["x", &hash('a')]),
             tag(&["source", "https://github.com/example/napplet"]),
             tag(&["source-commit", &"c".repeat(40)]),
-            tag(&["source-archive", "https://example.com/a.tar.gz", &hash('d'), "application/gzip"]),
+            tag(&[
+                "source-archive",
+                "https://example.com/a.tar.gz",
+                &hash('d'),
+                "application/gzip",
+            ]),
         ];
         assert!(
             validate_manifest(ROOT_KIND, "description", &tags)
@@ -961,7 +951,12 @@ mod tests {
                 &[
                     tag(&["x", &hash('a')]),
                     tag(&["source", "file:///tmp/x"]),
-                    tag(&["source-archive", "https://user:pass@example.com/a.tar.gz", &hash('d'), "application/gzip"]),
+                    tag(&[
+                        "source-archive",
+                        "https://user:pass@example.com/a.tar.gz",
+                        &hash('d'),
+                        "application/gzip"
+                    ]),
                 ],
             )
             .iter()
@@ -1087,7 +1082,10 @@ mod tests {
         );
         assert_eq!(
             tags_from_text(["x", "R=relay"]),
-            vec![vec!["x".to_owned()], vec!["R".to_owned(), "relay".to_owned()]]
+            vec![
+                vec!["x".to_owned()],
+                vec!["R".to_owned(), "relay".to_owned()]
+            ]
         );
     }
 }

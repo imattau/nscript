@@ -42,6 +42,7 @@ through a remote signer, so the script never handles your private key.
 
 - Write bots that reply, moderate, or react to events on Nostr.
 - Publish notes, articles, reactions, lists, and other Nostr content.
+- Publish, validate, or audit NIP-5D napplet manifests and shell handlers.
 - Try programs safely in a simulator before connecting to real relays.
 - Write and check programs in your browser with the NScript Studio editor in
   [`studio/`](studio/).

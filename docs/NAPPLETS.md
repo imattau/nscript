@@ -93,3 +93,30 @@ access.
 See [`examples/napplet-lens/`](../examples/napplet-lens/) for the reference
 applet and [`npm/nscript-napplet/`](../npm/nscript-napplet/) for the embedding
 API.
+
+## Manifest events in scripts
+
+The `nip5d` module models the NIP-5D event layer so a script can publish,
+validate, audit, or compare manifests. It does not expose the shell transport:
+scripts cannot call `window.napplet`, `postMessage`, `MessagePort`, or any NAP
+domain, and they still require explicit `Sign` and `Relay` authority to
+publish.
+
+```nostr
+use nip5d
+
+on Note {
+    let errors = nip5d.manifest_errors(event.kind, event.content, event.tags)
+
+    if len(errors) == 0 {
+        print("valid manifest")
+    }
+}
+```
+
+`nip5d.compatible(manifest_tags, shell_tags)` reports whether a shell's `N` set
+covers a manifest's `R` set, and `nip5d.missing_domains` names the exact gap.
+`nip5d.columns(values)` builds the multi-column values used by `i`, `icon`,
+`screenshot`, `preview`, and the source tags. [`spec/nostr.md`](../spec/nostr.md)
+documents the event declarations and functions, and the same
+`nscript-nip5d` validator backs `nscript napplet build`.

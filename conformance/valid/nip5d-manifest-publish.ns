@@ -1,0 +1,24 @@
+use nip46
+use nip5d
+
+relayset public = configured
+signer account = nip46()
+
+permissions {
+    publish Napplet to public
+    sign Napplet with account
+    relay public
+}
+
+publish Napplet {
+    d: "nscript-lens",
+    content: "A programmable, shell-mediated lens for mentions and feeds.",
+    x: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    z: ["feed"],
+    i: ["napplet:feed/open"],
+    R: ["outbox"],
+    O: ["identity", "storage"],
+    title: "NScript Lens",
+    server: ["https://blossom.example.com"],
+    source: "https://github.com/imattau/nscript",
+} to public with account

@@ -1,0 +1,28 @@
+use nip01
+use nip5d
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+on Note {
+    let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    let tags = ["d=nscript-lens", "x=" + hash, "R=outbox", "O=identity", "O=storage"]
+
+    if nip5d.manifest_is_valid(35129, "A programmable lens", tags) {
+        print("valid manifest")
+    }
+
+    let shell = ["k=35129", "N=outbox"]
+    if nip5d.compatible(tags, shell) {
+        print("compatible")
+    }
+
+    for domain in nip5d.missing_domains(nip5d.required_domains(tags), nip5d.shell_domains(shell)) {
+        print("missing " + domain)
+    }
+}

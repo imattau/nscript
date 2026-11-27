@@ -1,0 +1,121 @@
+module nip5d @ 0.1.0
+language ">=0.1.0 <0.2.0"
+reference "https://github.com/nostr-protocol/nips/pull/2303"
+
+validator present(value: Text) {
+    require length(value) > 0
+}
+
+validator manifest_kind(value: Text) {
+    require value == "5129" or value == "15129" or value == "35129"
+}
+
+function artifact_is_sha256(value: Text) -> Bool
+function required_domains(tags: List<Text>) -> List<Text>
+function optional_domains(tags: List<Text>) -> List<Text>
+function shell_domains(tags: List<Text>) -> List<Text>
+function shell_manifest_kinds(tags: List<Text>) -> List<Text>
+function missing_domains(required: List<Text>, available: List<Text>) -> List<Text>
+function compatible(manifest_tags: List<Text>, shell_tags: List<Text>) -> Bool
+function manifest_is_valid(kind: Int, content: Text, tags: List<Text>) -> Bool
+function manifest_errors(kind: Int, content: Text, tags: List<Text>) -> List<Text>
+function shell_handler_is_valid(content: Text, tags: List<Text>) -> Bool
+function shell_handler_errors(content: Text, tags: List<Text>) -> List<Text>
+function columns(values: List<Text>) -> Text
+
+tag Icon {
+    wire: "icon"
+    field columns: Text at 1
+}
+
+tag SourceCommit {
+    wire: "source-commit"
+    field columns: Text at 1
+}
+
+tag SourceArchive {
+    wire: "source-archive"
+    field columns: Text at 1
+}
+
+tag Preview {
+    wire: "preview"
+    field columns: Text at 1
+}
+
+event NappletSnapshot {
+    kind: 5129
+    mode: regular
+    content: Text as text
+    field x: Text
+    field z: List<Text>
+    field i: List<Text>
+    field R: List<Text>
+    field O: List<Text>
+    field title: Text
+    field server: List<Text>
+    field source: Text
+    field source_commit: SourceCommit
+    field source_archive: SourceArchive
+    field icon: Icon
+    field screenshot: List<Text>
+    field preview: Preview
+    field a: Text
+    field A: Text
+    require present(x)
+}
+
+event NappletRoot {
+    kind: 15129
+    mode: replaceable
+    content: Text as text
+    field x: Text
+    field z: List<Text>
+    field i: List<Text>
+    field R: List<Text>
+    field O: List<Text>
+    field title: Text
+    field server: List<Text>
+    field source: Text
+    field source_commit: SourceCommit
+    field source_archive: SourceArchive
+    field icon: Icon
+    field screenshot: List<Text>
+    field preview: Preview
+    require present(x)
+}
+
+event Napplet {
+    kind: 35129
+    mode: addressable
+    content: Text as text
+    tags: List<NappletTag> = []
+    field d: Text
+    field x: Text
+    field z: List<Text>
+    field i: List<Text>
+    field R: List<Text>
+    field O: List<Text>
+    field title: Text
+    field server: List<Text>
+    field source: Text
+    field source_commit: SourceCommit
+    field source_archive: SourceArchive
+    field icon: Icon
+    field screenshot: List<Text>
+    field preview: Preview
+    require present(d)
+    require present(x)
+}
+
+event ShellHandler {
+    kind: 31990
+    mode: addressable
+    content: Text as text
+    tags: List<ShellHandlerTag> = []
+    field d: Text
+    field k: List<Text>
+    field N: List<Text>
+    field web: List<Text>
+    require present(d)
+}

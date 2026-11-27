@@ -105,6 +105,43 @@ Every signing request is checked against both the static program permission and
 the signer's own policy. Either may deny it. A NIP-46 timeout or disconnect is
 recoverable and MUST NOT silently fall back to a local secret key.
 
+## NIP-5D napplet manifests
+
+`nip5d` models the NIP-5D event layer: napplet manifests and shell handlers. It
+deliberately does not model the iframe transport. `window.napplet`,
+`postMessage`, `MessagePort`, NAP calls, the iframe sandbox, CSP injection, and
+artifact byte verification stay in the browser shell; a script never speaks the
+wire protocol and never gains the shell's authority.
+
+The manifest kinds are `5129` (snapshot), `15129` (root), and `35129` (named,
+addressable). `ShellHandler` is the NIP-89 kind `31990` by which a shell
+advertises the manifest kinds it opens (`k`) and the NAP domains it can expose
+(`N`). `Napplet` and `NappletRoot` publish through the ordinary `publish` path
+with explicit `Sign` and `Relay` authority. The named event carries a single
+`d`; snapshots may carry `a`/`A` lineage tags.
+
+The pure functions validate and compare received manifest tags, which handlers
+see as `name=value` text:
+
+- `artifact_is_sha256(value)` checks the lowercase 64-character artifact hash.
+- `required_domains(tags)`, `optional_domains(tags)`, and `shell_domains(tags)`
+  extract the `R`, `O`, and `N` sets.
+- `missing_domains(required, available)` and `compatible(manifest_tags,
+  shell_tags)` answer whether a shell advertises every domain a manifest needs.
+- `manifest_is_valid(kind, content, tags)` and
+  `shell_handler_is_valid(content, tags)` reduce the shared validator to a
+  boolean; their `*_errors` variants return the individual findings.
+- `columns(values)` joins a multi-column tag value with the wire separator, for
+  fields such as `i`, `icon`, `screenshot`, `preview`, `source-commit`, and
+  `source-archive` whose NIP shapes carry more than one value column.
+
+The CLI's `nscript napplet build` uses the same `nscript-nip5d` validator, so a
+manifest accepted by a script is accepted by the build and vice versa.
+
+NIP-5D is an unmerged draft and explicitly alpha. Kinds, tag shapes, and media
+metadata may drift. Pin the module version, preserve unknown tags, and treat
+`z`/`i`/`R`/`O`/`N` as advertisements rather than grants.
+
 ## Replacement semantics
 
 `latest E` selects the valid event with the greatest `created_at` under Nostr

@@ -3971,6 +3971,18 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("ncc13", "artefact_arch") => Some(ncc13_artefact_arch as PureFunction),
         ("ncc13", "artefact_format") => Some(ncc13_artefact_format as PureFunction),
         ("ncc13", "artefact_matches") => Some(ncc13_artefact_matches as PureFunction),
+        ("nip5d", "artifact_is_sha256") => Some(nip5d_artifact_is_sha256 as PureFunction),
+        ("nip5d", "required_domains") => Some(nip5d_required_domains as PureFunction),
+        ("nip5d", "optional_domains") => Some(nip5d_optional_domains as PureFunction),
+        ("nip5d", "shell_domains") => Some(nip5d_shell_domains as PureFunction),
+        ("nip5d", "shell_manifest_kinds") => Some(nip5d_shell_manifest_kinds as PureFunction),
+        ("nip5d", "missing_domains") => Some(nip5d_missing_domains as PureFunction),
+        ("nip5d", "compatible") => Some(nip5d_compatible as PureFunction),
+        ("nip5d", "manifest_is_valid") => Some(nip5d_manifest_is_valid as PureFunction),
+        ("nip5d", "manifest_errors") => Some(nip5d_manifest_errors as PureFunction),
+        ("nip5d", "shell_handler_is_valid") => Some(nip5d_shell_handler_is_valid as PureFunction),
+        ("nip5d", "shell_handler_errors") => Some(nip5d_shell_handler_errors as PureFunction),
+        ("nip5d", "columns") => Some(nip5d_columns as PureFunction),
         _ => None,
     }
 }
@@ -3979,6 +3991,208 @@ fn invalid(function: &'static str) -> RuntimeError {
     RuntimeError::InvalidOperationArguments {
         operation: function.to_owned(),
     }
+}
+
+fn nip5d_tags(
+    items: &[OperationValue],
+    function: &'static str,
+) -> Result<Vec<nscript_nip5d::Tag>, RuntimeError> {
+    let mut tags = Vec::with_capacity(items.len());
+    for item in items {
+        let OperationValue::Text(text) = item else {
+            return Err(invalid(function));
+        };
+        tags.push(nscript_nip5d::tag_from_text(text));
+    }
+    Ok(tags)
+}
+
+fn nip5d_texts(
+    items: &[OperationValue],
+    function: &'static str,
+) -> Result<Vec<String>, RuntimeError> {
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        let OperationValue::Text(value) = item else {
+            return Err(invalid(function));
+        };
+        values.push(value.clone());
+    }
+    Ok(values)
+}
+
+fn nip5d_text_list(values: Vec<String>) -> OperationValue {
+    OperationValue::List(values.into_iter().map(OperationValue::Text).collect())
+}
+
+fn nip5d_artifact_is_sha256(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(value)] = arguments else {
+        return Err(invalid("nip5d.artifact_is_sha256"));
+    };
+    Ok(OperationValue::Bool(nscript_nip5d::artifact_is_sha256(
+        value,
+    )))
+}
+
+fn nip5d_required_domains(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("nip5d.required_domains"));
+    };
+    let tags = nip5d_tags(tags, "nip5d.required_domains")?;
+    Ok(nip5d_text_list(nscript_nip5d::required_domains(&tags)))
+}
+
+fn nip5d_optional_domains(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("nip5d.optional_domains"));
+    };
+    let tags = nip5d_tags(tags, "nip5d.optional_domains")?;
+    Ok(nip5d_text_list(nscript_nip5d::optional_domains(&tags)))
+}
+
+fn nip5d_shell_domains(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("nip5d.shell_domains"));
+    };
+    let tags = nip5d_tags(tags, "nip5d.shell_domains")?;
+    Ok(nip5d_text_list(nscript_nip5d::shell_domains(&tags)))
+}
+
+fn nip5d_shell_manifest_kinds(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid("nip5d.shell_manifest_kinds"));
+    };
+    let tags = nip5d_tags(tags, "nip5d.shell_manifest_kinds")?;
+    Ok(nip5d_text_list(
+        nscript_nip5d::shell_manifest_kinds(&tags)
+            .into_iter()
+            .map(|kind| kind.to_string())
+            .collect(),
+    ))
+}
+
+fn nip5d_missing_domains(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(required),
+        OperationValue::List(available),
+    ] = arguments
+    else {
+        return Err(invalid("nip5d.missing_domains"));
+    };
+    let required = nip5d_texts(required, "nip5d.missing_domains")?;
+    let available = nip5d_texts(available, "nip5d.missing_domains")?;
+    Ok(nip5d_text_list(nscript_nip5d::missing_domains(
+        &required, &available,
+    )))
+}
+
+fn nip5d_compatible(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::List(manifest_tags),
+        OperationValue::List(shell_tags),
+    ] = arguments
+    else {
+        return Err(invalid("nip5d.compatible"));
+    };
+    let manifest_tags = nip5d_tags(manifest_tags, "nip5d.compatible")?;
+    let shell_tags = nip5d_tags(shell_tags, "nip5d.compatible")?;
+    Ok(OperationValue::Bool(nscript_nip5d::compatible(
+        &manifest_tags,
+        &shell_tags,
+    )))
+}
+
+fn nip5d_manifest_is_valid(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Integer(kind),
+        OperationValue::Text(content),
+        OperationValue::List(tags),
+    ] = arguments
+    else {
+        return Err(invalid("nip5d.manifest_is_valid"));
+    };
+    let kind = u64::try_from(*kind).map_err(|_| invalid("nip5d.manifest_is_valid"))?;
+    let tags = nip5d_tags(tags, "nip5d.manifest_is_valid")?;
+    Ok(OperationValue::Bool(nscript_nip5d::manifest_is_valid(
+        kind, content, &tags,
+    )))
+}
+
+fn nip5d_manifest_errors(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [
+        OperationValue::Integer(kind),
+        OperationValue::Text(content),
+        OperationValue::List(tags),
+    ] = arguments
+    else {
+        return Err(invalid("nip5d.manifest_errors"));
+    };
+    let kind = u64::try_from(*kind).map_err(|_| invalid("nip5d.manifest_errors"))?;
+    let tags = nip5d_tags(tags, "nip5d.manifest_errors")?;
+    Ok(nip5d_text_list(
+        nscript_nip5d::validate_manifest(kind, content, &tags)
+            .into_iter()
+            .map(|diagnostic| {
+                let severity = if diagnostic.is_error() {
+                    "error"
+                } else {
+                    "warning"
+                };
+                format!("{severity} {}: {}", diagnostic.code, diagnostic.message)
+            })
+            .collect(),
+    ))
+}
+
+fn nip5d_shell_handler_is_valid(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(content), OperationValue::List(tags)] = arguments else {
+        return Err(invalid("nip5d.shell_handler_is_valid"));
+    };
+    let tags = nip5d_tags(tags, "nip5d.shell_handler_is_valid")?;
+    Ok(OperationValue::Bool(nscript_nip5d::shell_handler_is_valid(
+        content, &tags,
+    )))
+}
+
+fn nip5d_shell_handler_errors(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(content), OperationValue::List(tags)] = arguments else {
+        return Err(invalid("nip5d.shell_handler_errors"));
+    };
+    let tags = nip5d_tags(tags, "nip5d.shell_handler_errors")?;
+    Ok(nip5d_text_list(
+        nscript_nip5d::validate_shell_handler(content, &tags)
+            .into_iter()
+            .map(|diagnostic| {
+                let severity = if diagnostic.is_error() {
+                    "error"
+                } else {
+                    "warning"
+                };
+                format!("{severity} {}: {}", diagnostic.code, diagnostic.message)
+            })
+            .collect(),
+    ))
+}
+
+fn nip5d_columns(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(values)] = arguments else {
+        return Err(invalid("nip5d.columns"));
+    };
+    let values = nip5d_texts(values, "nip5d.columns")?;
+    let mut joined = String::new();
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            joined.push(nscript_nip5d::COLUMN_SEPARATOR);
+        }
+        joined.push_str(value);
+    }
+    Ok(OperationValue::Text(joined))
 }
 
 /// CORD-05 §6/§7: whether a bundle's own structure is well-formed, its
@@ -12087,6 +12301,104 @@ mod tests {
         ));
         assert!(host.is_pure_function("concord05", "invite_is_valid"));
         assert!(!host.is_pure_function("concord01", "stream"));
+    }
+
+    #[test]
+    fn nip5d_functions_validate_manifests_and_match_shells() {
+        let mut host = FakeOperationHost::default();
+        let hash = "a".repeat(64);
+        let text = |value: &str| OperationValue::Text(value.to_owned());
+        let tags = vec![
+            text("d=nscript-lens"),
+            text(&format!("x={hash}")),
+            text("R=outbox"),
+            text("O=identity"),
+            text("O=storage"),
+            text("title=NScript Lens"),
+        ];
+        assert!(host.is_pure_function("nip5d", "manifest_is_valid"));
+        assert_eq!(
+            host.call_pure_function(
+                "nip5d",
+                "manifest_is_valid",
+                &[
+                    OperationValue::Integer(35129),
+                    text("A programmable lens"),
+                    OperationValue::List(tags.clone()),
+                ],
+            ),
+            Ok(OperationValue::Bool(true))
+        );
+        assert_eq!(
+            host.call_pure_function(
+                "nip5d",
+                "required_domains",
+                &[OperationValue::List(tags.clone())],
+            ),
+            Ok(OperationValue::List(vec![text("outbox")]))
+        );
+        assert_eq!(
+            host.call_pure_function(
+                "nip5d",
+                "optional_domains",
+                &[OperationValue::List(tags.clone())],
+            ),
+            Ok(OperationValue::List(vec![
+                text("identity"),
+                text("storage")
+            ]))
+        );
+        let shell = vec![text("k=35129"), text("N=outbox")];
+        assert_eq!(
+            host.call_pure_function(
+                "nip5d",
+                "compatible",
+                &[
+                    OperationValue::List(tags),
+                    OperationValue::List(shell.clone()),
+                ],
+            ),
+            Ok(OperationValue::Bool(true))
+        );
+        assert_eq!(
+            host.call_pure_function(
+                "nip5d",
+                "missing_domains",
+                &[
+                    OperationValue::List(vec![text("outbox"), text("relay")]),
+                    OperationValue::List(vec![text("outbox")]),
+                ],
+            ),
+            Ok(OperationValue::List(vec![text("relay")]))
+        );
+        assert_eq!(
+            host.call_pure_function(
+                "nip5d",
+                "columns",
+                &[OperationValue::List(vec![
+                    text("i"),
+                    text("napplet:feed/open")
+                ])],
+            ),
+            Ok(text("i\u{1f}napplet:feed/open"))
+        );
+        let errors = host
+            .call_pure_function(
+                "nip5d",
+                "manifest_errors",
+                &[
+                    OperationValue::Integer(35129),
+                    text("A lens"),
+                    OperationValue::List(vec![text("d=x")]),
+                ],
+            )
+            .expect("errors are returned");
+        let OperationValue::List(errors) = errors else {
+            panic!("expected a list");
+        };
+        assert!(errors.iter().any(
+            |item| matches!(item, OperationValue::Text(message) if message.contains("nip5d.x"))
+        ));
     }
 
     #[test]

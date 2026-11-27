@@ -392,9 +392,7 @@ fn evaluate_builtin(name: &str, arguments: &[Value]) -> Option<Result<Value, Sto
             _ => Err(fail("`text` takes one argument")),
         },
         "starts_with" => match arguments {
-            [Value::Text(value), Value::Text(prefix)] => {
-                Ok(Value::Bool(value.starts_with(prefix)))
-            }
+            [Value::Text(value), Value::Text(prefix)] => Ok(Value::Bool(value.starts_with(prefix))),
             _ => Err(fail("`starts_with` takes two text values")),
         },
         "strip_prefix" => match arguments {
@@ -3509,8 +3507,7 @@ mod tests {
         let mut log = FakeLogHost::default();
         let mut runtime = runtime();
         let policy = policy_for(&checked);
-        let event =
-            event_from_json(&serde_json::json!({"content": "FREE AIRDROP now"})).unwrap();
+        let event = event_from_json(&serde_json::json!({"content": "FREE AIRDROP now"})).unwrap();
         let outcomes = runtime.run_handlers_for_event(
             &program,
             &checked,
