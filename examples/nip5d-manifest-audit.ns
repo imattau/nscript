@@ -1,0 +1,24 @@
+// Audit NIP-5D napplet manifests as they arrive.
+use nip01
+use nip5d
+
+relayset public = configured
+
+permissions {
+    read Napplet from public
+    relay public
+    log
+}
+
+on Napplet {
+    let errors = nip5d.manifest_errors(event.kind, event.content, event.tags)
+
+    if len(errors) == 0 {
+        let required = nip5d.required_domains(event.tags)
+        print("valid manifest requiring " + text(len(required)) + " domains")
+    } else {
+        for error in errors {
+            print("invalid manifest: " + error)
+        }
+    }
+}

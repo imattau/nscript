@@ -77,6 +77,10 @@ checks, permission and effect inspection, and dry event simulation.
 - [`examples/napplet-lens/`](examples/napplet-lens/) is the read-only
   **NScript Lens** napplet: editable, checked NScript rules scope an outbox
   query and produce local hide/label/pin/flag decisions.
+- [`examples/nip5d-manifest-audit.ns`](examples/nip5d-manifest-audit.ns)
+  validates arriving NIP-5D manifests, and
+  [`examples/nip5d-release-bot.ns`](examples/nip5d-release-bot.ns) publishes a
+  named manifest with a CI-supplied artifact hash.
 - `nscript napplet requirements <file.ns>` derives the supported NAP domains,
   handler filters, and module hash; `nscript napplet build <project-directory>`
   writes the requirements and runs the project's Vite build. The reusable

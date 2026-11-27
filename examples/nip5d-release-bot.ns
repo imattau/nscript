@@ -1,0 +1,40 @@
+// Publish a NIP-5D napplet manifest after a release.
+//
+// The artifact hash and applet identifier come from the deploy environment:
+//   nscript run examples/nip5d-release-bot.ns \
+//       --input applet_id=nscript-lens \
+//       --input artifact_hash=<sha256> \
+//       --event '{"content":"release","signer":"alice"}'
+use nip01
+use nip46
+use nip5d
+
+signer account = nip46()
+relayset public = configured
+
+input applet_id: Text
+input artifact_hash: Text
+
+permissions {
+    read Note from public
+    relay public
+    publish Napplet to public
+    sign Napplet with account
+    log
+}
+
+on Note {
+    if event.content contains "release" {
+        publish Napplet {
+            d: applet_id,
+            content: "A programmable, shell-mediated lens for mentions and feeds.",
+            x: artifact_hash,
+            z: ["feed"],
+            R: ["outbox"],
+            O: ["identity", "storage"],
+            title: "NScript Lens",
+        } to public with account
+
+        print("published manifest for " + applet_id)
+    }
+}
