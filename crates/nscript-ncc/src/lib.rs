@@ -350,9 +350,9 @@ fn validate_optional_text(id: &str, field: &str, value: Option<&str>) -> Result<
 }
 
 fn reject_line_break(id: &str, field: &str, value: &str) -> Result<(), NccError> {
-    if value.contains(['\n', '\r']) {
+    if value.contains(['\n', '\r', '\u{1f}']) {
         return Err(NccError::new(format!(
-            "{id}: {field} must not contain a line break"
+            "{id}: {field} must not contain a line break or tag separator"
         )));
     }
     Ok(())
@@ -470,9 +470,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_line_breaks_in_tags() {
+    fn rejects_line_breaks_and_tag_separators_in_tags() {
         let mut entry = sample_entry();
         entry.metadata.title = "bad\ntitle".to_owned();
+        assert!(build_document(&entry, 1_766_012_345, None).is_err());
+
+        let mut entry = sample_entry();
+        entry.metadata.title = "bad\u{1f}title".to_owned();
         assert!(build_document(&entry, 1_766_012_345, None).is_err());
     }
 }
