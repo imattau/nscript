@@ -110,6 +110,11 @@ explains exactly which, and [`ROADMAP.md`](ROADMAP.md) lists what comes next.
   scoping, decisions, and browser session ABI.
 - [`docs/NCC.md`](docs/NCC.md): publishing NCC-00 convention documents from a
   repository with `nscript ncc`.
+- [`docs/NGIT-MIRROR.md`](docs/NGIT-MIRROR.md): one-way GitHub-to-ngit mirror
+  workflow and setup requirements.
+- [`docs/NCC-INTEGRATION-IDEAS.md`](docs/NCC-INTEGRATION-IDEAS.md): proposed
+  architecture and feasibility for NScript with NCC, napplets, nsites, and
+  Nostr application hosts.
 - [`conformance/`](conformance/): example programs and tests that any
   implementation must pass.
 - [`PLAN.md`](PLAN.md): the implementation history and original phase plan.

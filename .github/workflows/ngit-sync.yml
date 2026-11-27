@@ -1,0 +1,95 @@
+name: Nostr mirror
+
+# One-way mirror from GitHub to the NIP-34 repository on relay.ngit.dev.
+# Treat GitHub as the publishing source; do not make independent changes on ngit.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ngit-sync
+  cancel-in-progress: false
+
+env:
+  MIRROR_NPUB: npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q
+  MIRROR_RELAY: relay.ngit.dev
+  MIRROR_REPO: nscript
+
+jobs:
+  mirror:
+    name: Mirror main and tags
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the mirror key
+        id: key
+        env:
+          NGIT_NSEC: ${{ secrets.NGIT_NSEC }}
+        run: |
+          if [ -z "$NGIT_NSEC" ]; then
+            echo "::warning title=Nostr mirror skipped::Add the repository secret NGIT_NSEC (the nsec for ${MIRROR_NPUB}) to mirror commits and tags to ${MIRROR_RELAY}."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.ok == 'true'
+        with:
+          fetch-depth: 0
+
+      - name: Install ngit
+        if: steps.key.outputs.ok == 'true'
+        uses: danconwaydev/setup-ngit@v3
+        with:
+          version: 3.2.0
+
+      - name: Push main and tags to the Nostr mirror
+        if: steps.key.outputs.ok == 'true'
+        env:
+          NGIT_NSEC: ${{ secrets.NGIT_NSEC }}
+        run: |
+          set -euo pipefail
+          key_file="$RUNNER_TEMP/ngit.nsec"
+          cleanup() {
+            git config --unset nostr.nsec 2>/dev/null || true
+            rm -f "$key_file"
+          }
+          trap cleanup EXIT
+          umask 077
+          printf '%s\n' "$NGIT_NSEC" > "$key_file"
+          chmod 600 "$key_file"
+
+          git config nostr.nsec "$(cat "$key_file")"
+          git config nostr.repo-relay-only true
+          git remote add nostr "nostr://${MIRROR_NPUB}/${MIRROR_RELAY}/${MIRROR_REPO}"
+
+          # Mirror the current GitHub main even when this run came from a tag.
+          git fetch --no-tags origin main
+          main_sha=$(git rev-parse origin/main)
+          git push nostr "${main_sha}:refs/heads/main"
+
+          # Keep version tags available in the NIP-34 repository state.
+          git push nostr 'refs/tags/v*:refs/tags/v*'
+
+          remote_main=$(git ls-remote nostr refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')
+          if [ "$remote_main" != "$main_sha" ]; then
+            echo "::error::Nostr mirror main is ${remote_main:-missing}, expected ${main_sha}"
+            exit 1
+          fi
+          echo "Mirrored ${main_sha} and $(git tag --list 'v*' | wc -l) version tags."
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.key.outputs.ok }}" = "true" ]; then
+            echo "Mirrored to \`nostr://${MIRROR_NPUB}/${MIRROR_RELAY}/${MIRROR_REPO}\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Browse: https://gitworkshop.dev/${MIRROR_NPUB}/${MIRROR_RELAY}/${MIRROR_REPO}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Mirror skipped: add the \`NGIT_NSEC\` repository secret for \`${MIRROR_NPUB}\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
