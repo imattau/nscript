@@ -1,0 +1,24 @@
+// NCC-00 succession publication: the authoritative document reference is
+// normalized to `event:<id>` and the optional steward/previous/reason/
+// effective_at fields lower to their wire tags.
+use ncc00
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish NccSuccession to public
+    sign NccSuccession with account
+    relay public
+}
+
+publish NccSuccession {
+    d: "ncc-00";
+    authoritative: "event:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    steward: "pubkey:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    previous: "event:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    reason: "Refresh";
+    effective_at: 1766012999;
+    content: "Acknowledged.";
+} to public with account

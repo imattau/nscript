@@ -43,7 +43,8 @@ through a remote signer, so the script never handles your private key.
 - Write bots that reply, moderate, or react to events on Nostr.
 - Publish notes, articles, reactions, lists, and other Nostr content.
 - Publish, validate, or audit NIP-5D napplet manifests and shell handlers.
-- Publish Nostr Community Convention documents from a repository with
+- Publish Nostr Community Convention documents, supporting documents,
+  successions, and endorsements from a repository with
   [`nscript ncc`](docs/NCC.md), including release-tag versioning and CI checks.
 - Try programs safely in a simulator before connecting to real relays.
 - Write and check programs in your browser with the NScript Studio editor in
@@ -108,7 +109,7 @@ explains exactly which, and [`ROADMAP.md`](ROADMAP.md) lists what comes next.
   adapter and reference applet roadmap.
 - [`docs/NAPPLETS.md`](docs/NAPPLETS.md): the implemented lens profile, query
   scoping, decisions, and browser session ABI.
-- [`docs/NCC.md`](docs/NCC.md): publishing NCC-00 convention documents from a
+- [`docs/NCC.md`](docs/NCC.md): publishing all four NCC-00 event kinds from a
   repository with `nscript ncc`.
 - [`docs/NGIT-MIRROR.md`](docs/NGIT-MIRROR.md): one-way GitHub-to-ngit mirror
   workflow and setup requirements.

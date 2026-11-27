@@ -261,10 +261,11 @@ remain staged until successful completion.
 
 NScript is an evolving Draft 0.1 implementation. The compiler, simulator,
 package metadata and lockfile commands, browser Studio, and a real relay/signer
-deployment loop exist. `nscript ncc publish` is a repository-facing publisher
-for NCC-00 convention documents: it reads `ncc.json` and `README.md`, signs
-locally from an environment key, and publishes real kind `30050` events without
-adding filesystem or secret-key access to the language. See
+deployment loop exist. `nscript ncc` is a repository-facing publisher for
+all four NCC-00 event kinds: it reads `ncc.json`, `README.md`, and supporting
+sidecars, signs locally from an environment key, and publishes real kind
+`30050`, `30051`, `30052`, and `30053` events without adding filesystem or
+secret-key access to the language. See
 [`docs/NCC.md`](NCC.md). By default, `nscript deploy` still simulates general
 NIP module operations (`nip51.publish_user_list`, `nip78.publish_app_data`,
 and the like); pass `--operation-command <path>` to answer them for real

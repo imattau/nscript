@@ -188,6 +188,66 @@ fn ncc00_document_lowers_to_the_pinned_wire_vector() {
 }
 
 #[test]
+fn ncc00_succession_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc00.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = vector["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|vector| vector["type"] == "succession")
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc00-succession.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "NccSuccession");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+}
+
+#[test]
+fn ncc00_endorsement_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc00.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = vector["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|vector| vector["type"] == "endorsement")
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc00-endorsement.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "NccEndorsement");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+}
+
+#[test]
 fn ncc02_service_record_lowers_to_the_pinned_wire_vector() {
     let vector: serde_json::Value = serde_json::from_slice(
         &std::fs::read(repository_path("conformance/vectors/ncc02.json")).unwrap(),
