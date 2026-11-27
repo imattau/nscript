@@ -1,0 +1,20 @@
+{
+  "identifier": "nscript",
+  "name": "NScript",
+  "description": "A scripting language for Nostr",
+  "web": ["https://github.com/imattau/nscript"],
+  "clone": [
+    "https://github.com/imattau/nscript.git",
+    "nostr://npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q/relay.ngit.dev/nscript"
+  ],
+  "relays": [
+    "wss://relay.ngit.dev",
+    "wss://git.shakespeare.diy",
+    "wss://git.nostrhub.io"
+  ],
+  "maintainers": [
+    "npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q"
+  ],
+  "topics": ["nostr", "scripting", "nip34"],
+  "earliest_unique_commit": "3cda805e9f865d2e976cbbd0b293e5c77a7389c6"
+}
