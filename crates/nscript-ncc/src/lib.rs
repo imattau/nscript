@@ -435,7 +435,7 @@ pub fn discover_supporting(root: &Path) -> Result<Vec<SupportingEntry>, NccError
                 .d
                 .clone()
                 .unwrap_or_else(|| format!("{name}-{slug}"));
-            if !identifiers.insert((name.clone(), d.clone())) {
+            if !identifiers.insert(d.clone()) {
                 return Err(NccError::new(format!(
                     "{name}: duplicate supporting-document identifier `{d}`"
                 )));
