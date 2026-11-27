@@ -621,15 +621,17 @@ fields are the ones the spec actually asks for.
 
 ## Four more: NIP-34, NIP-54, NIP-72, NIP-C7
 
-`nip34` and `nip72` each cover several real Nostr kinds; both are scoped to
+`nip34` covers the full NIP-34 event surface; the other three stay scoped to
 the one piece that is small, well-defined, and doesn't need key material or
 payment rails, with the rest named honestly as unbuilt:
 
-- `nip34` (git): `nip34.publish_repository` covers only the repository
-  announcement (kind 30617) — identifier, name, description, clone and web
-  URLs. Repository state (30618), patches (1617), pull requests
-  (1618/1619), issues (1621) and their status events (1630-1633) are not
-  modelled.
+- `nip34` (git): the module declares repository announcements (30617) and
+  state (30618), patches (1617), pull requests (1618/1619), issues (1621),
+  the four status kinds (1630-1633), and the grasp list (10317), with typed
+  tags for `r`+`euc`, refs, commit metadata, status markers, and quotes.
+  `nscript git` publishes the same events from a repository. Git object
+  transport is not implemented: clone URLs still point at git servers or
+  grasp services.
 - `nip54` (wiki, kind 30818): `nip54.publish_wiki_article` takes an
   identifier, title, summary and content. Merge requests (kind 818) and
   redirects (kind 30819) are not modelled.

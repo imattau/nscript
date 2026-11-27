@@ -46,6 +46,8 @@ through a remote signer, so the script never handles your private key.
 - Publish Nostr Community Convention documents, supporting documents,
   successions, and endorsements from a repository with
   [`nscript ncc`](docs/NCC.md), including release-tag versioning and CI checks.
+- Publish NIP-34 git repository announcements, state, patches, pull requests,
+  issues, statuses, and grasp lists with [`nscript git`](docs/NIP34.md).
 - Try programs safely in a simulator before connecting to real relays.
 - Write and check programs in your browser with the NScript Studio editor in
   [`studio/`](studio/).

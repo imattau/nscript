@@ -35,6 +35,14 @@ will trigger the sync; it can also be dispatched manually from `main`.
 Browse the mirror at
 [gitworkshop.dev](https://gitworkshop.dev/npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q/relay.ngit.dev/nscript).
 
+## NIP-34 events vs git transport
+
+The mirror moves git refs with `ngit`; it does not publish the repository's
+NIP-34 collaboration events. Use [`nscript git`](NIP34.md) to publish a
+repository announcement, state snapshot, patches, pull requests, issues, or
+status events. The two roles are complementary: `ngit` owns the transport,
+`nscript git` owns the events.
+
 ## Source of truth
 
 GitHub is the publishing source for this workflow. Do not edit the ngit copy
