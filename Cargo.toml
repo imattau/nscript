@@ -5,6 +5,7 @@ members = [
     "crates/nscript-ir",
     "crates/nscript-modules",
     "crates/nscript-ncc",
+    "crates/nscript-nip34",
     "crates/nscript-semantics",
     "crates/nscript-syntax",
     "crates/nscript-runtime",

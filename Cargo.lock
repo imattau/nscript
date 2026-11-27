@@ -496,6 +496,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nscript-nip34"
+version = "0.3.14"
+dependencies = [
+ "nscript-runtime",
+]
+
+[[package]]
 name = "nscript-nip5d"
 version = "0.3.14"
 
