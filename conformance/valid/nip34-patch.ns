@@ -1,0 +1,26 @@
+// NIP-34 git: a patch (kind 1617) carrying git format-patch output and the
+// commit metadata that keeps the merged commit id stable.
+use nip34
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Patch to public
+    sign Patch with account
+    relay public
+}
+
+publish Patch {
+    a: "30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:nscript",
+    content: "From 0000000 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] Add NIP-34\n",
+    r: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    euc: [EarliestUniqueCommit { commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+    p: ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+    t: ["root", "root-revision"],
+    commit: ["cccccccccccccccccccccccccccccccccccccccc"],
+    parent_commit: [ParentCommit { commit: "dddddddddddddddddddddddddddddddddddddddd" }],
+    pgp_sig: [CommitPgpSig { signature: "" }],
+    committers: [Committer { name: "Ada", email: "ada@example.com", timestamp: "1700000000", timezone: "-300" }],
+} to public with account

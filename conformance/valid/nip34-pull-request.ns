@@ -1,0 +1,26 @@
+// NIP-34 git: a pull request (kind 1618) pointing at a fetchable branch.
+use nip34
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish PullRequest to public
+    sign PullRequest with account
+    relay public
+}
+
+publish PullRequest {
+    a: "30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:nscript",
+    content: "This adds NIP-34 events.",
+    r: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    p: ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+    subject: ["Add NIP-34"],
+    t: ["enhancement"],
+    c: ["cccccccccccccccccccccccccccccccccccccccc"],
+    clone: ["https://example.com/nscript.git"],
+    branch: [BranchName { name: "nip34" }],
+    e: ["eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"],
+    merge_base: [MergeBase { commit: "dddddddddddddddddddddddddddddddddddddddd" }],
+} to public with account

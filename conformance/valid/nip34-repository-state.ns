@@ -1,0 +1,21 @@
+// NIP-34 git: a repository state announcement (kind 30618).
+use nip34
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish RepositoryState to public
+    sign RepositoryState with account
+    relay public
+}
+
+publish RepositoryState {
+    d: "nscript",
+    refs: [
+        BranchRef { name: "refs/heads/main", commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        BranchRef { name: "refs/tags/v1.0.0", commit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    ],
+    HEAD: ["ref: refs/heads/main"],
+} to public with account

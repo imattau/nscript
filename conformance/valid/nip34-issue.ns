@@ -1,0 +1,20 @@
+// NIP-34 git: an issue (kind 1621) sent to a repository's relays.
+use nip34
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Issue to public
+    sign Issue with account
+    relay public
+}
+
+publish Issue {
+    a: "30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:nscript",
+    content: "The `nscript run` helper drops the last tag.",
+    p: ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+    subject: ["Dropped tag"],
+    t: ["bug"],
+} to public with account

@@ -2,6 +2,264 @@ module nip34 @ 0.1.0
 language ">=0.1.0 <0.2.0"
 reference "https://github.com/nostr-protocol/nips/blob/master/34.md"
 
+validator repo_identifier(value: Text) {
+    require length(value) > 0
+}
+
+validator commit_id(value: Text) {
+    require length(value) > 39
+    require matches(value, "^[0-9a-f]+$")
+}
+
+validator event_id(value: Text) {
+    require length(value) == 64
+    require matches(value, "^[0-9a-f]+$")
+}
+
+validator repository_address(value: Text) {
+    require contains(value, "30617:")
+}
+
+validator websocket_url(value: Text) {
+    require matches(value, "^wss?://")
+}
+
+function repository_identifier(tags: List<Text>) -> Text
+function clone_urls(tags: List<Text>) -> List<Text>
+function relay_urls(tags: List<Text>) -> List<Text>
+function status_is_known(status: Text) -> Bool
+
+tag EarliestUniqueCommit {
+    wire: "r"
+    field commit: Text at 1
+    literal "euc" at 2
+}
+
+tag BranchRef {
+    wire: "refs"
+    field name: Text at 1
+    field commit: Text at 2
+}
+
+tag Fork {
+    wire: "u"
+    field reference: Text at 1
+    field relay: Text at 2
+    field author: Text at 3
+}
+
+tag ParentCommit {
+    wire: "parent-commit"
+    field commit: Text at 1
+}
+
+tag CommitPgpSig {
+    wire: "commit-pgp-sig"
+    field signature: Text at 1
+}
+
+tag Committer {
+    wire: "committer"
+    field name: Text at 1
+    field email: Text at 2
+    field timestamp: Text at 3
+    field timezone: Text at 4
+}
+
+tag BranchName {
+    wire: "branch-name"
+    field name: Text at 1
+}
+
+tag MergeBase {
+    wire: "merge-base"
+    field commit: Text at 1
+}
+
+tag RootEvent {
+    wire: "e"
+    field id: EventId at 1
+    literal "" at 2
+    literal "root" at 3
+}
+
+tag ReplyEvent {
+    wire: "e"
+    field id: EventId at 1
+    literal "" at 2
+    literal "reply" at 3
+}
+
+tag StatusQuote {
+    wire: "q"
+    field id: EventId at 1
+    field relay: Text at 2
+    field author: PubKey at 3
+}
+
+tag MergeCommit {
+    wire: "merge-commit"
+    field commit: Text at 1
+}
+
+tag AppliedAsCommits {
+    wire: "applied-as-commits"
+    field commit: Text at 1
+}
+
+event RepositoryAnnouncement {
+    kind: 30617
+    mode: addressable
+    content: Text as text
+    tags: List<Tag> = []
+    field d: Text
+    field name: List<Text>
+    field description: List<Text>
+    field web: List<Text>
+    field clone: List<Text>
+    field relays: List<Text>
+    field euc: List<EarliestUniqueCommit>
+    field maintainers: List<Text>
+    field u: List<Fork>
+    field t: List<Text>
+    require repo_identifier(d)
+}
+
+event RepositoryState {
+    kind: 30618
+    mode: addressable
+    content: Text as text
+    tags: List<Tag> = []
+    field d: Text
+    field refs: List<BranchRef>
+    field HEAD: List<Text>
+    require repo_identifier(d)
+}
+
+event Patch {
+    kind: 1617
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+    field a: Text
+    field r: List<Text>
+    field euc: List<EarliestUniqueCommit>
+    field p: List<Text>
+    field t: List<Text>
+    field commit: List<Text>
+    field parent_commit: List<ParentCommit>
+    field pgp_sig: List<CommitPgpSig>
+    field committers: List<Committer>
+    require repository_address(a)
+}
+
+event PullRequest {
+    kind: 1618
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+    field a: Text
+    field r: List<Text>
+    field euc: List<EarliestUniqueCommit>
+    field p: List<Text>
+    field subject: List<Text>
+    field t: List<Text>
+    field c: List<Text>
+    field clone: List<Text>
+    field branch: List<BranchName>
+    field e: List<Text>
+    field merge_base: List<MergeBase>
+    require repository_address(a)
+}
+
+event PullRequestUpdate {
+    kind: 1619
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+    field a: Text
+    field r: List<Text>
+    field euc: List<EarliestUniqueCommit>
+    field p: List<Text>
+    field E: List<Text>
+    field P: List<Text>
+    field c: List<Text>
+    field clone: List<Text>
+    field merge_base: List<MergeBase>
+    require repository_address(a)
+}
+
+event Issue {
+    kind: 1621
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+    field a: Text
+    field p: List<Text>
+    field subject: List<Text>
+    field t: List<Text>
+    require repository_address(a)
+}
+
+event StatusOpen {
+    kind: 1630
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+    field root: RootEvent
+    field revision: List<ReplyEvent>
+    field a: List<Text>
+    field p: List<Text>
+    field r: List<Text>
+}
+
+event StatusApplied {
+    kind: 1631
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+    field root: RootEvent
+    field revision: List<ReplyEvent>
+    field a: List<Text>
+    field p: List<Text>
+    field r: List<Text>
+    field q: List<StatusQuote>
+    field merge_commit: List<MergeCommit>
+    field applied_as: List<AppliedAsCommits>
+}
+
+event StatusClosed {
+    kind: 1632
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+    field root: RootEvent
+    field revision: List<ReplyEvent>
+    field a: List<Text>
+    field p: List<Text>
+    field r: List<Text>
+}
+
+event StatusDraft {
+    kind: 1633
+    mode: regular
+    content: Text as text
+    tags: List<Tag> = []
+    field root: RootEvent
+    field revision: List<ReplyEvent>
+    field a: List<Text>
+    field p: List<Text>
+    field r: List<Text>
+}
+
+event GraspList {
+    kind: 10317
+    mode: replaceable
+    content: Text as text
+    tags: List<Tag> = []
+    field g: List<Text>
+}
+
 record Repository {
     field identifier: Text
     field name: Text

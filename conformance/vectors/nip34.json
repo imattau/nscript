@@ -1,0 +1,265 @@
+{
+  "source": "https://github.com/nostr-protocol/nips/blob/master/34.md",
+  "vectors": [
+    {
+      "type": "repository-announcement",
+      "kind": 30617,
+      "content": "",
+      "tags": [
+        [
+          "d",
+          "nscript"
+        ],
+        [
+          "name",
+          "NScript"
+        ],
+        [
+          "description",
+          "A scripting language for Nostr"
+        ],
+        [
+          "web",
+          "https://github.com/imattau/nscript"
+        ],
+        [
+          "clone",
+          "https://github.com/imattau/nscript.git"
+        ],
+        [
+          "relays",
+          "wss://relay.ngit.dev"
+        ],
+        [
+          "maintainers",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        [
+          "t",
+          "nostr"
+        ],
+        [
+          "t",
+          "scripting"
+        ],
+        [
+          "r",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "euc"
+        ],
+        [
+          "u",
+          "30617:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:upstream|https://example.com/upstream.git",
+          "wss://relay.ngit.dev",
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        ]
+      ]
+    },
+    {
+      "type": "repository-state",
+      "kind": 30618,
+      "content": "",
+      "tags": [
+        [
+          "d",
+          "nscript"
+        ],
+        [
+          "HEAD",
+          "ref: refs/heads/main"
+        ],
+        [
+          "refs",
+          "refs/heads/main",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "refs",
+          "refs/tags/v1.0.0",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      ]
+    },
+    {
+      "type": "patch",
+      "kind": 1617,
+      "content": "From 0000000 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] Add NIP-34\n",
+      "tags": [
+        [
+          "a",
+          "30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:nscript"
+        ],
+        [
+          "r",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "p",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        [
+          "t",
+          "root"
+        ],
+        [
+          "t",
+          "root-revision"
+        ],
+        [
+          "commit",
+          "cccccccccccccccccccccccccccccccccccccccc"
+        ],
+        [
+          "r",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "euc"
+        ],
+        [
+          "parent-commit",
+          "dddddddddddddddddddddddddddddddddddddddd"
+        ],
+        [
+          "commit-pgp-sig",
+          ""
+        ],
+        [
+          "committer",
+          "Ada",
+          "ada@example.com",
+          "1700000000",
+          "-300"
+        ]
+      ]
+    },
+    {
+      "type": "pull-request",
+      "kind": 1618,
+      "content": "This adds NIP-34 events.",
+      "tags": [
+        [
+          "a",
+          "30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:nscript"
+        ],
+        [
+          "r",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "p",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        [
+          "subject",
+          "Add NIP-34"
+        ],
+        [
+          "t",
+          "enhancement"
+        ],
+        [
+          "c",
+          "cccccccccccccccccccccccccccccccccccccccc"
+        ],
+        [
+          "clone",
+          "https://example.com/nscript.git"
+        ],
+        [
+          "e",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ],
+        [
+          "branch-name",
+          "nip34"
+        ],
+        [
+          "merge-base",
+          "dddddddddddddddddddddddddddddddddddddddd"
+        ]
+      ]
+    },
+    {
+      "type": "issue",
+      "kind": 1621,
+      "content": "The `nscript run` helper drops the last tag.",
+      "tags": [
+        [
+          "a",
+          "30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:nscript"
+        ],
+        [
+          "p",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        [
+          "subject",
+          "Dropped tag"
+        ],
+        [
+          "t",
+          "bug"
+        ]
+      ]
+    },
+    {
+      "type": "status-applied",
+      "kind": 1631,
+      "content": "Merged as cccccccccccccccccccccccccccccccccccccccc.",
+      "tags": [
+        [
+          "a",
+          "30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:nscript"
+        ],
+        [
+          "p",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        [
+          "r",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ],
+        [
+          "e",
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "",
+          "root"
+        ],
+        [
+          "e",
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "",
+          "reply"
+        ],
+        [
+          "q",
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "wss://relay.ngit.dev",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ],
+        [
+          "merge-commit",
+          "ffffffffffffffffffffffffffffffffffffffff"
+        ],
+        [
+          "applied-as-commits",
+          "ffffffffffffffffffffffffffffffffffffffff"
+        ]
+      ]
+    },
+    {
+      "type": "grasp-list",
+      "kind": 10317,
+      "content": "",
+      "tags": [
+        [
+          "g",
+          "wss://relay.ngit.dev"
+        ],
+        [
+          "g",
+          "wss://git.shakespeare.diy"
+        ]
+      ]
+    }
+  ]
+}

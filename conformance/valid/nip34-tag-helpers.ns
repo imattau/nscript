@@ -1,0 +1,34 @@
+// NIP-34 git: read repository identity, clone URLs, and status names back
+// from a delivered event's tags.
+use nip01
+use nip34
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+on Note {
+    let tags = [
+        "d=nscript",
+        "clone=https://github.com/imattau/nscript.git",
+        "relays=wss://relay.ngit.dev",
+    ]
+
+    print(nip34.repository_identifier(tags))
+
+    for url in nip34.clone_urls(tags) {
+        print(url)
+    }
+
+    for url in nip34.relay_urls(tags) {
+        print(url)
+    }
+
+    if nip34.status_is_known("merged") {
+        print("merged is a known status")
+    }
+}

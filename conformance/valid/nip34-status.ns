@@ -1,0 +1,24 @@
+// NIP-34 git: an applied/merged status (kind 1631) for a patch revision.
+use nip34
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish StatusApplied to public
+    sign StatusApplied with account
+    relay public
+}
+
+publish StatusApplied {
+    content: "Merged as cccccccccccccccccccccccccccccccccccccccc.",
+    root: RootEvent { id: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+    revision: [ReplyEvent { id: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }],
+    a: ["30617:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:nscript"],
+    p: ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+    r: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+    q: [StatusQuote { id: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", relay: "wss://relay.ngit.dev", author: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }],
+    merge_commit: [MergeCommit { commit: "ffffffffffffffffffffffffffffffffffffffff" }],
+    applied_as: [AppliedAsCommits { commit: "ffffffffffffffffffffffffffffffffffffffff" }],
+} to public with account

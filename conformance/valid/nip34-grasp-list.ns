@@ -1,0 +1,16 @@
+// NIP-34 git: a grasp list (kind 10317) advertising preferred servers.
+use nip34
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish GraspList to public
+    sign GraspList with account
+    relay public
+}
+
+publish GraspList {
+    g: ["wss://relay.ngit.dev", "wss://git.shakespeare.diy"],
+} to public with account

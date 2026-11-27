@@ -1,0 +1,26 @@
+// NIP-34 git: a repository announcement (kind 30617) published as an
+// addressable event with the repository identity, clone URLs, and EUC.
+use nip34
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish RepositoryAnnouncement to public
+    sign RepositoryAnnouncement with account
+    relay public
+}
+
+publish RepositoryAnnouncement {
+    d: "nscript",
+    name: ["NScript"],
+    description: ["A scripting language for Nostr"],
+    web: ["https://github.com/imattau/nscript"],
+    clone: ["https://github.com/imattau/nscript.git"],
+    relays: ["wss://relay.ngit.dev"],
+    euc: [EarliestUniqueCommit { commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+    maintainers: ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+    u: [Fork { reference: "30617:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc:upstream|https://example.com/upstream.git", relay: "wss://relay.ngit.dev", author: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }],
+    t: ["nostr", "scripting"],
+} to public with account

@@ -3872,6 +3872,10 @@ fn pure_function(module: &str, function: &str) -> Option<PureFunction> {
         ("concord05", "invite_is_valid") => Some(invite_is_valid as PureFunction),
         ("concord06", "commitment_matches") => Some(commitment_matches as PureFunction),
         ("nip05", "identifier_matches") => Some(nip05_identifier_matches as PureFunction),
+        ("nip34", "repository_identifier") => Some(nip34_repository_identifier as PureFunction),
+        ("nip34", "clone_urls") => Some(nip34_clone_urls as PureFunction),
+        ("nip34", "relay_urls") => Some(nip34_relay_urls as PureFunction),
+        ("nip34", "status_is_known") => Some(nip34_status_is_known as PureFunction),
         ("ncc00", "identifier") => Some(ncc00_identifier as PureFunction),
         ("ncc00", "status") => Some(ncc00_status as PureFunction),
         ("ncc00", "identifier_is_valid") => Some(ncc00_identifier_is_valid as PureFunction),
@@ -4277,6 +4281,52 @@ fn commitment_matches(arguments: &[OperationValue]) -> Result<OperationValue, Ru
 /// and extracts as empty text rather than failing the handler.
 fn ncc00_identifier(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
     tag_value(arguments, "d", "ncc00.identifier")
+}
+
+/// NIP-34: the `d` identifier a repository announcement or state carries.
+fn nip34_repository_identifier(
+    arguments: &[OperationValue],
+) -> Result<OperationValue, RuntimeError> {
+    tag_value(arguments, "d", "nip34.repository_identifier")
+}
+
+/// NIP-34: every `clone` URL an announcement advertises, in tag order.
+fn nip34_clone_urls(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    nip34_tag_list(arguments, "clone", "nip34.clone_urls")
+}
+
+/// NIP-34: every `relays` URL an announcement advertises, in tag order.
+fn nip34_relay_urls(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    nip34_tag_list(arguments, "relays", "nip34.relay_urls")
+}
+
+/// NIP-34: the `clone`/`relays` extraction shared by the two list functions.
+fn nip34_tag_list(
+    arguments: &[OperationValue],
+    name: &str,
+    function: &'static str,
+) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::List(tags)] = arguments else {
+        return Err(invalid(function));
+    };
+    Ok(OperationValue::List(
+        tag_values(tags, name, function)?
+            .into_iter()
+            .map(|value| OperationValue::Text(value.to_owned()))
+            .collect(),
+    ))
+}
+
+/// NIP-34 status names: `applied`, `merged`, and `resolved` are the patch,
+/// pull request, and issue spellings of kind `1631`.
+fn nip34_status_is_known(arguments: &[OperationValue]) -> Result<OperationValue, RuntimeError> {
+    let [OperationValue::Text(status)] = arguments else {
+        return Err(invalid("nip34.status_is_known"));
+    };
+    Ok(OperationValue::Bool(matches!(
+        status.as_str(),
+        "open" | "applied" | "merged" | "resolved" | "closed" | "draft"
+    )))
 }
 
 /// NCC-00 Appendix A.5: the lifecycle status an event carries, extracted
