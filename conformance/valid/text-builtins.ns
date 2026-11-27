@@ -1,0 +1,21 @@
+use nip01
+
+relayset public = configured
+
+permissions {
+    read Note from public
+    relay public
+    log
+}
+
+on Note {
+    let body = lowercase(trim(event.content))
+
+    if contains_any(body, ["airdrop", "giveaway"]) {
+        print("promotion")
+    }
+
+    if ends_with(body, "?") {
+        print("question")
+    }
+}

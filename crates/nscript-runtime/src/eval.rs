@@ -1071,6 +1071,40 @@ impl<H: EvalHost> Interpreter<'_, H> {
                     }),
                 _ => Err(fail("`strip_prefix` takes two text values")),
             },
+            ExprKind::Identifier(name) if name == "ends_with" => match arguments.as_slice() {
+                [Value::Text(value), Value::Text(suffix)] => {
+                    Ok(Value::Bool(value.ends_with(suffix)))
+                }
+                _ => Err(fail("`ends_with` takes two text values")),
+            },
+            ExprKind::Identifier(name) if name == "lowercase" => match arguments.as_slice() {
+                [Value::Text(value)] => Ok(Value::Text(value.to_lowercase())),
+                _ => Err(fail("`lowercase` takes one text value")),
+            },
+            ExprKind::Identifier(name) if name == "trim" => match arguments.as_slice() {
+                [Value::Text(value)] => Ok(Value::Text(value.trim().to_owned())),
+                _ => Err(fail("`trim` takes one text value")),
+            },
+            // Case-sensitive substring match against any element. Callers that
+            // want case-insensitive rules combine it with `lowercase`.
+            ExprKind::Identifier(name) if name == "contains_any" => match arguments.as_slice() {
+                [Value::Text(value), Value::List(items)] => {
+                    for item in items {
+                        let Value::Text(needle) = item else {
+                            return Err(fail(
+                                "`contains_any` takes a text and a list of text values",
+                            ));
+                        };
+                        if value.contains(needle.as_str()) {
+                            return Ok(Value::Bool(true));
+                        }
+                    }
+                    Ok(Value::Bool(false))
+                }
+                _ => Err(fail(
+                    "`contains_any` takes a text and a list of text values",
+                )),
+            },
             ExprKind::Identifier(name) if name == "len" => match arguments.as_slice() {
                 [Value::List(items)] => {
                     Ok(Value::Int(i64::try_from(items.len()).unwrap_or(i64::MAX)))
@@ -3460,6 +3494,33 @@ mod tests {
             ["count: 3", "true", "already text", "alice"],
             "{messages:?}"
         );
+    }
+
+    #[test]
+    fn text_builtins_check_suffix_case_whitespace_and_any_needle() {
+        let source = "permissions {\n    log\n}\n\non Note {\n    print(text(ends_with(event.content, \"!\")))\n    print(lowercase(\"MiXeD\"))\n    print(trim(\"  padded  \"))\n    print(text(contains_any(lowercase(event.content), [\"airdrop\", \"giveaway\"])))\n    print(text(contains_any(lowercase(event.content), [\"telegram\"])))\n}\n";
+        let (program, checked) = checked(source);
+        let mut ops = SimulatedOperations::new(BTreeMap::new());
+        let mut log = FakeLogHost::default();
+        let mut runtime = runtime();
+        let policy = policy_for(&checked);
+        let event =
+            event_from_json(&serde_json::json!({"content": "FREE AIRDROP now"})).unwrap();
+        let outcomes = runtime.run_handlers_for_event(
+            &program,
+            &checked,
+            &event,
+            &policy,
+            &mut ops,
+            &mut log,
+            None,
+            EvalLimits::default(),
+            None,
+        );
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+        let messages: Vec<_> = log.records.iter().map(|r| r.message.as_str()).collect();
+        assert_eq!(messages, ["false", "mixed", "padded", "true", "false"]);
     }
 
     /// What one evaluated cycle produced.

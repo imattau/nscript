@@ -58,6 +58,32 @@ literal text; `{{` and `}}` produce literal braces. Interpolation is evaluated
 at run time in handlers. A top-level publish cannot execute computed tag fields
 during startup and reports E2403; use literal tag fields there.
 
+### 2.1 Built-in functions
+
+These pure built-ins are available in every program:
+
+| Form | Result |
+| --- | --- |
+| `text(value)` | renders any value as `Text`, using the same rendering as `print` |
+| `len(text)` / `len(list)` | character count or element count as `Int` |
+| `starts_with(text, prefix)` | `Bool` |
+| `ends_with(text, suffix)` | `Bool` |
+| `strip_prefix(text, prefix)` | `Text`; a run-time error when the prefix is absent |
+| `lowercase(text)` | Unicode-aware lowercase `Text` |
+| `trim(text)` | `Text` without leading or trailing whitespace |
+| `contains_any(text, needles)` | `Bool`; true when `text` contains any element of the `List<Text>` |
+
+`contains_any` is case-sensitive. Rules that should ignore case combine it with
+`lowercase`:
+
+```nostr
+if contains_any(lowercase(trim(event.content)), ["airdrop", "giveaway"]) {
+    print("promotion")
+}
+```
+
+The `contains` and `in` operators also test substrings and list membership.
+
 ## 3. Events and tags
 
 An event declaration describes author-controlled fields and its Nostr lowering:

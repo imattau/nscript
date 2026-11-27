@@ -30,6 +30,7 @@ applies inside a handler exactly as it does outside one.
 | `me` | the program's principal; an error if none is configured |
 | declared `input` values | host-provided values are bound in handlers and schedules |
 | `print(x)`, `len(x)`, `text(x)` | `text(x)` renders any value the same way `print` does, as `Text` — the explicit conversion `+` needs to concatenate a non-`Text` value, e.g. `"count: " + text(n)` |
+| `starts_with`, `ends_with`, `strip_prefix`, `lowercase`, `trim`, `contains_any` | text helpers; `contains_any(text, list)` is case-sensitive and true when any list element is a substring, so case-insensitive rules use `contains_any(lowercase(text), [...])` |
 | `publish <record> [to <relayset>] [with <signer>]` | see below |
 | user `fn`s | recursion allowed; a function sees only its own parameters |
 | `module.operation(args)` and the Layer 3 forms that lower to it | arguments become typed `OperationValue`s (`PubKey`, `Text`, `Integer`, `StreamMessage`, records) |
