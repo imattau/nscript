@@ -254,9 +254,9 @@ fn connect_relays(relays: &[String]) -> Result<RealRelayPool, Failure> {
     Ok(pool)
 }
 
-fn publish_documents(
+fn publish_documents<R: RelayHost>(
     documents: &[(&NccEntry, UnsignedEvent)],
-    pool: &mut RealRelayPool,
+    pool: &mut R,
     secret: &[u8; 32],
     public_key: &[u8; 32],
     public_key_hex: &str,
@@ -638,6 +638,7 @@ fn usage() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nscript_ncc::Metadata;
 
     #[test]
     fn parses_hex_and_nsec_keys() {
@@ -692,5 +693,78 @@ mod tests {
         options.all = true;
         options.ids.push("ncc-00".to_owned());
         assert!(validate_publish_options(&options).is_err());
+    }
+
+    fn sample_entry() -> NccEntry {
+        NccEntry {
+            id: "ncc-00".to_owned(),
+            directory: PathBuf::from("ncc-00"),
+            metadata: Metadata {
+                title: "Test NCC".to_owned(),
+                summary: None,
+                status: Status::Published,
+                topics: vec![],
+                lang: None,
+                version: None,
+                license: None,
+                authors: vec![],
+                supersedes: vec![],
+            },
+            content: "# Test NCC\n".to_owned(),
+        }
+    }
+
+    #[test]
+    fn publish_documents_signs_and_counts_acceptance() {
+        let entry = sample_entry();
+        let unsigned = build_document(&entry, 1_766_012_345, None).unwrap();
+        let documents = [(&entry, unsigned)];
+        let secret = [1_u8; 32];
+        let public_key = xonly_pubkey(&secret).unwrap();
+        let public_key_hex = hex_encode(&public_key);
+        let mut relay = nscript_runtime::FakeRelayHost {
+            relays: [("fake://public".to_owned(), true)].into_iter().collect(),
+            ..nscript_runtime::FakeRelayHost::default()
+        };
+        let failures = publish_documents(
+            &documents,
+            &mut relay,
+            &secret,
+            &public_key,
+            &public_key_hex,
+            1,
+            false,
+        )
+        .unwrap();
+        assert_eq!(failures, 0);
+        assert_eq!(relay.published.len(), 1);
+        assert_eq!(relay.published[0].signer, public_key_hex);
+        assert_eq!(relay.published[0].unsigned.kind, 30050);
+    }
+
+    #[test]
+    fn publish_documents_counts_a_rejected_relay() {
+        let entry = sample_entry();
+        let unsigned = build_document(&entry, 1_766_012_345, None).unwrap();
+        let documents = [(&entry, unsigned)];
+        let secret = [1_u8; 32];
+        let public_key = xonly_pubkey(&secret).unwrap();
+        let public_key_hex = hex_encode(&public_key);
+        let mut relay = nscript_runtime::FakeRelayHost {
+            relays: [("fake://public".to_owned(), false)].into_iter().collect(),
+            ..nscript_runtime::FakeRelayHost::default()
+        };
+        let failures = publish_documents(
+            &documents,
+            &mut relay,
+            &secret,
+            &public_key,
+            &public_key_hex,
+            1,
+            false,
+        )
+        .unwrap();
+        assert_eq!(failures, 1);
+        assert!(relay.published.is_empty());
     }
 }
