@@ -4,6 +4,7 @@ members = [
     "crates/nscript-host-crypto",
     "crates/nscript-ir",
     "crates/nscript-modules",
+    "crates/nscript-ncc",
     "crates/nscript-semantics",
     "crates/nscript-syntax",
     "crates/nscript-runtime",

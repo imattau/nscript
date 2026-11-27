@@ -133,7 +133,12 @@ fn ncc00_ledger_lowers_to_the_pinned_wire_vector() {
         &std::fs::read(repository_path("conformance/vectors/ncc00.json")).unwrap(),
     )
     .unwrap();
-    let expected = &vector["vectors"][0];
+    let expected = vector["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|vector| vector["type"] == "supporting-document")
+        .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .args(["inspect", "--json"])
         .arg(repository_path("conformance/valid/ncc00-ledger.ns"))
@@ -148,6 +153,36 @@ fn ncc00_ledger_lowers_to_the_pinned_wire_vector() {
     let create = &value["publication_trace"][0]["steps"][0];
     assert_eq!(create["op"], "create_event");
     assert_eq!(create["event"], "NccSupportingDocument");
+    assert_eq!(create["kind"], expected["kind"]);
+    assert_eq!(create["tags"], expected["tags"]);
+}
+
+#[test]
+fn ncc00_document_lowers_to_the_pinned_wire_vector() {
+    let vector: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(repository_path("conformance/vectors/ncc00.json")).unwrap(),
+    )
+    .unwrap();
+    let expected = vector["vectors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|vector| vector["type"] == "document")
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .args(["inspect", "--json"])
+        .arg(repository_path("conformance/valid/ncc00-document.ns"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let create = &value["publication_trace"][0]["steps"][0];
+    assert_eq!(create["op"], "create_event");
+    assert_eq!(create["event"], "NccDocument");
     assert_eq!(create["kind"], expected["kind"]);
     assert_eq!(create["tags"], expected["tags"]);
 }

@@ -11,10 +11,12 @@ name = "nscript"
 path = "src/main.rs"
 
 [dependencies]
+bech32 = "0.11"
 nscript-host-crypto = { path = "../nscript-host-crypto" }
 nscript-ir = { path = "../nscript-ir" }
 nscript-modules = { path = "../nscript-modules" }
 nscript-napplet = { path = "../nscript-napplet" }
+nscript-ncc = { path = "../nscript-ncc" }
 nscript-nip5d = { path = "../nscript-nip5d" }
 nscript-runtime = { path = "../nscript-runtime" }
 nscript-semantics = { path = "../nscript-semantics" }

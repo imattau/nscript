@@ -1,0 +1,28 @@
+// NCC-00 document publication: the full author metadata lowers to the
+// required and optional wire tags, including the `status` value that the
+// repository publisher enforces separately.
+use ncc00
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish NccDocument to public
+    sign NccDocument with account
+    relay public
+}
+
+publish NccDocument {
+    d: "ncc-00";
+    title: "Publishing Nostr Community Conventions on Nostr";
+    published_at: 1766012345;
+    status: "published";
+    summary: "How NCCs are published and revised using Nostr.";
+    t: ["nostr", "conventions"];
+    lang: "en";
+    version: "1.0.0";
+    license: "MIT";
+    authors: ["npub1example"];
+    content: "# NCC-00\n";
+} to public with account

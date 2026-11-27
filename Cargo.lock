@@ -45,6 +45,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
+name = "bech32"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32637268377fc7b10a8c6d51de3e7fba1ce5dd371a96e342b34e6078db558e7f"
+
+[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -392,10 +398,12 @@ checksum = "685a9ac4b61f4e728e1d2c6a7844609c16527aeb5e6c865915c08e619c16410f"
 name = "nscript-cli"
 version = "0.3.14"
 dependencies = [
+ "bech32",
  "nscript-host-crypto",
  "nscript-ir",
  "nscript-modules",
  "nscript-napplet",
+ "nscript-ncc",
  "nscript-nip5d",
  "nscript-runtime",
  "nscript-semantics",
@@ -476,6 +484,15 @@ dependencies = [
  "nscript-lang",
  "nscript-semantics",
  "nscript-syntax",
+]
+
+[[package]]
+name = "nscript-ncc"
+version = "0.3.14"
+dependencies = [
+ "nscript-runtime",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

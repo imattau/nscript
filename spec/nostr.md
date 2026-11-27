@@ -208,7 +208,9 @@ with `for=ncc-XX`. A `publish NccDocument` (or succession, endorsement, or
 supporting-document) statement lowers its fields to wire tags through the
 ordinary publication path, so the lifecycle reaches relays as standard
 NIP-01 addressable data and each address keeps only the author's latest
-revision.
+revision. The same kind-30050 lowering is available to repositories through
+`nscript ncc publish`, which reads `ncc.json` and `README.md` and signs
+host-side; see [`docs/NCC.md`](../docs/NCC.md).
 
 Lifecycle rules are exposed as pure functions whose time comes from the
 caller: `ncc00.identifier(event.tags)` and `ncc00.status(event.tags)`

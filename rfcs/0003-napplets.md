@@ -1,7 +1,7 @@
 # RFC 0003: NScript host integration for napplets
 
-Status: **Prototype implemented; broader adapter remains proposed**  
-Authors: NScript contributors  
+Status: **Prototype implemented; broader adapter remains proposed**
+Authors: NScript contributors
 Created: 2026-11-20
 
 ## Summary

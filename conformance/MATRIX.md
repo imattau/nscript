@@ -37,7 +37,7 @@ against deterministic host fakes.
 | Concord encrypted stream moderation | `concord-stream-moderation-bot.ns` | `concord-read-stream-ungranted.ns`, `layer3-concord-ungranted-ban.ns` | `nscript-host-crypto/tests/handler.rs`: reader → handler → real kick and independent Guestbook fold |
 | Package resolution | Resolver transitive-version tests | Missing/incompatible package tests | Resolver version-selection vector |
 | NCC-07 capability manifests | `ncc07-manifest.ns` | `ncc07-regular-mode.ns` | `vectors/ncc07.json` publication trace + pure-function runtime tests |
-| NCC-00 document lifecycle | `ncc00-ledger.ns` | `ncc00-succession-wrong-type.ns` | `vectors/ncc00.json` publication trace + pure-function runtime tests |
+| NCC-00 document lifecycle | `ncc00-ledger.ns`, `ncc00-document.ns` | `ncc00-succession-wrong-type.ns` | `vectors/ncc00.json` publication trace + pure-function runtime tests + `nscript ncc` drift test |
 | NCC-02 endpoint identity binding | `ncc02-service-record.ns` | `ncc02-validity-wrong-clock.ns` | `vectors/ncc02.json` publication trace + pure-function runtime tests |
 | NCC-05 encrypted locators | `ncc05-locator.ns` | `ncc05-locator-wrong-clock.ns` | `vectors/ncc05.json` publication trace + handler publish round-trip test |
 | NCC-06 service profile | `ncc06-service-profile.ns` | `ncc06-locator-marker-wrong-clock.ns` | `vectors/ncc06.json` publication trace + resolver unit tests and deploy identity-resolution test |

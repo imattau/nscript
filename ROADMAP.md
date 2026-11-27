@@ -100,6 +100,10 @@ protocol breadth.
   infrastructure adoption (capability publication, service records, identity-
   first resolution, identity rotation, operator authority, operational state,
   trust policy) or an explicit non-adoption note.
+- Repository publication for NCC-00 documents is available through
+  `nscript ncc publish`, which reads `ncc.json` and `README.md`, signs locally
+  from an environment key, and publishes real kind `30050` events. See
+  [`docs/NCC.md`](docs/NCC.md).
 
 **Exit criteria:** each landed NCC meets the recipe above, the pinned NCC
 commit is recorded, and no doc describes a convention as implemented while its

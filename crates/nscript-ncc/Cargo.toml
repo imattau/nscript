@@ -1,0 +1,16 @@
+[package]
+name = "nscript-ncc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "NCC-00 document metadata and event construction shared by NScript tooling"
+
+[dependencies]
+nscript-runtime = { path = "../nscript-runtime", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

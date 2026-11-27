@@ -2,6 +2,24 @@
   "source": "https://github.com/imattau/nostr-community-conventions/blob/186c3ad50966a2319c354ace12e0a5a2267b75d9/ncc-00/README.md",
   "vectors": [
     {
+      "type": "document",
+      "kind": 30050,
+      "content": "# NCC-00\n",
+      "tags": [
+        ["d", "ncc-00"],
+        ["title", "Publishing Nostr Community Conventions on Nostr"],
+        ["published_at", "1766012345"],
+        ["status", "published"],
+        ["summary", "How NCCs are published and revised using Nostr."],
+        ["t", "nostr"],
+        ["t", "conventions"],
+        ["lang", "en"],
+        ["version", "1.0.0"],
+        ["license", "MIT"],
+        ["authors", "npub1example"]
+      ]
+    },
+    {
       "type": "supporting-document",
       "kind": 30053,
       "content": "# NScript implements NCC-00 and NCC-07\n",

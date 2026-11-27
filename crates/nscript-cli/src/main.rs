@@ -20,6 +20,8 @@ use nscript_syntax::{Diagnostic, Program, parse_program};
 use semver::VersionReq;
 use sha2::{Digest, Sha256};
 
+mod ncc;
+
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
     match arguments.as_slice() {
@@ -30,6 +32,7 @@ fn main() -> ExitCode {
         [command, rest @ ..] if command == "inspect" => inspect_program(rest, false),
         [command, rest @ ..] if command == "run" => run_program(rest),
         [command, rest @ ..] if command == "deploy" => deploy_program(rest),
+        [command, rest @ ..] if command == "ncc" => ncc::run(rest),
         [command, rest @ ..] if command == "test-event" => test_event(rest),
         [package, manifest, rest @ ..] if package == "package" && manifest == "manifest" => {
             package_manifest(rest)
@@ -65,7 +68,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--now <seconds>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--as-signer <name>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]... [--input-env <name>=<environment-variable>]...\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
+                "usage:\n  nscript check [-M <directory>]... <file>\n  nscript inspect [--json] [-M <directory>]... <file>\n  nscript run [--dry-run] [-M <directory>]... <file> [--event <json>]... [--events <file>] [--as <key>] [--now <seconds>] [--fail <module.operation>]... [--input <name>=<value>]...\n  nscript deploy [-M <directory>]... <file> --relay <wss://url>... [--signer <name>=<bunker://...>]... [--signer-env <name>=<environment-variable>]... [--as <key>] [--as-signer <name>] [--poll-interval <seconds>] [--cycles <n>] [--operation-command <path>] [--state-dir <directory>] [--input <name>=<value>]... [--input-env <name>=<environment-variable>]...\n  nscript ncc check [--repo <directory>] [--all | <ncc-id>...] [--json]\n  nscript ncc publish [--repo <directory>] [--all | <ncc-id>... | --tag <tag> | --version <version>] --relay <wss://url>... --signer-key-env <environment-variable> [--published-at <seconds>] [--require-accepted <n>] [--include-drafts] [--dry-run] [--json]\n  nscript test-event [-M <directory>]... <file> --event <json> [--as <key>] [--input <name>=<value>]... [--fail <module.operation>]...\n  nscript package manifest <file> --publisher <npub> --name <name> --version <semver> --artifact <file.npk> [--sha256 <hash>] [--hash-artifact] [--lock <file>] [--output <file>]\n  nscript package lock <file> [-M <directory>]... [--output <file>]\n  nscript package verify <file> --lock <file> [-M <directory>]...\n  nscript compile --emit ir|wasm [-M <directory>]... <file> [--output <file>]\n  nscript module check <file.nsm>\n  nscript module hash <file.nsm>\n  nscript module describe <file.nsm>"
             );
             eprintln!(
                 "  nscript napplet requirements [-M <directory>]... <file.ns> [--output <file.json>]\n  nscript napplet build <project-directory> [--source <file.ns>] [-M <directory>]... [--verify-reproducible]"
@@ -1505,6 +1508,7 @@ impl nscript_runtime::OperationHost for DeployOperationHost {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_program(arguments: &[String]) -> ExitCode {
     let (arguments, options) = match take_run_options(arguments) {
         Ok(taken) => taken,
@@ -1839,6 +1843,8 @@ fn queue_event_webhook(
     event: &nscript_runtime::SignedEvent,
     state_dir: Option<&Path>,
 ) -> Result<(), String> {
+    use std::io::Write as _;
+
     let Some(state_dir) = state_dir else {
         return Err("cannot persist failed callback without deploy --state-dir".to_owned());
     };
@@ -1862,7 +1868,6 @@ fn queue_event_webhook(
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    use std::io::Write as _;
     let mut file = options.open(path).map_err(|error| error.to_string())?;
     serde_json::to_writer(&mut file, &payload).map_err(|error| error.to_string())?;
     file.write_all(b"\n").map_err(|error| error.to_string())
@@ -1904,6 +1909,7 @@ fn flush_event_webhook_outbox(state_dir: Option<&Path>) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn deploy_program(arguments: &[String]) -> ExitCode {
     let (arguments, options) = match take_deploy_options(arguments) {
         Ok(taken) => taken,
@@ -2281,10 +2287,10 @@ fn deploy_program(arguments: &[String]) -> ExitCode {
                         if let Err(webhook_error) = notify_event_webhook(raw_event) {
                             match queue_event_webhook(raw_event, options.state_dir.as_deref()) {
                                 Ok(()) => {
-                                    eprintln!("warning: {webhook_error}; event queued for retry")
+                                    eprintln!("warning: {webhook_error}; event queued for retry");
                                 }
                                 Err(queue_error) => {
-                                    eprintln!("warning: {webhook_error}; {queue_error}")
+                                    eprintln!("warning: {webhook_error}; {queue_error}");
                                 }
                             }
                         }
