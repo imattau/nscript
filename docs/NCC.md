@@ -106,7 +106,8 @@ change before any event is published.
 The NCC repository uses `.github/workflows/ncc-publish.yml`:
 
 - `ncc-*` tags publish the matching convention;
-- `workflow_dispatch` can publish one convention or all of them;
+- `workflow_dispatch` can publish one convention or all of them, with an optional dry run;
+- the all-conventions dispatch passes `--include-drafts`, because several NCCs are still marked draft;
 - pull requests run `nscript ncc check --all` only;
 - the signing key comes from `NCC_PUBLISH_NSEC`, falling back to `NGIT_NSEC`;
 - `nscript` is installed from a pinned commit.
