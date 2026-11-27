@@ -517,7 +517,11 @@ fn decode_hex<const N: usize>(text: &str) -> Result<[u8; N], String> {
         ));
     }
     let mut bytes = [0_u8; N];
-    for (index, chunk) in text.as_bytes().chunks_exact(2).enumerate() {
+    let (chunks, remainder) = text.as_bytes().as_chunks::<2>();
+    if !remainder.is_empty() {
+        return Err("the hexadecimal value has an odd number of characters".to_owned());
+    }
+    for (index, chunk) in chunks.iter().enumerate() {
         let pair = std::str::from_utf8(chunk)
             .map_err(|_| "the hexadecimal value contains non-UTF-8 bytes".to_owned())?;
         bytes[index] = u8::from_str_radix(pair, 16)
@@ -765,6 +769,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(failures, 1);
-        assert!(relay.published.is_empty());
+        assert_eq!(relay.published, Vec::new());
     }
 }

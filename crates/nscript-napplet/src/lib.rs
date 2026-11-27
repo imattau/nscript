@@ -483,7 +483,7 @@ on Note {
         assert!(!principal_required(&program, &checked));
         let filters = handler_filters(&checked, None);
         assert_eq!(filters[0].tags.len(), 0);
-        assert!(filters[0].authors.is_empty());
+        assert_eq!(filters[0].authors, Vec::<String>::new());
     }
 
     #[test]
