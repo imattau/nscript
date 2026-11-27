@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,6 +33,17 @@ fn fixture() -> PathBuf {
     .expect("write metadata");
     fs::write(root.join("ncc-00/README.md"), "# Test NCC\n\nBody.\n").expect("write readme");
     root
+}
+
+fn write_convention(root: &Path, id: &str, status: &str) {
+    let directory = root.join(id);
+    fs::create_dir_all(&directory).expect("create convention");
+    fs::write(
+        directory.join("ncc.json"),
+        format!(r#"{{"title":"{id}","status":"{status}"}}"#),
+    )
+    .expect("write metadata");
+    fs::write(directory.join("README.md"), format!("# {id}\n\nBody.\n")).expect("write readme");
 }
 
 fn nscript() -> Command {
@@ -183,4 +194,47 @@ fn cli_tag_schema_matches_the_ncc00_module() {
         .map(|(name, _)| name.as_str())
         .collect::<BTreeSet<_>>();
     assert_eq!(cli_fields, module_fields);
+}
+
+#[test]
+fn all_skips_drafts_unless_included() {
+    let root = fixture();
+    write_convention(&root, "ncc-03", "draft");
+
+    let output = nscript()
+        .args(["ncc", "publish", "--repo"])
+        .arg(&root)
+        .args(["--all", "--dry-run", "--json"])
+        .output()
+        .expect("run ncc publish");
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json output");
+    assert_eq!(value["documents"].as_array().unwrap().len(), 1);
+    assert_eq!(value["documents"][0]["id"], "ncc-00");
+
+    let output = nscript()
+        .args(["ncc", "publish", "--repo"])
+        .arg(&root)
+        .args(["--all", "--include-drafts", "--dry-run", "--json"])
+        .output()
+        .expect("run ncc publish");
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json output");
+    assert_eq!(value["documents"].as_array().unwrap().len(), 2);
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn version_option_sets_the_version_tag() {
+    let root = fixture();
+    let output = nscript()
+        .args(["ncc", "publish", "--repo"])
+        .arg(&root)
+        .args(["ncc-00", "--version", "3.0.0", "--dry-run", "--json"])
+        .output()
+        .expect("run ncc publish");
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json output");
+    assert_eq!(value["documents"][0]["version"], "3.0.0");
+    fs::remove_dir_all(root).expect("remove fixture");
 }
