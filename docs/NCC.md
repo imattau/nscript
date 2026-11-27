@@ -114,6 +114,11 @@ The NCC repository uses `.github/workflows/ncc-publish.yml`:
 
 The workflow never runs for pull requests from forks with repository secrets.
 
+The command is not GitHub-specific. Any environment with `nscript`, the
+repository, relay access, and a key in an environment variable can run the same
+`nscript ncc publish` invocation. An ngit or local release flow can therefore
+publish the same kind `30050` events after pushing the matching tag.
+
 ## Relationship to the `ncc00` module
 
 `ncc00` remains the language-facing schema. `nscript ncc` is the
