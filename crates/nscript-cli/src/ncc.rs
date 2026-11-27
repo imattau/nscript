@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::publish::{
-    EventToPublish, Failure, connect_relays, count_failures, finish, finish_publish, hex_encode,
-    load_signer, now, option_value, parse_u64, parse_usize, publish_event_list,
+    EventToPublish, Failure, connect_relays, count_failures, finish, finish_publish, load_signer,
+    normalize_pubkey, now, option_value, parse_u64, parse_usize, publish_event_list,
 };
 use nscript_ncc::{
     EndorsementMetadata, NccEntry, Status, SuccessionMetadata, SupportingEntry, build_document,
@@ -374,7 +374,7 @@ fn succession_inner(arguments: &[String]) -> Result<(), Failure> {
     let mut preloaded_signer = None;
     let authoritative = if options.authoritative.as_deref() == Some("latest") {
         let author = if let Some(author) = &options.author {
-            normalize_author(author)?
+            normalize_pubkey(author)?
         } else {
             let signer = load_signer(options.signer_key_env.as_deref())?;
             let pubkey = signer.public_key_hex.clone();
@@ -437,7 +437,7 @@ fn endorse_inner(arguments: &[String]) -> Result<(), Failure> {
         let author = options.author.as_deref().ok_or_else(|| {
             Failure::Usage("endorse --event latest needs --author <pubkey>".to_owned())
         })?;
-        let author = normalize_author(author)?;
+        let author = normalize_pubkey(author)?;
         let mut pool = connect_relays(&options.relays)?;
         let relays = pool.relay_urls();
         let latest = query_latest(&mut pool, &relays, &d, Some(&author))?;
@@ -487,7 +487,7 @@ fn latest_inner(arguments: &[String]) -> Result<(), Failure> {
     let author = options
         .author
         .as_deref()
-        .map(normalize_author)
+        .map(normalize_pubkey)
         .transpose()?;
     let mut pool = connect_relays(&options.relays)?;
     let relays = pool.relay_urls();
@@ -620,32 +620,6 @@ fn validate_latest_options(options: &Options) -> Result<(), Failure> {
         ));
     }
     Ok(())
-}
-
-fn normalize_author(value: &str) -> Result<String, Failure> {
-    let value = value.trim();
-    let bare = value.strip_prefix("pubkey:").unwrap_or(value);
-    if bare.len() == 64 && bare.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Ok(bare.to_ascii_lowercase());
-    }
-    let npub = value.strip_prefix("npub:").unwrap_or(value);
-    if npub.starts_with("npub1") {
-        let (hrp, data) = bech32::decode(npub)
-            .map_err(|error| Failure::Usage(format!("invalid npub: {error}")))?;
-        if hrp.to_string() != "npub" {
-            return Err(Failure::Usage("author is not an npub".to_owned()));
-        }
-        if data.len() != 32 {
-            return Err(Failure::Usage(format!(
-                "an npub must decode to 32 bytes, found {}",
-                data.len()
-            )));
-        }
-        return Ok(hex_encode(&data));
-    }
-    Err(Failure::Usage(
-        "author must be a 64-character pubkey or npub1...".to_owned(),
-    ))
 }
 
 fn validate_publish_options(options: &Options) -> Result<(), Failure> {
@@ -1092,7 +1066,8 @@ fn usage() {
 mod tests {
     use super::*;
     use crate::publish::{
-        LocalSigner, decode_hex, decode_hex_32, parse_secret_key, publish_one, sign_event,
+        LocalSigner, decode_hex, decode_hex_32, hex_encode, parse_secret_key, publish_one,
+        sign_event,
     };
     use nscript_host_crypto::group_key::xonly_pubkey;
     use nscript_host_crypto::schnorr::verify;
@@ -1203,13 +1178,13 @@ mod tests {
     #[test]
     fn normalizes_author_pubkeys_and_npubs() {
         let hex = "b5d34eedc7d8f81ceaa5ed377b5a2d534ee949fae0c5ab3bae0a576aa7475cbf";
-        assert_eq!(normalize_author(hex).unwrap(), hex);
+        assert_eq!(normalize_pubkey(hex).unwrap(), hex);
         assert_eq!(
-            normalize_author("npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q")
+            normalize_pubkey("npub1khf5amw8mrupe649a5mhkk3d2d8wjj06urz6kwawpftk4f68tjlstdmd3q")
                 .unwrap(),
             hex
         );
-        assert!(normalize_author("not-an-author").is_err());
+        assert!(normalize_pubkey("not-an-author").is_err());
     }
 
     #[test]

@@ -17,6 +17,7 @@ nscript-ir = { path = "../nscript-ir" }
 nscript-modules = { path = "../nscript-modules" }
 nscript-napplet = { path = "../nscript-napplet" }
 nscript-ncc = { path = "../nscript-ncc" }
+nscript-nip34 = { path = "../nscript-nip34" }
 nscript-nip5d = { path = "../nscript-nip5d" }
 nscript-runtime = { path = "../nscript-runtime" }
 nscript-semantics = { path = "../nscript-semantics" }

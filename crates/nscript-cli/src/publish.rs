@@ -304,6 +304,32 @@ pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     output
 }
 
+pub(crate) fn normalize_pubkey(value: &str) -> Result<String, Failure> {
+    let value = value.trim();
+    let bare = value.strip_prefix("pubkey:").unwrap_or(value);
+    if bare.len() == 64 && bare.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(bare.to_ascii_lowercase());
+    }
+    let npub = value.strip_prefix("npub:").unwrap_or(value);
+    if npub.starts_with("npub1") {
+        let (hrp, data) = bech32::decode(npub)
+            .map_err(|error| Failure::Usage(format!("invalid npub: {error}")))?;
+        if hrp.to_string() != "npub" {
+            return Err(Failure::Usage("the value is not an npub".to_owned()));
+        }
+        if data.len() != 32 {
+            return Err(Failure::Usage(format!(
+                "an npub must decode to 32 bytes, found {}",
+                data.len()
+            )));
+        }
+        return Ok(hex_encode(&data));
+    }
+    Err(Failure::Usage(
+        "public key must be a 64-character pubkey or npub1...".to_owned(),
+    ))
+}
+
 pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

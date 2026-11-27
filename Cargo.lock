@@ -404,6 +404,7 @@ dependencies = [
  "nscript-modules",
  "nscript-napplet",
  "nscript-ncc",
+ "nscript-nip34",
  "nscript-nip5d",
  "nscript-runtime",
  "nscript-semantics",
