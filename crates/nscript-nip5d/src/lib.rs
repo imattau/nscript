@@ -636,9 +636,9 @@ pub fn manifest_is_valid(kind: u64, content: &str, tags: &[Tag]) -> bool {
 pub fn validate_shell_handler(content: &str, tags: &[Tag]) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     if content.trim().is_empty() {
-        diagnostics.push(Diagnostic::error(
+        diagnostics.push(Diagnostic::warning(
             "nip5d.shell.content",
-            "shell handler content must contain a non-empty description",
+            "shell handler content is empty; NIP-89 keeps it as a description",
         ));
     }
 
