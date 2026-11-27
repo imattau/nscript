@@ -11,6 +11,7 @@ members = [
     "crates/nscript-lang",
     "crates/nscript-mcp",
     "crates/nscript-napplet",
+    "crates/nscript-nip5d",
 ]
 resolver = "3"
 

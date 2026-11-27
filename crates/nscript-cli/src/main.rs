@@ -10,6 +10,9 @@ use nscript_modules::{ModuleDependency, ModuleRegistry, ResolutionError, hash_he
 use nscript_napplet::{
     LENS_OPTIONAL_DOMAINS, LENS_REQUIRED_DOMAINS, principal_required, validate_lens_profile,
 };
+use nscript_nip5d::{
+    NAMED_KIND, Tag, first_tag_value, optional_domains, required_domains, validate_manifest,
+};
 use nscript_runtime::{ClockHost, SubscriptionHost};
 use nscript_semantics::{analyze_with_modules, bind_module_events, check};
 use nscript_syntax::{Diagnostic, Program, parse_program};
@@ -321,9 +324,25 @@ fn verify_napplet_artifact(project: &Path, requirements_path: &Path) -> Result<S
             .map_err(|error| format!("cannot read manifest sidecar: {error}"))?,
     )
     .map_err(|error| format!("invalid NIP-5D manifest JSON: {error}"))?;
-    if manifest["kind"].as_u64() != Some(35_129) {
+    let kind = manifest["kind"]
+        .as_u64()
+        .ok_or_else(|| "manifest sidecar has no numeric kind".to_owned())?;
+    if kind != NAMED_KIND {
         return Err("manifest sidecar is not a kind 35129 event".to_owned());
     }
+    let content = manifest["content"]
+        .as_str()
+        .ok_or_else(|| "manifest description is not text".to_owned())?;
+    let tags = manifest_tags(&manifest)?;
+    let errors = validate_manifest(kind, content, &tags)
+        .into_iter()
+        .filter(nscript_nip5d::Diagnostic::is_error)
+        .map(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message))
+        .collect::<Vec<_>>();
+    if !errors.is_empty() {
+        return Err(format!("invalid NIP-5D manifest: {}", errors.join("; ")));
+    }
+
     let mut required = requirements["requires"]
         .as_array()
         .ok_or_else(|| "requirements has no `requires` array".to_owned())?
@@ -342,21 +361,8 @@ fn verify_napplet_artifact(project: &Path, requirements_path: &Path) -> Result<S
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let tags = manifest["tags"]
-        .as_array()
-        .ok_or_else(|| "manifest has no tags array".to_owned())?;
-    let mut manifest_required = tags
-        .iter()
-        .filter(|tag| tag[0].as_str() == Some("R"))
-        .filter_map(|tag| tag[1].as_str())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    let mut manifest_optional = tags
-        .iter()
-        .filter(|tag| tag[0].as_str() == Some("O"))
-        .filter_map(|tag| tag[1].as_str())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
+    let mut manifest_required = required_domains(&tags);
+    let mut manifest_optional = optional_domains(&tags);
     required.sort();
     optional.sort();
     manifest_required.sort();
@@ -378,20 +384,32 @@ fn verify_napplet_artifact(project: &Path, requirements_path: &Path) -> Result<S
     for byte in digest {
         write!(&mut expected_hash, "{byte:02x}").expect("writing to a String cannot fail");
     }
-    let hash_tags = tags
-        .iter()
-        .filter(|tag| tag[0].as_str() == Some("x"))
-        .filter_map(|tag| tag[1].as_str())
-        .collect::<Vec<_>>();
-    if hash_tags != [expected_hash.as_str()]
+    if first_tag_value(&tags, "x") != Some(expected_hash.as_str())
         || manifest["artifactHash"].as_str() != Some(expected_hash.as_str())
     {
         return Err("manifest artifact hash does not match dist/index.html".to_owned());
     }
-    if manifest["content"].as_str().is_none_or(str::is_empty) {
-        return Err("manifest description is empty".to_owned());
-    }
     Ok(expected_hash)
+}
+
+fn manifest_tags(manifest: &serde_json::Value) -> Result<Vec<Tag>, String> {
+    manifest["tags"]
+        .as_array()
+        .ok_or_else(|| "manifest has no tags array".to_owned())?
+        .iter()
+        .map(|tag| {
+            tag.as_array()
+                .ok_or_else(|| "every manifest tag must be an array".to_owned())?
+                .iter()
+                .map(|column| {
+                    column
+                        .as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| "every manifest tag column must be text".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_lines)]

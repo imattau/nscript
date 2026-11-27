@@ -396,6 +396,7 @@ dependencies = [
  "nscript-ir",
  "nscript-modules",
  "nscript-napplet",
+ "nscript-nip5d",
  "nscript-runtime",
  "nscript-semantics",
  "nscript-syntax",
@@ -476,6 +477,10 @@ dependencies = [
  "nscript-semantics",
  "nscript-syntax",
 ]
+
+[[package]]
+name = "nscript-nip5d"
+version = "0.3.14"
 
 [[package]]
 name = "nscript-runtime"

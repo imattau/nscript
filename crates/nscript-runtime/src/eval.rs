@@ -374,6 +374,79 @@ fn fail(message: impl Into<String>) -> Stop {
     })
 }
 
+/// Evaluate a pure built-in by name.
+///
+/// `None` means the name is not a built-in, so the caller falls through to a
+/// script `fn`. Keeping these out of [`Interpreter::call`] leaves that dispatch
+/// readable as the set grows.
+fn evaluate_builtin(name: &str, arguments: &[Value]) -> Option<Result<Value, Stop>> {
+    Some(match name {
+        // `+` deliberately stays strict (two `Text`s or two `Int`s, per
+        // `arithmetic`) rather than silently coercing. `text(value)` is the
+        // explicit conversion a script reaches for instead, e.g.
+        // `"count: " + text(yes)`. It reuses `Value::display`, the same
+        // rendering `print` already uses, so `text(x)` and printing `x` never
+        // disagree.
+        "text" => match arguments {
+            [value] => Ok(Value::Text(value.display())),
+            _ => Err(fail("`text` takes one argument")),
+        },
+        "starts_with" => match arguments {
+            [Value::Text(value), Value::Text(prefix)] => {
+                Ok(Value::Bool(value.starts_with(prefix)))
+            }
+            _ => Err(fail("`starts_with` takes two text values")),
+        },
+        "strip_prefix" => match arguments {
+            [Value::Text(value), Value::Text(prefix)] => value
+                .strip_prefix(prefix)
+                .map(|stripped| Value::Text(stripped.to_owned()))
+                .ok_or_else(|| fail("`strip_prefix` input does not start with the given prefix")),
+            _ => Err(fail("`strip_prefix` takes two text values")),
+        },
+        "ends_with" => match arguments {
+            [Value::Text(value), Value::Text(suffix)] => Ok(Value::Bool(value.ends_with(suffix))),
+            _ => Err(fail("`ends_with` takes two text values")),
+        },
+        "lowercase" => match arguments {
+            [Value::Text(value)] => Ok(Value::Text(value.to_lowercase())),
+            _ => Err(fail("`lowercase` takes one text value")),
+        },
+        "trim" => match arguments {
+            [Value::Text(value)] => Ok(Value::Text(value.trim().to_owned())),
+            _ => Err(fail("`trim` takes one text value")),
+        },
+        // Case-sensitive substring match against any element. Callers that
+        // want case-insensitive rules combine it with `lowercase`.
+        "contains_any" => match arguments {
+            [Value::Text(value), Value::List(items)] => {
+                for item in items {
+                    let Value::Text(needle) = item else {
+                        return Some(Err(fail(
+                            "`contains_any` takes a text and a list of text values",
+                        )));
+                    };
+                    if value.contains(needle.as_str()) {
+                        return Some(Ok(Value::Bool(true)));
+                    }
+                }
+                Ok(Value::Bool(false))
+            }
+            _ => Err(fail(
+                "`contains_any` takes a text and a list of text values",
+            )),
+        },
+        "len" => match arguments {
+            [Value::List(items)] => Ok(Value::Int(i64::try_from(items.len()).unwrap_or(i64::MAX))),
+            [Value::Text(text)] => Ok(Value::Int(
+                i64::try_from(text.chars().count()).unwrap_or(i64::MAX),
+            )),
+            _ => Err(fail("`len` takes a list or text")),
+        },
+        _ => return None,
+    })
+}
+
 enum Flow {
     Next,
     Return(Box<Value>),
@@ -1041,79 +1114,6 @@ impl<H: EvalHost> Interpreter<'_, H> {
                 self.host.print(&value.display())?;
                 Ok(Value::Unit)
             }
-            // `+` deliberately stays strict (two `Text`s or two `Int`s, per
-            // `arithmetic`, below) rather than silently coercing — the same
-            // choice this crate already made for `CheckedArgument::Bool` and
-            // `::List`, added as their own explicit shapes rather than
-            // letting some other type quietly stand in. `text(value)` is the
-            // explicit conversion a script reaches for instead, e.g.
-            // `"count: " + text(yes)`. It reuses `Value::display`, the same
-            // rendering `print` already uses, so `text(x)` and printing `x`
-            // never disagree.
-            ExprKind::Identifier(name) if name == "text" => {
-                let [value] = arguments.as_slice() else {
-                    return Err(fail("`text` takes one argument"));
-                };
-                Ok(Value::Text(value.display()))
-            }
-            ExprKind::Identifier(name) if name == "starts_with" => match arguments.as_slice() {
-                [Value::Text(value), Value::Text(prefix)] => {
-                    Ok(Value::Bool(value.starts_with(prefix)))
-                }
-                _ => Err(fail("`starts_with` takes two text values")),
-            },
-            ExprKind::Identifier(name) if name == "strip_prefix" => match arguments.as_slice() {
-                [Value::Text(value), Value::Text(prefix)] => value
-                    .strip_prefix(prefix)
-                    .map(|stripped| Value::Text(stripped.to_owned()))
-                    .ok_or_else(|| {
-                        fail("`strip_prefix` input does not start with the given prefix")
-                    }),
-                _ => Err(fail("`strip_prefix` takes two text values")),
-            },
-            ExprKind::Identifier(name) if name == "ends_with" => match arguments.as_slice() {
-                [Value::Text(value), Value::Text(suffix)] => {
-                    Ok(Value::Bool(value.ends_with(suffix)))
-                }
-                _ => Err(fail("`ends_with` takes two text values")),
-            },
-            ExprKind::Identifier(name) if name == "lowercase" => match arguments.as_slice() {
-                [Value::Text(value)] => Ok(Value::Text(value.to_lowercase())),
-                _ => Err(fail("`lowercase` takes one text value")),
-            },
-            ExprKind::Identifier(name) if name == "trim" => match arguments.as_slice() {
-                [Value::Text(value)] => Ok(Value::Text(value.trim().to_owned())),
-                _ => Err(fail("`trim` takes one text value")),
-            },
-            // Case-sensitive substring match against any element. Callers that
-            // want case-insensitive rules combine it with `lowercase`.
-            ExprKind::Identifier(name) if name == "contains_any" => match arguments.as_slice() {
-                [Value::Text(value), Value::List(items)] => {
-                    for item in items {
-                        let Value::Text(needle) = item else {
-                            return Err(fail(
-                                "`contains_any` takes a text and a list of text values",
-                            ));
-                        };
-                        if value.contains(needle.as_str()) {
-                            return Ok(Value::Bool(true));
-                        }
-                    }
-                    Ok(Value::Bool(false))
-                }
-                _ => Err(fail(
-                    "`contains_any` takes a text and a list of text values",
-                )),
-            },
-            ExprKind::Identifier(name) if name == "len" => match arguments.as_slice() {
-                [Value::List(items)] => {
-                    Ok(Value::Int(i64::try_from(items.len()).unwrap_or(i64::MAX)))
-                }
-                [Value::Text(text)] => Ok(Value::Int(
-                    i64::try_from(text.chars().count()).unwrap_or(i64::MAX),
-                )),
-                _ => Err(fail("`len` takes a list or text")),
-            },
             ExprKind::Identifier(name) if name == "Ok" || name == "Err" => {
                 let [value] = arguments.as_slice() else {
                     return Err(fail(format!("`{name}` takes one argument")));
@@ -1125,7 +1125,12 @@ impl<H: EvalHost> Interpreter<'_, H> {
                     Value::ResultErr(value)
                 })
             }
-            ExprKind::Identifier(name) => self.call_function(name, arguments),
+            ExprKind::Identifier(name) => {
+                if let Some(result) = evaluate_builtin(name, &arguments) {
+                    return result;
+                }
+                self.call_function(name, arguments)
+            }
             ExprKind::Member { value, name } if matches!(&value.value, ExprKind::Identifier(module) if self.modules.contains(module.as_str())) =>
             {
                 let ExprKind::Identifier(module) = &value.value else {

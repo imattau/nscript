@@ -15,6 +15,7 @@ nscript-host-crypto = { path = "../nscript-host-crypto" }
 nscript-ir = { path = "../nscript-ir" }
 nscript-modules = { path = "../nscript-modules" }
 nscript-napplet = { path = "../nscript-napplet" }
+nscript-nip5d = { path = "../nscript-nip5d" }
 nscript-runtime = { path = "../nscript-runtime" }
 nscript-semantics = { path = "../nscript-semantics" }
 nscript-syntax = { path = "../nscript-syntax" }
