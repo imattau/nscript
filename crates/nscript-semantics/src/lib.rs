@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use nscript_modules::ResolvedModuleGraph;
 
 mod events;
+mod requirements;
 use nscript_syntax::{
     Diagnostic, Program, RuntimeProfile, Span,
     ast::{Expr, ExprKind, Item, PatternKind, Permission, StatementKind, TypeRef},
@@ -3139,6 +3140,85 @@ publish Note {
     }
 
     #[test]
+    fn a_publish_that_violates_an_event_requirement_is_rejected() {
+        let source = r#"use ncc07
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions { publish CapabilityManifest to public; sign CapabilityManifest with account; relay public }
+publish CapabilityManifest {
+    d: "capabilties",
+    cap: ["nip:01"],
+} to public with account
+"#;
+        let diagnostics = publication_diagnostics(source, &["ncc07", "nip46"]);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2409"
+                    && diagnostic.message.contains("event `CapabilityManifest`")
+                    && diagnostic
+                        .message
+                        .contains("requirement `manifest_identifier(d)`")
+                    && diagnostic.message.contains("module `ncc07`")
+            }),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_required_field_is_rejected() {
+        let source = r#"use ncc02
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions { publish ServiceRecord to public; sign ServiceRecord with account; relay public }
+publish ServiceRecord {
+    d: "",
+    u: "https://example.com",
+    k: "11111",
+    exp: 1790380000,
+} to public with account
+"#;
+        let diagnostics = publication_diagnostics(source, &["ncc02", "nip46"]);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2409"
+                    && diagnostic.message.contains("requirement `present(d)`")
+            }),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_computed_requirement_input_is_not_checked() {
+        let source = r#"use ncc07
+use nip01
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions {
+    read Note from public
+    publish CapabilityManifest to public
+    sign CapabilityManifest with account
+    relay public
+}
+on Note {
+    publish CapabilityManifest {
+        d: event.content,
+        cap: ["nip:01"],
+    } to public with account
+}
+"#;
+        let diagnostics = publication_diagnostics(source, &["ncc07", "nip01", "nip46"]);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "E2409"),
+            "a run-time value is not a constant, so it must not be rejected: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn a_bound_event_record_missing_a_required_field_is_rejected() {
         let source = r#"use ncc02
 use nip46
@@ -3182,6 +3262,51 @@ publish ServiceRecord { content: "no d, no k" } to public with account
                 .iter()
                 .all(|diagnostic| diagnostic.code != "E2406"),
             "the program's own declaration has no requirements: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_tag_record_that_violates_a_tag_requirement_is_rejected() {
+        let module_source = r#"module required @ 0.1.0
+language ">=0.1.0 <0.2.0"
+tag Ref {
+    wire: "r"
+    field url: Text at 1
+    require length(url) > 4
+}
+event Post {
+    kind: 1
+    mode: regular
+    content: Text as text
+    tags: List<Ref> = []
+}
+"#;
+        let (descriptor, module_diagnostics) = parse_module(module_source);
+        assert!(module_diagnostics.is_empty(), "{module_diagnostics:?}");
+        let mut registry = ModuleRegistry::with_builtins();
+        registry
+            .register(
+                descriptor.expect("module descriptor"),
+                ModuleOrigin::File("required.nsm".into()),
+            )
+            .expect("register module");
+        let graph = registry
+            .resolve(&[ModuleDependency {
+                name: "required".to_owned(),
+                requirement: VersionReq::STAR,
+            }])
+            .expect("resolve modules");
+        let (program, diagnostics) = parse_program("use required\nlet bad = Ref { url: \"\" }\n");
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let diagnostics = analyze_with_modules(&program, &graph);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2409"
+                    && diagnostic.message.contains("tag `Ref`")
+                    && diagnostic.message.contains("length(url)>4")
+                    && diagnostic.message.contains("module `required`")
+            }),
+            "{diagnostics:?}"
         );
     }
 

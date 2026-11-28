@@ -749,6 +749,26 @@ fn check_rejects_a_read_only_publish_field() {
 }
 
 #[test]
+fn check_rejects_a_requirement_violation() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("check")
+        .arg(repository_path(
+            "conformance/invalid/publish-requirement-violated.ns",
+        ))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "requirement violation passed");
+    assert!(
+        stderr.contains("error[E2409]")
+            && stderr.contains("event `CapabilityManifest`")
+            && stderr.contains("requirement `manifest_identifier(d)`")
+            && stderr.contains("module `ncc07`"),
+        "expected a requirement diagnostic: {stderr}"
+    );
+}
+
+#[test]
 fn handler_can_extract_a_tag_value_with_string_helpers() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("run")

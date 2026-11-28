@@ -49,6 +49,14 @@ Validators run when constructing source values and when decoding incoming wire
 values. A constructor violation is a compile error when all inputs are constant;
 otherwise it returns the declared validation error at runtime.
 
+The reference checker evaluates a constructor's `require` lines when every
+field they read is a literal, resolving validator calls in the declaring module
+first and then uniquely across the resolved graph; `length` counts Unicode
+scalar values. A requirement it cannot evaluate — a computed field, `matches`,
+or an ambiguous validator name — stays declarative, as does run-time and
+decode-path enforcement; a script that needs that boundary must call the
+module's validity functions explicitly.
+
 ## Wire lowering
 
 Events declare a fixed kind, storage mode, typed content encoding, and allowed

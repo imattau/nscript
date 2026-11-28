@@ -14,8 +14,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use nscript_modules::{ResolvedModuleGraph, TagDefinition, TagSlot, TypeDefinition};
-use nscript_syntax::ast::{EventDeclaration, Expr, ExprKind, Item, PatternKind, StatementKind};
+use nscript_syntax::ast::{
+    EventDeclaration, Expr, ExprKind, Item, PatternKind, Spanned, StatementKind,
+};
 use nscript_syntax::{Diagnostic, Program, Span};
+
+use crate::requirements::{self, Literal, Outcome};
 
 /// The fields every delivered event has, whatever its type.
 const COMMON_FIELDS: [(&str, &str); 7] = [
@@ -121,6 +125,8 @@ struct VisibleEvent {
     open: bool,
     /// The module's `require` lines. Program event declarations have none.
     requirements: Vec<String>,
+    /// The module the declaration came from; `None` for a program event.
+    module: Option<String>,
 }
 
 impl VisibleEvent {
@@ -341,7 +347,7 @@ fn check_constructor_fields(
         );
         return;
     }
-    let Some(tag) = visible_tag(&name.value, context.graph) else {
+    let Some((module, tag)) = visible_tag(&name.value, context.graph) else {
         return;
     };
     let slots = tag_slot_names(tag);
@@ -358,6 +364,19 @@ fn check_constructor_fields(
                 field_list(&slots)
             ),
             span: field.span,
+        });
+    }
+    let context_fields = literal_fields(fields);
+    if let Outcome::Violated(requirement) =
+        requirements::evaluate(&tag.validators, &context_fields, module, context.graph)
+    {
+        diagnostics.push(Diagnostic {
+            code: "E2409",
+            message: format!(
+                "tag `{}` does not satisfy requirement `{requirement}` from module `{module}`",
+                name.value
+            ),
+            span: requirement_span(&requirement, fields, expression.span),
         });
     }
 }
@@ -403,7 +422,7 @@ fn check_event_constructor(
         let Some(declared_type) = event.field_type(&field.value) else {
             continue;
         };
-        let Some(tag) = visible_tag(declared_type, context.graph) else {
+        let Some((_, tag)) = visible_tag(declared_type, context.graph) else {
             continue;
         };
         let ExprKind::Construct { name: actual, .. } = &value.value else {
@@ -424,11 +443,11 @@ fn check_event_constructor(
         .iter()
         .map(|(name, _)| name.value.as_str())
         .collect::<BTreeSet<_>>();
-    for required_name in event.requirements.iter().filter_map(|requirement| {
-        requirement
-            .strip_prefix("present(")
-            .and_then(|name| name.strip_suffix(')'))
-    }) {
+    for required_name in event
+        .requirements
+        .iter()
+        .filter_map(|requirement| present_field(requirement))
+    {
         if !event.fields.contains_key(required_name) || declared.contains(required_name) {
             continue;
         }
@@ -440,6 +459,62 @@ fn check_event_constructor(
             span,
         });
     }
+    let Some(module) = event.module.as_deref() else {
+        return;
+    };
+    if event.requirements.is_empty() {
+        return;
+    }
+    // A missing `present(...)` field is E2406 above; an empty one is still
+    // evaluated, so `present(d)` catches `d: ""` too.
+    let checked = event
+        .requirements
+        .iter()
+        .filter(|requirement| match present_field(requirement) {
+            Some(field) => declared.contains(field),
+            None => true,
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let context_fields = literal_fields(fields);
+    if let Outcome::Violated(requirement) =
+        requirements::evaluate(&checked, &context_fields, module, context.graph)
+    {
+        diagnostics.push(Diagnostic {
+            code: "E2409",
+            message: format!(
+                "event `{event_name}` does not satisfy requirement `{requirement}` from module `{module}`"
+            ),
+            span: requirement_span(&requirement, fields, span),
+        });
+    }
+}
+
+/// The field a `present(<field>)` requirement names, if it is that shape.
+fn present_field(requirement: &str) -> Option<&str> {
+    requirement
+        .strip_prefix("present(")
+        .and_then(|name| name.strip_suffix(')'))
+}
+
+/// A constructor's literal-looking fields as requirement inputs. A computed
+/// field is simply absent, so a requirement that reads it is not evaluated.
+fn literal_fields(fields: &[(Spanned<String>, Expr)]) -> BTreeMap<String, Literal> {
+    fields
+        .iter()
+        .filter_map(|(name, value)| {
+            requirements::literal_field(value).map(|literal| (name.value.clone(), literal))
+        })
+        .collect()
+}
+
+/// Point at a constructor field the requirement names, when it names one.
+fn requirement_span(requirement: &str, fields: &[(Spanned<String>, Expr)], fallback: Span) -> Span {
+    let names = requirements::identifiers(requirement);
+    fields
+        .iter()
+        .find(|(field, _)| names.contains(&field.value))
+        .map_or(fallback, |(field, _)| field.span)
 }
 
 fn read_only_field(field: &str) -> Option<&'static str> {
@@ -482,6 +557,7 @@ fn visible_event(
             // field is a legitimate tag, so there is no closed set to reject.
             open: event.tags_type.as_deref() == Some("List<Tag>"),
             requirements: event.requirements.clone(),
+            module: Some(module.descriptor.id.name.clone()),
         });
     }
     None
@@ -505,17 +581,22 @@ fn program_event(event: &EventDeclaration) -> VisibleEvent {
             .collect(),
         open,
         requirements: Vec::new(),
+        module: None,
     }
 }
 
-/// The declared tag named `tag_type`, if any module declares it.
-fn visible_tag<'a>(tag_type: &str, graph: &'a ResolvedModuleGraph) -> Option<&'a TagDefinition> {
+/// The declared tag named `tag_type`, with the module that declares it.
+fn visible_tag<'a>(
+    tag_type: &str,
+    graph: &'a ResolvedModuleGraph,
+) -> Option<(&'a str, &'a TagDefinition)> {
     graph.modules.values().find_map(|module| {
         module
             .descriptor
             .tags
             .iter()
             .find(|tag| tag.name == tag_type)
+            .map(|tag| (module.descriptor.id.name.as_str(), tag))
     })
 }
 

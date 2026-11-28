@@ -887,18 +887,23 @@ impl Parser {
     }
 
     fn take_line_text(&mut self) -> String {
+        // Tokens are rejoined into an expression string, so a word boundary the
+        // source wrote as whitespace must survive: `a == "x" or b` would
+        // otherwise become `a=="x"orb`. Symbols delimit themselves.
         let mut output = String::new();
+        let mut previous_word = false;
         while let Some(token) = self.tokens.get(self.index) {
-            match &token.kind {
+            let (text, word) = match &token.kind {
                 TokenKind::Newline | TokenKind::Symbol(';' | '}') => break,
-                TokenKind::Identifier(value) | TokenKind::Number(value) => output.push_str(value),
-                TokenKind::String(value) => {
-                    output.push('"');
-                    output.push_str(value);
-                    output.push('"');
-                }
-                TokenKind::Symbol(value) => output.push(*value),
+                TokenKind::Identifier(value) | TokenKind::Number(value) => (value.clone(), true),
+                TokenKind::String(value) => (format!("\"{value}\""), true),
+                TokenKind::Symbol(value) => (value.to_string(), false),
+            };
+            if previous_word && word {
+                output.push(' ');
             }
+            output.push_str(&text);
+            previous_word = word;
             self.index += 1;
         }
         output
@@ -1450,6 +1455,23 @@ tag WebRoot { wire: "I"; field url: Text at 1 }
         assert_eq!(descriptor.operations.len(), 1);
         assert_eq!(descriptor.errors.len(), 1);
         assert_eq!(descriptor.vectors.len(), 1);
+    }
+
+    #[test]
+    fn requirement_text_preserves_operator_word_boundaries() {
+        let source = r#"module words @ 0.1.0
+language ">=0.1.0 <0.2.0"
+validator status(value: Text) {
+    require value == "draft" or value == "published"
+}
+"#;
+        let (descriptor, diagnostics) = parse_module(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        let descriptor = descriptor.expect("valid descriptor");
+        assert_eq!(
+            descriptor.validators[0].requirements,
+            [r#"value=="draft" or value=="published""#]
+        );
     }
 
     #[test]

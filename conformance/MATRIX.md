@@ -17,6 +17,7 @@ against deterministic host fakes.
 | Handler predicate safety | `mentions.ns` | semantics/runtime unsupported predicate tests | Principal-resolved filter trace |
 | Module-defined wire tags | `scenarios/clawstr-tagged-post.ns` | `modules/valid/semicolon-tag.nsm` regression | `I` tag in publication IR |
 | Publish field validation | `ncc07-manifest.ns` | `publish-unknown-field.ns`, `publish-read-only-field.ns`, `publish-tag-type-mismatch.ns`, `publish-missing-required-field.ns` | — |
+| Event and tag requirements | `ncc07-manifest.ns` | `publish-requirement-violated.ns` | Literal `require` inputs checked at check time |
 | Clawstr reply wire tags | `scenarios/clawstr-reply-tags.ns` | — | Published wire arrays include `I/K/e/k/p` and `l/ai/agent` |
 | NIP-01 metadata profile fields | `nip01-metadata.ns` | — | Kind-0 JSON profile shape |
 | NIP-22 comment scope and embedded labels | `nip22-comment.ns` | Runtime missing-scope rejection | Root/parent context and embedded NIP-32 labels |

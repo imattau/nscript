@@ -193,6 +193,12 @@ omitted column. Required fields (`present(...)`) and tag-typed fields are
 resolved against that same visible declaration, including on a record bound
 with `let` rather than written directly under `publish`.
 
+A declaration's `require` lines are checked when the constructor's inputs are
+literals: a requirement that evaluates to false is `E2409`, whether it is
+written on the event or on a tag. A computed input, an unsupported expression,
+or a validator the checker cannot resolve leaves the requirement declarative,
+so the check never guesses.
+
 A tag may need more than two columns (`operator_for` carries a pubkey and a
 service id, `rule` a policy key and value). A field value can carry those
 extra columns: a module's builder function returns them joined by U+001F

@@ -30,6 +30,7 @@ language major version.
 | E2406 | missing-required-field | A published event omits a field its declaration requires with `present(...)` |
 | E2407 | unknown-publish-field | A publish record or tag record names an author field or slot its declaration does not accept |
 | E2408 | read-only-publish-field | A publish record sets a read-side field (`id`, `author`, `pubkey`, `kind`, `created_at`, `tags`) that is never lowered |
+| E2409 | requirement-violated | A literal constructor's `require` line evaluates to false |
 | E3001 | missing-permission | A reachable inferred effect is not covered by the manifest |
 | E3002 | unavailable-capability | The host cannot provision a declared mandatory capability |
 | E3101 | high-risk-consent-required | Secret, filesystem, or payment authority lacks distinct consent |

@@ -1,0 +1,20 @@
+// error: E2409 requirement-violated
+// `CapabilityManifest` declares `require manifest_identifier(d)`, and NCC-07
+// fixes that identifier to `capabilities`; the misspelling would publish a
+// kind-30062 event that no NIP-01 client can address as a manifest.
+use ncc07
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish CapabilityManifest to public
+    sign CapabilityManifest with account
+    relay public
+}
+
+publish CapabilityManifest {
+    d: "capabilties",
+    cap: ["nip:01"],
+} to public with account

@@ -157,12 +157,12 @@ validators are script-invoked pure functions, not implicit dispatch gating).
   field the visible event declaration does not accept is `E2407`, and setting
   a read-side field (`id`, `kind`, `tags`, …) is `E2408` instead of a silent
   drop (`spec/language.md` §3). Related: an addressable module event's `d`
-  conformance (for example `ncc07`'s `require manifest_identifier(d)`) is
-  declarative only — event `require` lines are parsed and hashed but never
-  evaluated, so `d=capabilities` rides on this same gap rather than being
-  runtime-enforced. Evaluating validator `require` lines needs a spec decision
-  first: validators are script-invoked pure functions, not implicit publish
-  gates.
+  conformance (for example `ncc07`'s `require manifest_identifier(d)`) is now
+  evaluated at check time for literal records (`E2409`), so a misspelled
+  `d=capabilities` is rejected instead of riding on an unenforced declaration.
+  A computed field, `matches`, and run-time/decode-path enforcement stay
+  declarative; a script that needs that boundary calls the module's validity
+  functions explicitly.
 - `nscript-ir` / WASM `create_event` carrying lowered tags: kind already
   prefers `CheckedProgram::events`, but the IR executor still signs with an
   empty tag list.
@@ -235,9 +235,9 @@ Shipped the full recipe against the pinned commit:
   what the publisher implements.
 
 Known scope limits (inherited from 0d, restated): `d=capabilities` conformance
-is declarative (event `require` lines are not evaluated); unknown publish
-fields are rejected (`E2407`) and read-side fields can no longer be set
-(`E2408`) — see follow-ups above.
+is checked for literal publishes (`E2409`) and stays declarative for computed
+records; unknown publish fields are rejected (`E2407`) and read-side fields
+cannot be set (`E2408`) — see follow-ups above.
 
 ## Stage 2 — NCC-00 document lifecycle *(Done)*
 
@@ -284,11 +284,11 @@ Shipped the full recipe against the pinned commit:
   kind-30053 supporting documents; Appendix E makes those authority-free, so
   the ledger is evidence of adoption, never an approval or a capability.
 
-Scope notes (same gaps as 0d): event `require` lines are declarative and
-never evaluated — the module's required-tag discipline rides on the shared
-lowering path rather than runtime enforcement. Unknown publish fields are
-rejected (`E2407`), so a field the event does not declare cannot bypass the
-declared tag names.
+Scope notes (same gaps as 0d): event `require` lines are evaluated at check
+time for literal records (`E2409`); a computed record still leaves the
+module's required-tag discipline to the shared lowering path rather than
+run-time enforcement. Unknown publish fields are rejected (`E2407`), so a
+field the event does not declare cannot bypass the declared tag names.
 
 ## Stage 3 — NCC-02 endpoint identity binding *(Done)*
 
@@ -348,11 +348,11 @@ recipe against that commit:
   while the client still performs it, and trust policy (which certifiers,
   which levels, whether attestations are required) stays script-visible data.
 
-Scope notes (same gaps as 0d): event `require` lines are declarative and
-never evaluated, so `record_is_valid` — not the event declaration — is what
-enforces `d`/`k`/`exp` at runtime; unknown publish fields are rejected
-(`E2407`) and read-side fields cannot be set (`E2408`). Two limits of this
-stage: a schedule body is not executed under
+Scope notes (same gaps as 0d): event `require` lines are evaluated at check
+time for literal records (`E2409`), so a computed record still relies on
+`record_is_valid` rather than the event declaration to enforce `d`/`k`/`exp`;
+unknown publish fields are rejected (`E2407`) and read-side fields cannot be
+set (`E2408`). Two limits of this stage: a schedule body is not executed under
 `nscript run` (its `publish` is collected as a startup publication, but the
 statements around it run only when a timer fires), and NCC-02's resolution
 step 7 — connect, then compare the observed transport key against `k` — is
