@@ -1,0 +1,19 @@
+// error: E2407 unknown-publish-field
+// `CapabilityManifest` declares `cap`, not `capz`; an unknown author field
+// would publish a `capz` tag the manifest never declares.
+use ncc07
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish CapabilityManifest to public
+    sign CapabilityManifest with account
+    relay public
+}
+
+publish CapabilityManifest {
+    d: "capabilities",
+    capz: ["nip:01"],
+} to public with account

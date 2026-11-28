@@ -116,12 +116,15 @@ already-specced contract:
   (`Note` is kind 1, anything else kind 0) remains only for names nothing
   declares, so bare scripts keep publishing what they always did.
 - Top-level `publish` carries only fields written as literals, because
-  top-level statements do not execute at startup (pre-existing architecture;
-  a computed top-level field drops silently — see follow-ups). A handler's
-  own `publish` lowers evaluated values live and fails loudly on non-scalars.
+  top-level statements do not execute at startup (pre-existing architecture).
+  A computed top-level tag field is now `E2403` and computed content `E2404`
+  rather than a silent drop. A handler's own `publish` lowers evaluated
+  values live and fails loudly on non-scalars.
 - The normative rule lives in `spec/language.md` §3 (with a scope note in
-  `spec/modules.md`'s Wire lowering section); module tag unions are declared
-  but not yet applied by the core publish path.
+  `spec/modules.md`'s Wire lowering section). A field whose declared type is a
+  module tag lowers through that tag's schema, and a field the visible event
+  declaration does not accept is rejected with `E2407` (a free-form
+  `tags: List<Tag>` declaration still accepts any author field).
 
 Module *operation* calls (for example `nip78.publish_app_data`) stay
 simulated exactly as they are today; only `publish` statements and declared
@@ -143,19 +146,24 @@ validators are script-invoked pure functions, not implicit dispatch gating).
 
 ## Follow-ups recorded from 0d
 
-- Algebraic/typed `tags:` lowering (`Person(alice)` and friends) and
-  positional wire fields: the core publish path lowers name/text pairs only,
-  so module-declared tag unions are not applied yet.
+- ~~Algebraic/typed `tags:` lowering (`Person(alice)` and friends) and
+  positional wire fields.~~ *(Done: a field whose declared type is a module
+  tag lowers through that tag's schema, including three-column values and
+  repeated `List<TagType>` fields — stages 1–11 all publish this way.)*
 - `json<T>` and other named content encodings on core `publish`: content is
   text today.
-- Publish-field validation diagnostics: a non-literal top-level field drops
-  silently, and fields unknown to the event's declared tag union pass
-  unchecked (`E1201` only validates kind vs. mode). Related: an addressable
-  module event's `d` conformance (for example `ncc07`'s `require
-  manifest_identifier(d)`) is declarative only — event `require` lines are
-  parsed and hashed but never evaluated, so `d=capabilities` rides on this
-  same gap rather than being runtime-enforced. Needs spec decisions before
-  codes are minted.
+- Publish-field validation diagnostics: *(mostly done)* a non-literal
+  top-level tag field is `E2403`, computed top-level content is `E2404`, and a
+  field the visible event declaration does not accept is `E2407`
+  (`spec/language.md` §3). Writing a read-side bookkeeping field (`id`,
+  `kind`, …) is still accepted and ignored rather than rejected; a dedicated
+  diagnostic remains open. Related: an addressable module event's `d`
+  conformance (for example `ncc07`'s `require manifest_identifier(d)`) is
+  declarative only — event `require` lines are parsed and hashed but never
+  evaluated, so `d=capabilities` rides on this same gap rather than being
+  runtime-enforced. Evaluating validator `require` lines needs a spec decision
+  first: validators are script-invoked pure functions, not implicit publish
+  gates.
 - `nscript-ir` / WASM `create_event` carrying lowered tags: kind already
   prefers `CheckedProgram::events`, but the IR executor still signs with an
   empty tag list.
@@ -278,9 +286,10 @@ Shipped the full recipe against the pinned commit:
   the ledger is evidence of adoption, never an approval or a capability.
 
 Scope notes (same gaps as 0d): event `require` lines are declarative and
-never evaluated, and unknown publish fields still pass unchecked — the
-module's required-tag discipline rides on the shared lowering path rather
-than runtime enforcement.
+never evaluated — the module's required-tag discipline rides on the shared
+lowering path rather than runtime enforcement. Unknown publish fields are
+rejected (`E2407`), so a field the event does not declare cannot bypass the
+declared tag names.
 
 ## Stage 3 — NCC-02 endpoint identity binding *(Done)*
 

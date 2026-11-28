@@ -60,7 +60,10 @@ List<BranchRef>`); a list field lowers one tag per element. Each wire position
 is assigned exactly once. Dynamic tag names, arbitrary JSON templates, and code
 execution are forbidden. A program's own `publish` record lowering (field name
 to tag name) is specified in the language document; this section governs the
-module-declared tag unions those programs import.
+module-declared tag unions those programs import. An author field the declared
+event does not accept is a compile error (`E2407`), and a tag record slot the
+declared tag does not have is one too; a `tags: List<Tag>` declaration is the
+explicit opt-out and accepts any author field.
 
 Content encodings are `text`, `bytes-base64`, `json<T>`, or a named encoding
 provided declaratively by an imported module. JSON uses UTF-8, rejects duplicate

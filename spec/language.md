@@ -182,6 +182,14 @@ the program's own or an imported module's — falling back to `Note` as kind 1
 computed at run time lower by the same rules at the publication site; a
 computed value that is not a scalar or a list of scalars is an error there.
 
+An event construct MUST only name author fields the visible declaration
+accepts: its declared fields plus `content`. An event that declares a
+free-form `tags: List<Tag>` accepts any author field, because each one is a
+legitimate NIP-01 tag. Any other unknown field is `E2407`: it would otherwise
+lower to a tag the event never declares. A tag record follows the same rule
+against the tag's slots — an unknown slot is `E2407` rather than a silently
+omitted column.
+
 A tag may need more than two columns (`operator_for` carries a pubkey and a
 service id, `rule` a policy key and value). A field value can carry those
 extra columns: a module's builder function returns them joined by U+001F

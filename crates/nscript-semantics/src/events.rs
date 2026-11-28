@@ -11,10 +11,10 @@
 //! not exist, that a record pattern names a field the event lacks, and that
 //! `kick event.content` passes a `Text` where a `PubKey` is required.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use nscript_modules::{ResolvedModuleGraph, TypeDefinition};
-use nscript_syntax::ast::{Expr, ExprKind, Item, PatternKind, StatementKind};
+use nscript_modules::{ResolvedModuleGraph, TagSlot, TypeDefinition};
+use nscript_syntax::ast::{EventDeclaration, Expr, ExprKind, Item, PatternKind, StatementKind};
 use nscript_syntax::{Diagnostic, Program, Span};
 
 /// The fields every delivered event has, whatever its type.
@@ -91,33 +91,53 @@ pub(crate) fn validate(program: &Program, graph: &ResolvedModuleGraph) -> Vec<Di
     diagnostics
 }
 
-/// Reject nominal tag records that do not match the declared type of the
-/// published event field. Silently skipping these values omits wire tags.
+/// Reject publication shapes that would silently drop or misplace wire data:
+/// nominal tag records that do not match the declared type of the published
+/// event field, and author fields the declared event (or tag) does not know.
 pub(crate) fn validate_publication_tag_types(
     program: &Program,
     graph: &ResolvedModuleGraph,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    validate_publication_items(&program.ast.items, graph, &mut diagnostics);
+    let context = PublicationContext { program, graph };
+    validate_publication_items(&program.ast.items, &context, &mut diagnostics);
     diagnostics
 }
 
+struct PublicationContext<'a> {
+    program: &'a Program,
+    graph: &'a ResolvedModuleGraph,
+}
+
+/// The author fields a declared event accepts, resolved at check time.
+enum EventShape {
+    /// The event declares a free-form `tags: List<Tag>`; any author field is
+    /// a legitimate tag, so there is nothing to reject.
+    Open,
+    /// The declared field names plus `content`. Bookkeeping names are allowed
+    /// separately (they are read-side only and lower to nothing).
+    Closed(BTreeSet<String>),
+}
+
+/// Read-side event fields: publishing one is allowed but never lowers.
+const READ_ONLY_FIELDS: [&str; 5] = ["id", "author", "pubkey", "kind", "created_at"];
+
 fn validate_publication_items(
     items: &[Item],
-    graph: &ResolvedModuleGraph,
+    context: &PublicationContext<'_>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     for item in items {
         match item {
             Item::Let(declaration) => {
-                validate_publication_expr(&declaration.value, graph, diagnostics);
+                validate_publication_expr(&declaration.value, context, diagnostics);
             }
             Item::Function(function) => {
-                validate_publication_items(&function.body, graph, diagnostics);
+                validate_publication_items(&function.body, context, diagnostics);
             }
-            Item::Stream { value, .. } => validate_publication_expr(value, graph, diagnostics),
+            Item::Stream { value, .. } => validate_publication_expr(value, context, diagnostics),
             Item::Statement(statement) => {
-                validate_publication_statement(&statement.value, graph, diagnostics);
+                validate_publication_statement(&statement.value, context, diagnostics);
             }
             _ => {}
         }
@@ -126,53 +146,53 @@ fn validate_publication_items(
 
 fn validate_publication_statement(
     statement: &StatementKind,
-    graph: &ResolvedModuleGraph,
+    context: &PublicationContext<'_>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     match statement {
         StatementKind::Expression(value) | StatementKind::Return(Some(value)) => {
-            validate_publication_expr(value, graph, diagnostics);
+            validate_publication_expr(value, context, diagnostics);
         }
         StatementKind::For { value, body, .. } => {
-            validate_publication_expr(value, graph, diagnostics);
-            validate_publication_items(body, graph, diagnostics);
+            validate_publication_expr(value, context, diagnostics);
+            validate_publication_items(body, context, diagnostics);
         }
         StatementKind::If {
             condition,
             then_body,
             else_body,
         } => {
-            validate_publication_expr(condition, graph, diagnostics);
-            validate_publication_items(then_body, graph, diagnostics);
-            validate_publication_items(else_body, graph, diagnostics);
+            validate_publication_expr(condition, context, diagnostics);
+            validate_publication_items(then_body, context, diagnostics);
+            validate_publication_items(else_body, context, diagnostics);
         }
         StatementKind::On {
             source,
             predicate,
             body,
         } => {
-            validate_publication_expr(source, graph, diagnostics);
+            validate_publication_expr(source, context, diagnostics);
             if let Some(predicate) = predicate {
-                validate_publication_expr(predicate, graph, diagnostics);
+                validate_publication_expr(predicate, context, diagnostics);
             }
-            validate_publication_items(body, graph, diagnostics);
+            validate_publication_items(body, context, diagnostics);
         }
         StatementKind::Once { key, body } => {
-            validate_publication_expr(key, graph, diagnostics);
-            validate_publication_items(body, graph, diagnostics);
+            validate_publication_expr(key, context, diagnostics);
+            validate_publication_items(body, context, diagnostics);
         }
         StatementKind::Every { duration, body } => {
-            validate_publication_expr(duration, graph, diagnostics);
-            validate_publication_items(body, graph, diagnostics);
+            validate_publication_expr(duration, context, diagnostics);
+            validate_publication_items(body, context, diagnostics);
         }
         StatementKind::At { schedule, body } => {
-            validate_publication_expr(schedule, graph, diagnostics);
-            validate_publication_items(body, graph, diagnostics);
+            validate_publication_expr(schedule, context, diagnostics);
+            validate_publication_items(body, context, diagnostics);
         }
         StatementKind::Send { value, signer } => {
-            validate_publication_expr(value, graph, diagnostics);
+            validate_publication_expr(value, context, diagnostics);
             if let Some(signer) = signer {
-                validate_publication_expr(signer, graph, diagnostics);
+                validate_publication_expr(signer, context, diagnostics);
             }
         }
         StatementKind::Return(None) => {}
@@ -182,9 +202,11 @@ fn validate_publication_statement(
 #[allow(clippy::too_many_lines)]
 fn validate_publication_expr(
     expression: &Expr,
-    graph: &ResolvedModuleGraph,
+    context: &PublicationContext<'_>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    let graph = context.graph;
+    check_constructor_fields(expression, context, diagnostics);
     if let ExprKind::Publish { value, .. } = &expression.value
         && let ExprKind::Construct { name, fields } = &value.value
     {
@@ -251,32 +273,32 @@ fn validate_publication_expr(
 
     match &expression.value {
         ExprKind::Call { callee, arguments } => {
-            validate_publication_expr(callee, graph, diagnostics);
+            validate_publication_expr(callee, context, diagnostics);
             for argument in arguments {
-                validate_publication_expr(argument, graph, diagnostics);
+                validate_publication_expr(argument, context, diagnostics);
             }
         }
         ExprKind::Member { value, .. }
         | ExprKind::Propagate(value)
         | ExprKind::Unary { value, .. }
         | ExprKind::Fetch { url: value, .. } => {
-            validate_publication_expr(value, graph, diagnostics);
+            validate_publication_expr(value, context, diagnostics);
         }
         ExprKind::Sign { value, signer } => {
-            validate_publication_expr(value, graph, diagnostics);
-            validate_publication_expr(signer, graph, diagnostics);
+            validate_publication_expr(value, context, diagnostics);
+            validate_publication_expr(signer, context, diagnostics);
         }
         ExprKind::Publish {
             value,
             relays,
             signer,
         } => {
-            validate_publication_expr(value, graph, diagnostics);
+            validate_publication_expr(value, context, diagnostics);
             if let Some(relays) = relays {
-                validate_publication_expr(relays, graph, diagnostics);
+                validate_publication_expr(relays, context, diagnostics);
             }
             if let Some(signer) = signer {
-                validate_publication_expr(signer, graph, diagnostics);
+                validate_publication_expr(signer, context, diagnostics);
             }
         }
         ExprKind::Binary { left, right, .. }
@@ -288,27 +310,27 @@ fn validate_publication_expr(
             value: left,
             index: right,
         } => {
-            validate_publication_expr(left, graph, diagnostics);
-            validate_publication_expr(right, graph, diagnostics);
+            validate_publication_expr(left, context, diagnostics);
+            validate_publication_expr(right, context, diagnostics);
         }
         ExprKind::List(values) => {
             for value in values {
-                validate_publication_expr(value, graph, diagnostics);
+                validate_publication_expr(value, context, diagnostics);
             }
         }
         ExprKind::Latest {
             arguments, relays, ..
         } => {
             for argument in arguments {
-                validate_publication_expr(argument, graph, diagnostics);
+                validate_publication_expr(argument, context, diagnostics);
             }
             if let Some(relays) = relays {
-                validate_publication_expr(relays, graph, diagnostics);
+                validate_publication_expr(relays, context, diagnostics);
             }
         }
         ExprKind::Record(fields) | ExprKind::Construct { fields, .. } => {
             for (_, value) in fields {
-                validate_publication_expr(value, graph, diagnostics);
+                validate_publication_expr(value, context, diagnostics);
             }
         }
         ExprKind::Select(select) => {
@@ -321,20 +343,166 @@ fn validate_publication_expr(
             .into_iter()
             .flatten()
             {
-                validate_publication_expr(expression, graph, diagnostics);
+                validate_publication_expr(expression, context, diagnostics);
             }
         }
         ExprKind::Match { value, arms } => {
-            validate_publication_expr(value, graph, diagnostics);
+            validate_publication_expr(value, context, diagnostics);
             for arm in arms {
                 if let Some(guard) = &arm.guard {
-                    validate_publication_expr(guard, graph, diagnostics);
+                    validate_publication_expr(guard, context, diagnostics);
                 }
-                validate_publication_expr(&arm.value, graph, diagnostics);
+                validate_publication_expr(&arm.value, context, diagnostics);
             }
         }
         _ => {}
     }
+}
+
+/// Reject author fields a declared event or tag does not know. Every publish
+/// field lowers to a wire tag named after it, so an unknown name publishes
+/// well-formed Nostr carrying a tag the event never declares.
+fn check_constructor_fields(
+    expression: &Expr,
+    context: &PublicationContext<'_>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let ExprKind::Construct { name, fields } = &expression.value else {
+        return;
+    };
+    if let Some(shape) = declared_event_shape(&name.value, context.program, context.graph) {
+        let EventShape::Closed(declared) = shape else {
+            return;
+        };
+        for (field, _) in fields {
+            if declared.contains(&field.value)
+                || READ_ONLY_FIELDS.contains(&field.value.as_str())
+                || field.value == "tags"
+            {
+                continue;
+            }
+            diagnostics.push(Diagnostic {
+                code: "E2407",
+                message: format!(
+                    "event `{}` has no author field `{}`; its fields are: {}",
+                    name.value,
+                    field.value,
+                    field_list(&declared)
+                ),
+                span: field.span,
+            });
+        }
+        return;
+    }
+    let Some(slots) = declared_tag_slots(&name.value, context.graph) else {
+        return;
+    };
+    for (field, _) in fields {
+        if slots.contains(&field.value) {
+            continue;
+        }
+        diagnostics.push(Diagnostic {
+            code: "E2407",
+            message: format!(
+                "tag `{}` has no field `{}`; it declares: {}",
+                name.value,
+                field.value,
+                field_list(&slots)
+            ),
+            span: field.span,
+        });
+    }
+}
+
+/// The author fields a declared event accepts. `None` when nothing declares
+/// the name, so an unknown event keeps the permissive historical behaviour.
+/// A program's own declaration shadows an imported module's, as it does for
+/// publication lowering.
+fn declared_event_shape(
+    event_type: &str,
+    program: &Program,
+    graph: &ResolvedModuleGraph,
+) -> Option<EventShape> {
+    for item in &program.ast.items {
+        if let Item::Event(event) = item
+            && event.name.value == event_type
+        {
+            return Some(program_event_shape(event));
+        }
+    }
+    for module in graph.modules.values() {
+        let Some(event) = module
+            .descriptor
+            .events
+            .iter()
+            .find(|event| event.name == event_type)
+        else {
+            continue;
+        };
+        // `tags: List<Tag>` is NIP-01's free-form tag list: every author field
+        // is a legitimate tag, so there is no closed set to check against.
+        if event.tags_type.as_deref() == Some("List<Tag>") {
+            return Some(EventShape::Open);
+        }
+        let mut declared = event
+            .fields
+            .iter()
+            .map(|field| field.name.clone())
+            .collect::<BTreeSet<_>>();
+        declared.insert("content".to_owned());
+        return Some(EventShape::Closed(declared));
+    }
+    None
+}
+
+fn program_event_shape(event: &EventDeclaration) -> EventShape {
+    let open = event.fields.iter().any(|field| {
+        field.name.value == "tags"
+            && field.type_ref.name == "List"
+            && field
+                .type_ref
+                .arguments
+                .first()
+                .is_some_and(|argument| argument.name == "Tag")
+    });
+    if open {
+        return EventShape::Open;
+    }
+    let mut declared = event
+        .fields
+        .iter()
+        .map(|field| field.name.value.clone())
+        .collect::<BTreeSet<_>>();
+    declared.insert("content".to_owned());
+    EventShape::Closed(declared)
+}
+
+/// The field names a declared tag accepts in a tag record.
+fn declared_tag_slots(tag_type: &str, graph: &ResolvedModuleGraph) -> Option<BTreeSet<String>> {
+    graph.modules.values().find_map(|module| {
+        module
+            .descriptor
+            .tags
+            .iter()
+            .find(|tag| tag.name == tag_type)
+            .map(|tag| {
+                tag.slots
+                    .iter()
+                    .filter_map(|slot| match slot {
+                        TagSlot::Field { name, .. } => Some(name.clone()),
+                        TagSlot::Literal { .. } => None,
+                    })
+                    .collect()
+            })
+    })
+}
+
+fn field_list(fields: &BTreeSet<String>) -> String {
+    fields
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Every `on` handler in the program, including those nested in functions.
@@ -419,27 +587,32 @@ fn event_fields(
             );
         }
     }
-    for module in graph.modules.values() {
-        let descriptor = &module.descriptor;
-        if let Some(event) = descriptor
-            .events
-            .iter()
-            .find(|event| event.name == event_type)
-        {
-            let mut fields: BTreeMap<String, String> = event
-                .fields
+    // A program's own declaration shadows imported modules, the same rule
+    // `CheckedProgram::events` and publication lowering already follow.
+    if defined.is_none() {
+        for module in graph.modules.values() {
+            let descriptor = &module.descriptor;
+            if let Some(event) = descriptor
+                .events
                 .iter()
-                .map(|field| (field.name.clone(), field.type_name.clone()))
-                .collect();
-            fields.insert("content".to_owned(), event.content_type.clone());
-            if let Some(tags) = &event.tags_type {
-                fields.insert("tags".to_owned(), tags.clone());
+                .find(|event| event.name == event_type)
+            {
+                let mut fields: BTreeMap<String, String> = event
+                    .fields
+                    .iter()
+                    .map(|field| (field.name.clone(), field.type_name.clone()))
+                    .collect();
+                fields.insert("content".to_owned(), event.content_type.clone());
+                if let Some(tags) = &event.tags_type {
+                    fields.insert("tags".to_owned(), tags.clone());
+                }
+                defined = Some(fields);
             }
-            defined = Some(fields);
-        }
-        for definition in &descriptor.types {
-            if let TypeDefinition::Record { name, fields } = definition
-                && name == event_type
+            if defined.is_none()
+                && let Some(TypeDefinition::Record { fields, .. }) = descriptor
+                    .types
+                    .iter()
+                    .find(|definition| definition.name() == event_type)
             {
                 defined = Some(
                     fields

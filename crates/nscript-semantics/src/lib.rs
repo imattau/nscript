@@ -2530,7 +2530,7 @@ fn literal_publication_tag_values(value: &Expr) -> Vec<CheckedPublicationTag> {
 #[cfg(test)]
 mod tests {
     use nscript_modules::{ModuleDependency, ModuleOrigin, ModuleRegistry, parse_module};
-    use nscript_syntax::parse_program;
+    use nscript_syntax::{Diagnostic, parse_program};
     use semver::VersionReq;
     use std::collections::BTreeMap;
 
@@ -2952,6 +2952,150 @@ publish Metadata {
         assert_eq!(
             checked.publications[0].content.as_deref(),
             Some(r#"{"bot":true,"lud16":"agent@getalby.com","name":"TestAgent"}"#)
+        );
+    }
+
+    fn publication_diagnostics(source: &str, modules: &[&str]) -> Vec<Diagnostic> {
+        let (program, diagnostics) = parse_program(source);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let registry = ModuleRegistry::with_builtins();
+        let dependencies = modules
+            .iter()
+            .map(|name| ModuleDependency {
+                name: (*name).to_owned(),
+                requirement: VersionReq::STAR,
+            })
+            .collect::<Vec<_>>();
+        let graph = registry
+            .resolve(&dependencies)
+            .unwrap_or_else(|error| panic!("resolve {dependencies:?}: {error:?}"));
+        analyze_with_modules(&program, &graph)
+    }
+
+    #[test]
+    fn a_publish_field_the_event_does_not_declare_is_rejected() {
+        let source = r#"use ncc07
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions {
+    publish CapabilityManifest to public
+    sign CapabilityManifest with account
+    relay public
+}
+publish CapabilityManifest {
+    d: "capabilities",
+    capz: ["nip:01"],
+} to public with account
+"#;
+        let diagnostics = publication_diagnostics(source, &["ncc07", "nip46"]);
+        let unknown = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "E2407")
+            .unwrap_or_else(|| panic!("expected E2407, got {diagnostics:?}"));
+        assert!(
+            unknown.message.contains("event `CapabilityManifest`")
+                && unknown.message.contains("`capz`")
+                && unknown.message.contains("cap, content, d"),
+            "{}",
+            unknown.message
+        );
+    }
+
+    #[test]
+    fn a_program_event_rejects_an_unknown_field_on_a_bound_construct() {
+        let source = r#"event AppSettings {
+    kind: 30078
+    parameterised by identifier
+    identifier: Text
+    content: Text
+}
+signer account = nip46()
+relayset public = configured
+permissions { publish AppSettings to public; sign AppSettings with account; relay public }
+let settings = AppSettings {
+    identifer: "demo",
+    content: "x",
+}
+"#;
+        let diagnostics = publication_diagnostics(source, &[]);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2407"
+                    && diagnostic.message.contains("`AppSettings`")
+                    && diagnostic.message.contains("`identifer`")
+                    && diagnostic.message.contains("content, identifier")
+            }),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_free_form_note_accepts_any_author_field() {
+        let source = r#"use nip01
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions { publish Note to public; sign Note with account; relay public }
+publish Note {
+    content: "hello",
+    t: ["nostr", "nscript"],
+    k: 1,
+    id: "read-side-only",
+} to public with account
+"#;
+        let diagnostics = publication_diagnostics(source, &["nip01", "nip46"]);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "E2407"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_tag_record_slot_the_tag_does_not_declare_is_rejected() {
+        let source = r#"use nip01
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions { publish Note to public; sign Note with account; relay public }
+publish Note {
+    content: "hello",
+    p: Person { pubkeyy: "aaaa", relay: "wss://example.com" },
+} to public with account
+"#;
+        let diagnostics = publication_diagnostics(source, &["nip01", "nip46"]);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2407"
+                    && diagnostic.message.contains("tag `Person`")
+                    && diagnostic.message.contains("`pubkeyy`")
+                    && diagnostic.message.contains("pubkey, relay")
+            }),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_program_event_shadows_a_module_event_of_the_same_name() {
+        let source = r"use nip01
+event Note {
+    kind: 1
+    content: Text
+    extra: Text
+}
+permissions { read Note from public; relay public }
+on Note {
+    print(event.extra)
+}
+";
+        let diagnostics = publication_diagnostics(source, &["nip01"]);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "E1101"),
+            "the program's Note declares `extra`, so it must be the typed event: {diagnostics:?}"
         );
     }
 
