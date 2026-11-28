@@ -65,18 +65,16 @@
           "nscript"
         ],
         [
-          "HEAD",
-          "ref: refs/heads/main"
-        ],
-        [
-          "refs",
           "refs/heads/main",
           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ],
         [
-          "refs",
           "refs/tags/v1.0.0",
           "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        [
+          "HEAD",
+          "ref: refs/heads/main"
         ]
       ]
     },

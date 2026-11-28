@@ -548,15 +548,10 @@ pub fn build_repository_state(
     }
 
     let mut tags = vec![tag("d", state.identifier.clone())];
-    push_many(
-        &mut tags,
-        "refs",
-        &state
-            .refs
-            .iter()
-            .map(|(name, commit)| join_columns(&[name.clone(), commit.clone()]))
-            .collect::<Vec<_>>(),
-    );
+    // NIP-34 makes the ref name itself the tag name: `["refs/heads/main", "<commit>"]`.
+    for (name, commit) in &state.refs {
+        tags.push((name.clone(), commit.clone()));
+    }
     if let Some(head) = &state.head {
         tags.push(("HEAD".to_owned(), format!("ref: {head}")));
     }
@@ -1044,11 +1039,8 @@ mod tests {
             event.tags,
             vec![
                 ("d".to_owned(), "nscript".to_owned()),
-                (
-                    "refs".to_owned(),
-                    columns(&["refs/heads/main", &commit('a')])
-                ),
-                ("refs".to_owned(), columns(&["refs/tags/v1", &commit('b')])),
+                ("refs/heads/main".to_owned(), commit('a')),
+                ("refs/tags/v1".to_owned(), commit('b')),
                 ("HEAD".to_owned(), "ref: refs/heads/main".to_owned()),
             ]
         );

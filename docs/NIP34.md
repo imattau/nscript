@@ -170,7 +170,7 @@ nscript git latest --d nscript --kind 30618 --author npub1... --relay ... --json
 
 `modules/std/nip34/0.1.0.nsm` declares the same event shapes plus:
 
-- typed tags for `r`+`euc`, `refs`, `u`, `committer`, `parent-commit`,
+- typed tags for `r`+`euc`, `u`, `committer`, `parent-commit`,
   `commit-pgp-sig`, `branch-name`, `merge-base`, status `e` root/reply markers,
   `q`, `merge-commit`, and `applied-as-commits`;
 - pure functions `repository_identifier`, `clone_urls`, `relay_urls`, and
@@ -207,9 +207,14 @@ publish RepositoryAnnouncement {
 } to public with account
 ```
 
-Repeated typed tags (`refs`, status `e`/`q`, committers) lower one wire tag per
-list element. At top level the elements must be literal records; a handler's
+Repeated typed tags (status `e`/`q`, committers) lower one wire tag per list
+element. At top level the elements must be literal records; a handler's
 `publish` may compute them.
+
+Repository state (kind `30618`) is CLI-only. NIP-34 makes the ref name the tag
+name (`["refs/heads/main", "<commit>"]`), and a module tag schema requires a
+fixed wire name, so the language cannot express arbitrary refs. Use
+`nscript git state` for state events.
 
 ## Not implemented
 

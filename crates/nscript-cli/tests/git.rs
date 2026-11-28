@@ -159,12 +159,12 @@ fn state_from_git_reads_refs_and_head() {
     let tags = rendered_tags(event);
     assert_eq!(tags[0], ["d", "demo"]);
     assert!(
-        tags.iter().any(|tag| tag[0] == "refs"
-            && (tag[1] == "refs/heads/master" || tag[1] == "refs/heads/main"))
+        tags.iter()
+            .any(|tag| tag[0].starts_with("refs/heads/") && tag.len() == 2)
     );
     assert!(
         tags.iter()
-            .any(|tag| tag[0] == "refs" && tag[1] == "refs/tags/v1.0.0")
+            .any(|tag| tag[0] == "refs/tags/v1.0.0" && tag.len() == 2)
     );
     assert!(
         tags.iter()
@@ -265,7 +265,6 @@ fn conformance_fixtures_match_the_stored_vectors() {
             "repository-announcement",
             "nip34-repository-announcement.ns",
         ),
-        ("repository-state", "nip34-repository-state.ns"),
         ("patch", "nip34-patch.ns"),
         ("pull-request", "nip34-pull-request.ns"),
         ("issue", "nip34-issue.ns"),
@@ -303,4 +302,39 @@ fn conformance_fixtures_match_the_stored_vectors() {
             "{type_name} tags"
         );
     }
+
+    let state = nscript()
+        .args([
+            "git",
+            "state",
+            "--d",
+            "nscript",
+            "--ref",
+            "refs/heads/main=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--ref",
+            "refs/tags/v1.0.0=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "--head",
+            "refs/heads/main",
+            "--dry-run",
+            "--json",
+        ])
+        .output()
+        .expect("run git state");
+    assert!(
+        state.status.success(),
+        "{}",
+        String::from_utf8_lossy(&state.stderr)
+    );
+    let state: serde_json::Value = serde_json::from_slice(&state.stdout).expect("json");
+    let expected = vectors["vectors"]
+        .as_array()
+        .expect("vectors array")
+        .iter()
+        .find(|vector| vector["type"] == "repository-state")
+        .expect("repository-state vector");
+    assert_eq!(
+        expanded_tags(object(&state)),
+        rendered_tags(expected),
+        "repository-state tags"
+    );
 }

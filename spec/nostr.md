@@ -84,18 +84,20 @@ need different tag layouts.
 ## NIP-34 git
 
 `nip34` declares the NIP-34 collaboration events: repository announcements
-(kind 30617) and state (30618), patches (1617), pull requests (1618) and their
-updates (1619), issues (1621), statuses (1630-1633), and the user grasp list
-(10317). The module carries typed tags for the `r`+`euc` marker, `refs`,
-`committer`, `parent-commit`, `commit-pgp-sig`, `branch-name`, `merge-base`,
-status `e` root/reply markers, `q`, `merge-commit`, and `applied-as-commits`.
+(kind 30617), patches (1617), pull requests (1618) and their updates (1619),
+issues (1621), statuses (1630-1633), and the user grasp list (10317). The
+module carries typed tags for the `r`+`euc` marker, `committer`,
+`parent-commit`, `commit-pgp-sig`, `branch-name`, `merge-base`, status `e`
+root/reply markers, `q`, `merge-commit`, and `applied-as-commits`.
 `repository_identifier`, `clone_urls`, `relay_urls`, and `status_is_known`
 read those tags back as pure functions.
 
-Repeated typed tags (`refs`, status `e`/`q`, committers) lower one wire tag per
-`List<TagType>` element. NIP-34 does not define git object transport; clone
-URLs point at ordinary git servers or grasp services. `nscript git` publishes
-the events from a repository; see [`docs/NIP34.md`](../docs/NIP34.md).
+Repeated typed tags (status `e`/`q`, committers) lower one wire tag per
+`List<TagType>` element. Repository state (30618) is CLI-only: NIP-34 makes the
+ref name the tag name, which a module's fixed-wire tag schema cannot express.
+NIP-34 does not define git object transport; clone URLs point at ordinary git
+servers or grasp services. `nscript git` publishes the events from a
+repository; see [`docs/NIP34.md`](../docs/NIP34.md).
 
 ## NIP-19
 

@@ -625,13 +625,14 @@ fields are the ones the spec actually asks for.
 the one piece that is small, well-defined, and doesn't need key material or
 payment rails, with the rest named honestly as unbuilt:
 
-- `nip34` (git): the module declares repository announcements (30617) and
-  state (30618), patches (1617), pull requests (1618/1619), issues (1621),
-  the four status kinds (1630-1633), and the grasp list (10317), with typed
-  tags for `r`+`euc`, refs, commit metadata, status markers, and quotes.
-  `nscript git` publishes the same events from a repository. Git object
-  transport is not implemented: clone URLs still point at git servers or
-  grasp services.
+- `nip34` (git): the module declares repository announcements (30617),
+  patches (1617), pull requests (1618/1619), issues (1621), the four status
+  kinds (1630-1633), and the grasp list (10317), with typed tags for
+  `r`+`euc`, commit metadata, status markers, and quotes. `nscript git`
+  publishes the same events from a repository, plus repository state (30618):
+  state is CLI-only because NIP-34 makes the ref name the tag name, which a
+  module's fixed-wire tag schema cannot express. Git object transport is not
+  implemented: clone URLs still point at git servers or grasp services.
 - `nip54` (wiki, kind 30818): `nip54.publish_wiki_article` takes an
   identifier, title, summary and content. Merge requests (kind 818) and
   redirects (kind 30819) are not modelled.

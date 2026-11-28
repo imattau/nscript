@@ -35,12 +35,6 @@ tag EarliestUniqueCommit {
     literal "euc" at 2
 }
 
-tag BranchRef {
-    wire: "refs"
-    field name: Text at 1
-    field commit: Text at 2
-}
-
 tag Fork {
     wire: "u"
     field reference: Text at 1
@@ -122,17 +116,6 @@ event RepositoryAnnouncement {
     field maintainers: List<Text>
     field u: List<Fork>
     field t: List<Text>
-    require repo_identifier(d)
-}
-
-event RepositoryState {
-    kind: 30618
-    mode: addressable
-    content: Text as text
-    tags: List<Tag> = []
-    field d: Text
-    field refs: List<BranchRef>
-    field HEAD: List<Text>
     require repo_identifier(d)
 }
 
