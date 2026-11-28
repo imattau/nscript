@@ -63,7 +63,9 @@ to tag name) is specified in the language document; this section governs the
 module-declared tag unions those programs import. An author field the declared
 event does not accept is a compile error (`E2407`), and a tag record slot the
 declared tag does not have is one too; a `tags: List<Tag>` declaration is the
-explicit opt-out and accepts any author field.
+explicit opt-out and accepts any author field. Setting a read-side field
+(`id`, `author`, `pubkey`, `kind`, `created_at`, `tags`) is `E2408` instead of a
+silent drop.
 
 Content encodings are `text`, `bytes-base64`, `json<T>`, or a named encoding
 provided declaratively by an imported module. JSON uses UTF-8, rejects duplicate

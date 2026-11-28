@@ -1,0 +1,25 @@
+// error: E2405 publication-tag-type-mismatch
+// `parent` declares the `EventRef` tag; a `Person` record would lower a `p`
+// tag where the event declares an `e` tag.
+use nip01
+use nip46
+
+event Reply {
+    kind: 1111
+    content: Text
+    parent: EventRef
+}
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish Reply to public
+    sign Reply with account
+    relay public
+}
+
+publish Reply {
+    content: "reply",
+    parent: Person { pubkey: "0000000000000000000000000000000000000000000000000000000000000000" },
+} to public with account

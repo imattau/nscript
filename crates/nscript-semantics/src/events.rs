@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nscript_modules::{ResolvedModuleGraph, TagSlot, TypeDefinition};
+use nscript_modules::{ResolvedModuleGraph, TagDefinition, TagSlot, TypeDefinition};
 use nscript_syntax::ast::{EventDeclaration, Expr, ExprKind, Item, PatternKind, StatementKind};
 use nscript_syntax::{Diagnostic, Program, Span};
 
@@ -93,7 +93,9 @@ pub(crate) fn validate(program: &Program, graph: &ResolvedModuleGraph) -> Vec<Di
 
 /// Reject publication shapes that would silently drop or misplace wire data:
 /// nominal tag records that do not match the declared type of the published
-/// event field, and author fields the declared event (or tag) does not know.
+/// event field, author fields the declared event (or tag) does not know,
+/// read-side fields that never lower, and records missing a field the
+/// declaration requires.
 pub(crate) fn validate_publication_tag_types(
     program: &Program,
     graph: &ResolvedModuleGraph,
@@ -109,18 +111,39 @@ struct PublicationContext<'a> {
     graph: &'a ResolvedModuleGraph,
 }
 
-/// The author fields a declared event accepts, resolved at check time.
-enum EventShape {
-    /// The event declares a free-form `tags: List<Tag>`; any author field is
-    /// a legitimate tag, so there is nothing to reject.
-    Open,
-    /// The declared field names plus `content`. Bookkeeping names are allowed
-    /// separately (they are read-side only and lower to nothing).
-    Closed(BTreeSet<String>),
+/// A declared event as the program sees it. A program's own declaration
+/// shadows an imported module's, as it does for publication lowering.
+struct VisibleEvent {
+    /// Declared author field name to its declared type name.
+    fields: BTreeMap<String, String>,
+    /// The event declares a free-form `tags: List<Tag>`, so every author field
+    /// is a legitimate NIP-01 tag and only read-side names are rejected.
+    open: bool,
+    /// The module's `require` lines. Program event declarations have none.
+    requirements: Vec<String>,
 }
 
-/// Read-side event fields: publishing one is allowed but never lowers.
-const READ_ONLY_FIELDS: [&str; 5] = ["id", "author", "pubkey", "kind", "created_at"];
+impl VisibleEvent {
+    fn field_type(&self, field: &str) -> Option<&str> {
+        self.fields.get(field).map(String::as_str)
+    }
+}
+
+/// Read-side event fields: publishing one silently lowers to nothing, so it is
+/// rejected rather than ignored. These are exactly the names the record
+/// lowering skips (`EVENT_BOOKKEEPING_FIELDS`), plus the event's own `tags`.
+const READ_ONLY_FIELDS: [&str; 6] = ["id", "author", "pubkey", "kind", "created_at", "tags"];
+
+fn read_only_reason(field: &str) -> &'static str {
+    match field {
+        "id" => "the event id is computed when it is signed",
+        "author" | "pubkey" => "the signer supplies it",
+        "kind" => "the event declaration supplies it",
+        "created_at" => "the runtime supplies it",
+        "tags" => "write each tag as a named field instead",
+        _ => "it is read-side only",
+    }
+}
 
 fn validate_publication_items(
     items: &[Item],
@@ -205,71 +228,7 @@ fn validate_publication_expr(
     context: &PublicationContext<'_>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let graph = context.graph;
     check_constructor_fields(expression, context, diagnostics);
-    if let ExprKind::Publish { value, .. } = &expression.value
-        && let ExprKind::Construct { name, fields } = &value.value
-    {
-        let event = graph
-            .modules
-            .values()
-            .flat_map(|module| module.descriptor.events.iter())
-            .find(|event| event.name == name.value);
-        if let Some(event) = event {
-            for required_name in event.requirements.iter().filter_map(|requirement| {
-                requirement
-                    .strip_prefix("present(")
-                    .and_then(|name| name.strip_suffix(')'))
-            }) {
-                let Some(required) = event
-                    .fields
-                    .iter()
-                    .find(|field| field.name == required_name)
-                else {
-                    continue;
-                };
-                if !fields.iter().any(|(name, _)| name.value == required.name) {
-                    diagnostics.push(Diagnostic {
-                        code: "E2406",
-                        message: format!(
-                            "publication of `{}` is missing required field `{}`",
-                            event.name, required.name
-                        ),
-                        span: value.span,
-                    });
-                }
-            }
-            for (field_name, value) in fields {
-                let Some(field) = event
-                    .fields
-                    .iter()
-                    .find(|field| field.name == field_name.value)
-                else {
-                    continue;
-                };
-                let declared_tag = graph
-                    .modules
-                    .values()
-                    .flat_map(|module| module.descriptor.tags.iter())
-                    .find(|tag| tag.name == field.type_name);
-                let (Some(tag), ExprKind::Construct { name: actual, .. }) =
-                    (declared_tag, &value.value)
-                else {
-                    continue;
-                };
-                if actual.value != tag.name {
-                    diagnostics.push(Diagnostic {
-                        code: "E2405",
-                        message: format!(
-                            "event field `{}.{}` requires tag type `{}`, found `{}`",
-                            event.name, field.name, tag.name, actual.value
-                        ),
-                        span: value.span,
-                    });
-                }
-            }
-        }
-    }
 
     match &expression.value {
         ExprKind::Call { callee, arguments } => {
@@ -359,9 +318,10 @@ fn validate_publication_expr(
     }
 }
 
-/// Reject author fields a declared event or tag does not know. Every publish
-/// field lowers to a wire tag named after it, so an unknown name publishes
-/// well-formed Nostr carrying a tag the event never declares.
+/// Reject publication shapes that would silently drop or misplace wire data.
+/// Every publish field lowers to a wire tag named after it, so an unknown name
+/// publishes well-formed Nostr carrying a tag the event never declares, and a
+/// read-side name lowers to nothing at all.
 fn check_constructor_fields(
     expression: &Expr,
     context: &PublicationContext<'_>,
@@ -370,33 +330,21 @@ fn check_constructor_fields(
     let ExprKind::Construct { name, fields } = &expression.value else {
         return;
     };
-    if let Some(shape) = declared_event_shape(&name.value, context.program, context.graph) {
-        let EventShape::Closed(declared) = shape else {
-            return;
-        };
-        for (field, _) in fields {
-            if declared.contains(&field.value)
-                || READ_ONLY_FIELDS.contains(&field.value.as_str())
-                || field.value == "tags"
-            {
-                continue;
-            }
-            diagnostics.push(Diagnostic {
-                code: "E2407",
-                message: format!(
-                    "event `{}` has no author field `{}`; its fields are: {}",
-                    name.value,
-                    field.value,
-                    field_list(&declared)
-                ),
-                span: field.span,
-            });
-        }
+    if let Some(event) = visible_event(&name.value, context.program, context.graph) {
+        check_event_constructor(
+            &name.value,
+            &event,
+            fields,
+            expression.span,
+            context,
+            diagnostics,
+        );
         return;
     }
-    let Some(slots) = declared_tag_slots(&name.value, context.graph) else {
+    let Some(tag) = visible_tag(&name.value, context.graph) else {
         return;
     };
+    let slots = tag_slot_names(tag);
     for (field, _) in fields {
         if slots.contains(&field.value) {
             continue;
@@ -414,20 +362,105 @@ fn check_constructor_fields(
     }
 }
 
-/// The author fields a declared event accepts. `None` when nothing declares
-/// the name, so an unknown event keeps the permissive historical behaviour.
-/// A program's own declaration shadows an imported module's, as it does for
-/// publication lowering.
-fn declared_event_shape(
+fn check_event_constructor(
+    event_name: &str,
+    event: &VisibleEvent,
+    fields: &[(nscript_syntax::ast::Spanned<String>, Expr)],
+    span: Span,
+    context: &PublicationContext<'_>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let accepted = event
+        .fields
+        .keys()
+        .cloned()
+        .chain(std::iter::once("content".to_owned()))
+        .collect::<BTreeSet<_>>();
+    for (field, value) in fields {
+        if let Some(reason) = read_only_field(&field.value) {
+            diagnostics.push(Diagnostic {
+                code: "E2408",
+                message: format!(
+                    "event `{event_name}` cannot set `{}`: {reason}",
+                    field.value
+                ),
+                span: field.span,
+            });
+            continue;
+        }
+        if !event.open && !accepted.contains(&field.value) {
+            diagnostics.push(Diagnostic {
+                code: "E2407",
+                message: format!(
+                    "event `{event_name}` has no author field `{}`; its fields are: {}",
+                    field.value,
+                    field_list(&accepted),
+                ),
+                span: field.span,
+            });
+            continue;
+        }
+        let Some(declared_type) = event.field_type(&field.value) else {
+            continue;
+        };
+        let Some(tag) = visible_tag(declared_type, context.graph) else {
+            continue;
+        };
+        let ExprKind::Construct { name: actual, .. } = &value.value else {
+            continue;
+        };
+        if actual.value != tag.name {
+            diagnostics.push(Diagnostic {
+                code: "E2405",
+                message: format!(
+                    "event field `{event_name}.{}` requires tag type `{}`, found `{}`",
+                    field.value, tag.name, actual.value
+                ),
+                span: value.span,
+            });
+        }
+    }
+    let declared = fields
+        .iter()
+        .map(|(name, _)| name.value.as_str())
+        .collect::<BTreeSet<_>>();
+    for required_name in event.requirements.iter().filter_map(|requirement| {
+        requirement
+            .strip_prefix("present(")
+            .and_then(|name| name.strip_suffix(')'))
+    }) {
+        if !event.fields.contains_key(required_name) || declared.contains(required_name) {
+            continue;
+        }
+        diagnostics.push(Diagnostic {
+            code: "E2406",
+            message: format!(
+                "publication of `{event_name}` is missing required field `{required_name}`"
+            ),
+            span,
+        });
+    }
+}
+
+fn read_only_field(field: &str) -> Option<&'static str> {
+    READ_ONLY_FIELDS
+        .contains(&field)
+        .then(|| read_only_reason(field))
+}
+
+/// The event declaration the program can see. `None` when nothing declares the
+/// name, so an unknown event keeps the permissive historical behaviour. A
+/// program's own declaration shadows an imported module's.
+fn visible_event(
     event_type: &str,
     program: &Program,
     graph: &ResolvedModuleGraph,
-) -> Option<EventShape> {
+) -> Option<VisibleEvent> {
     for item in &program.ast.items {
         if let Item::Event(event) = item
             && event.name.value == event_type
         {
-            return Some(program_event_shape(event));
+            return Some(program_event(event));
         }
     }
     for module in graph.modules.values() {
@@ -439,23 +472,22 @@ fn declared_event_shape(
         else {
             continue;
         };
-        // `tags: List<Tag>` is NIP-01's free-form tag list: every author field
-        // is a legitimate tag, so there is no closed set to check against.
-        if event.tags_type.as_deref() == Some("List<Tag>") {
-            return Some(EventShape::Open);
-        }
-        let mut declared = event
-            .fields
-            .iter()
-            .map(|field| field.name.clone())
-            .collect::<BTreeSet<_>>();
-        declared.insert("content".to_owned());
-        return Some(EventShape::Closed(declared));
+        return Some(VisibleEvent {
+            fields: event
+                .fields
+                .iter()
+                .map(|field| (field.name.clone(), field.type_name.clone()))
+                .collect(),
+            // `tags: List<Tag>` is NIP-01's free-form tag list: every author
+            // field is a legitimate tag, so there is no closed set to reject.
+            open: event.tags_type.as_deref() == Some("List<Tag>"),
+            requirements: event.requirements.clone(),
+        });
     }
     None
 }
 
-fn program_event_shape(event: &EventDeclaration) -> EventShape {
+fn program_event(event: &EventDeclaration) -> VisibleEvent {
     let open = event.fields.iter().any(|field| {
         field.name.value == "tags"
             && field.type_ref.name == "List"
@@ -465,36 +497,37 @@ fn program_event_shape(event: &EventDeclaration) -> EventShape {
                 .first()
                 .is_some_and(|argument| argument.name == "Tag")
     });
-    if open {
-        return EventShape::Open;
+    VisibleEvent {
+        fields: event
+            .fields
+            .iter()
+            .map(|field| (field.name.value.clone(), field.type_ref.name.clone()))
+            .collect(),
+        open,
+        requirements: Vec::new(),
     }
-    let mut declared = event
-        .fields
-        .iter()
-        .map(|field| field.name.value.clone())
-        .collect::<BTreeSet<_>>();
-    declared.insert("content".to_owned());
-    EventShape::Closed(declared)
 }
 
-/// The field names a declared tag accepts in a tag record.
-fn declared_tag_slots(tag_type: &str, graph: &ResolvedModuleGraph) -> Option<BTreeSet<String>> {
+/// The declared tag named `tag_type`, if any module declares it.
+fn visible_tag<'a>(tag_type: &str, graph: &'a ResolvedModuleGraph) -> Option<&'a TagDefinition> {
     graph.modules.values().find_map(|module| {
         module
             .descriptor
             .tags
             .iter()
             .find(|tag| tag.name == tag_type)
-            .map(|tag| {
-                tag.slots
-                    .iter()
-                    .filter_map(|slot| match slot {
-                        TagSlot::Field { name, .. } => Some(name.clone()),
-                        TagSlot::Literal { .. } => None,
-                    })
-                    .collect()
-            })
     })
+}
+
+/// The field names a declared tag accepts in a tag record.
+fn tag_slot_names(tag: &TagDefinition) -> BTreeSet<String> {
+    tag.slots
+        .iter()
+        .filter_map(|slot| match slot {
+            TagSlot::Field { name, .. } => Some(name.clone()),
+            TagSlot::Literal { .. } => None,
+        })
+        .collect()
 }
 
 fn field_list(fields: &BTreeSet<String>) -> String {

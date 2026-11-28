@@ -1,0 +1,20 @@
+// error: E2406 missing-required-field
+// `ServiceRecord` declares `require present(k)`; a record without `k` would
+// publish a service record that cannot be resolved by key.
+use ncc02
+use nip46
+
+signer account = nip46()
+relayset public = configured
+
+permissions {
+    publish ServiceRecord to public
+    sign ServiceRecord with account
+    relay public
+}
+
+let record = ServiceRecord {
+    d: "svc",
+    u: "https://example.com",
+    exp: 1790380000,
+}

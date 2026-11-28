@@ -730,6 +730,25 @@ fn check_rejects_an_unknown_publish_field() {
 }
 
 #[test]
+fn check_rejects_a_read_only_publish_field() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
+        .arg("check")
+        .arg(repository_path(
+            "conformance/invalid/publish-read-only-field.ns",
+        ))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "read-only publish field passed");
+    assert!(
+        stderr.contains("error[E2408]")
+            && stderr.contains("event `Note` cannot set `id`")
+            && stderr.contains("cannot set `tags`"),
+        "expected a read-only publish field diagnostic: {stderr}"
+    );
+}
+
+#[test]
 fn handler_can_extract_a_tag_value_with_string_helpers() {
     let output = Command::new(env!("CARGO_BIN_EXE_nscript"))
         .arg("run")

@@ -173,7 +173,8 @@ execute expressions for tags. A handler's `publish` evaluates its tag records
 when the event arrives, so fields may use `event` and other run-time values.
 The `content` field is the event's content rather than a tag. The `tags` field
 and the bookkeeping fields `id`, `author`, `pubkey`, `kind` and `created_at`
-are read-side only and MUST NOT lower to tags. For a parameterised declaration
+are read-side only: they lower to nothing, so setting one in a publish record
+is `E2408` rather than a silent drop. For a parameterised declaration
 the identifier field lowers to the single `d` tag instead of its own name, and
 publishing such a record with zero or more than one identifier field is an
 error. The event's kind and mode come from the visible `event` declaration —
@@ -188,7 +189,9 @@ free-form `tags: List<Tag>` accepts any author field, because each one is a
 legitimate NIP-01 tag. Any other unknown field is `E2407`: it would otherwise
 lower to a tag the event never declares. A tag record follows the same rule
 against the tag's slots — an unknown slot is `E2407` rather than a silently
-omitted column.
+omitted column. Required fields (`present(...)`) and tag-typed fields are
+resolved against that same visible declaration, including on a record bound
+with `let` rather than written directly under `publish`.
 
 A tag may need more than two columns (`operator_for` carries a pubkey and a
 service id, `rule` a policy key and value). A field value can carry those

@@ -154,10 +154,9 @@ validators are script-invoked pure functions, not implicit dispatch gating).
   text today.
 - Publish-field validation diagnostics: *(mostly done)* a non-literal
   top-level tag field is `E2403`, computed top-level content is `E2404`, and a
-  field the visible event declaration does not accept is `E2407`
-  (`spec/language.md` §3). Writing a read-side bookkeeping field (`id`,
-  `kind`, …) is still accepted and ignored rather than rejected; a dedicated
-  diagnostic remains open. Related: an addressable module event's `d`
+  field the visible event declaration does not accept is `E2407`, and setting
+  a read-side field (`id`, `kind`, `tags`, …) is `E2408` instead of a silent
+  drop (`spec/language.md` §3). Related: an addressable module event's `d`
   conformance (for example `ncc07`'s `require manifest_identifier(d)`) is
   declarative only — event `require` lines are parsed and hashed but never
   evaluated, so `d=capabilities` rides on this same gap rather than being
@@ -236,9 +235,9 @@ Shipped the full recipe against the pinned commit:
   what the publisher implements.
 
 Known scope limits (inherited from 0d, restated): `d=capabilities` conformance
-is declarative (event `require` lines are not evaluated), and the module tag
-union drives lowering via `lower_tags` but unknown publish fields still pass
-unchecked — see follow-ups above.
+is declarative (event `require` lines are not evaluated); unknown publish
+fields are rejected (`E2407`) and read-side fields can no longer be set
+(`E2408`) — see follow-ups above.
 
 ## Stage 2 — NCC-00 document lifecycle *(Done)*
 
@@ -351,8 +350,9 @@ recipe against that commit:
 
 Scope notes (same gaps as 0d): event `require` lines are declarative and
 never evaluated, so `record_is_valid` — not the event declaration — is what
-enforces `d`/`k`/`exp` at runtime, and unknown publish fields still pass
-unchecked. Two limits of this stage: a schedule body is not executed under
+enforces `d`/`k`/`exp` at runtime; unknown publish fields are rejected
+(`E2407`) and read-side fields cannot be set (`E2408`). Two limits of this
+stage: a schedule body is not executed under
 `nscript run` (its `publish` is collected as a startup publication, but the
 statements around it run only when a timer fires), and NCC-02's resolution
 step 7 — connect, then compare the observed transport key against `k` — is

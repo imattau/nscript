@@ -3041,7 +3041,6 @@ publish Note {
     content: "hello",
     t: ["nostr", "nscript"],
     k: 1,
-    id: "read-side-only",
 } to public with account
 "#;
         let diagnostics = publication_diagnostics(source, &["nip01", "nip46"]);
@@ -3049,6 +3048,68 @@ publish Note {
             diagnostics
                 .iter()
                 .all(|diagnostic| diagnostic.code != "E2407"),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_read_side_field_is_rejected_instead_of_dropped() {
+        let source = r#"use nip01
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions { publish Note to public; sign Note with account; relay public }
+publish Note {
+    content: "hello",
+    id: "read-side-only",
+    tags: ["p", "someone"],
+} to public with account
+"#;
+        let diagnostics = publication_diagnostics(source, &["nip01", "nip46"]);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2408"
+                    && diagnostic.message.contains("event `Note`")
+                    && diagnostic.message.contains("cannot set `id`")
+                    && diagnostic.message.contains("computed when it is signed")
+            }),
+            "{diagnostics:?}"
+        );
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2408"
+                    && diagnostic.message.contains("cannot set `tags`")
+                    && diagnostic
+                        .message
+                        .contains("write each tag as a named field")
+            }),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_closed_event_rejects_a_read_side_field() {
+        let source = r#"use ncc07
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions { publish CapabilityManifest to public; sign CapabilityManifest with account; relay public }
+publish CapabilityManifest {
+    d: "capabilities",
+    cap: ["nip:01"],
+    kind: 30062,
+} to public with account
+"#;
+        let diagnostics = publication_diagnostics(source, &["ncc07", "nip46"]);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2408"
+                    && diagnostic.message.contains("event `CapabilityManifest`")
+                    && diagnostic.message.contains("cannot set `kind`")
+                    && diagnostic
+                        .message
+                        .contains("the event declaration supplies it")
+            }),
             "{diagnostics:?}"
         );
     }
@@ -3074,6 +3135,53 @@ publish Note {
                     && diagnostic.message.contains("pubkey, relay")
             }),
             "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_bound_event_record_missing_a_required_field_is_rejected() {
+        let source = r#"use ncc02
+use nip46
+signer account = nip46()
+relayset public = configured
+permissions { publish ServiceRecord to public; sign ServiceRecord with account; relay public }
+let record = ServiceRecord {
+    d: "svc",
+    u: "https://example.com",
+    exp: 1790380000,
+}
+"#;
+        let diagnostics = publication_diagnostics(source, &["ncc02", "nip46"]);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "E2406"
+                    && diagnostic
+                        .message
+                        .contains("publication of `ServiceRecord`")
+                    && diagnostic.message.contains("required field `k`")
+            }),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_program_event_does_not_inherit_a_module_events_requirements() {
+        let source = r#"use ncc02
+event ServiceRecord {
+    kind: 30059
+    parameterised by d
+    d: Text
+    content: Text
+}
+permissions { publish ServiceRecord to public; sign ServiceRecord with account; relay public }
+publish ServiceRecord { content: "no d, no k" } to public with account
+"#;
+        let diagnostics = publication_diagnostics(source, &["ncc02"]);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "E2406"),
+            "the program's own declaration has no requirements: {diagnostics:?}"
         );
     }
 
