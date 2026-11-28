@@ -67,6 +67,11 @@ name.
 
 `maintainers` accepts bare hex or `npub1...`.
 
+This repository's own announcement is maintained with `ngit repo edit`, which
+also knows the grasp servers and maintainer roster. Use `nscript git announce`
+for repositories whose announcement you want to own from this CLI; do not run
+both against the same `d`, because each would replace the other's metadata.
+
 ### Announce a repository
 
 ```bash
